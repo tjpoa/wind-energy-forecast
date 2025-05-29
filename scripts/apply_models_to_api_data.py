@@ -244,23 +244,6 @@ def main():
     comparison_df_new.to_csv(output_comparison_filename, index=False)
     print(f"\nDataFrame de comparação salvo em: {output_comparison_filename}")
 
-    # # --- Análise dos Resultados (Estrutura) ---
-    # print("\n\n--- Análise dos Resultados ---")
-    # print("1. Qual abordagem (alvo original vs. log-transformado) teve melhor desempenho nos novos dados?")
-    # # Adicione sua análise aqui, comparando MAE, RMSE, etc. do df_metrics_summary
-    # print("   ...\n")
-    # print("2. O modelo que foi melhor no conjunto de teste histórico também foi o melhor nos novos dados da API?")
-    # # Compare com os resultados do seu notebook Modeling.ipynb
-    # print("   ...\n")
-    # print("3. Houve alguma diferença significativa no MAPE entre as abordagens?")
-    # print("   ...\n")
-    # print("4. Observando o gráfico, há algum padrão nos erros de previsão (ex: subestimação/superestimação em certos períodos)?")
-    # print("   ...\n")
-    # print("5. Próximos passos sugeridos com base nesta avaliação:")
-    # # Ex: Retreinar com mais dados, investigar features que podem estar causando desvios,
-    # #     considerar modelos de ensemble, etc.
-    # print("   ...\n")
-
 
 if __name__ == "__main__":
     # Certifique-se de que o diretório de modelos existe para o script rodar
