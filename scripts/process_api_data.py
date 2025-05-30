@@ -6,12 +6,12 @@ from pathlib import Path
 import os
 
 # --- Configuration ---
-API_KEY = '0681d32725f94e8b9cd95717252905'  # Replace with your actual WeatherAPI key
-LOCALIZACAO_API = '41.8345,-7.7889'  # Montalegre / Serra do Larouco (example)
-DAYS_TO_FETCH_API = 44 # How many recent days of weather data to fetch via API
+API_KEY = '0681d32725f94e8b9cd95717252905'  
+LOCALIZACAO_API = '41.8345,-7.7889'  
+DAYS_TO_FETCH_API = 44
 
 # Define file paths
-BASE_DATA_PATH = Path("../data") # Assuming your script is in a 'scripts' or root folder
+BASE_DATA_PATH = Path("../data") 
 RAW_DATA_PATH = BASE_DATA_PATH / "raw"
 PROCESSED_DATA_PATH = BASE_DATA_PATH / "processed"
 HISTORICAL_PROCESSED_FILE = PROCESSED_DATA_PATH / "agg_data_ml.csv"
@@ -32,10 +32,9 @@ def fetch_weather_api_data(api_key: str, location: str, num_days: int) -> pd.Dat
         url = f"http://api.weatherapi.com/v1/history.json?key={api_key}&q={location}&dt={date_str}"
         try:
             res = requests.get(url, timeout=10)
-            res.raise_for_status()  # Raise an exception for HTTP errors
+            res.raise_for_status()  
             data = res.json()
             day_data = data['forecast']['forecastday'][0]['day']
-            # Use wind direction at noon as a proxy for daily average direction
             wind_dir_noon = data['forecast']['forecastday'][0]['hour'][12]['wind_degree']
             
             records.append({
@@ -72,7 +71,6 @@ def load_and_process_production_data(filepath: Path) -> pd.DataFrame:
     
     df_producao_diaria = df_producao.resample('D').sum().reset_index()
     df_producao_diaria.rename(columns={'Data e Hora': 'Data', 'Eólica_Total_Dia': 'Eólica'}, inplace=True)
-    # If 'Eólica_Total_Dia' doesn't exist, it means it was already 'Eólica'
     if 'Eólica_Total_Dia' in df_producao_diaria.columns:
          df_producao_diaria.rename(columns={'Eólica_Total_Dia': 'Eólica'}, inplace=True)
     else: # Ensure the column is named 'Eólica'
@@ -93,7 +91,6 @@ def apply_feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
     df_eng['Data'] = pd.to_datetime(df_eng['Data'])
     df_eng = df_eng.sort_values('Data').reset_index(drop=True)
 
-    # 5.1 Features Baseadas na Data
     df_eng['mes'] = df_eng['Data'].dt.month
     df_eng['dia_da_semana'] = df_eng['Data'].dt.dayofweek
     df_eng['dia_do_ano'] = df_eng['Data'].dt.dayofyear
@@ -101,7 +98,6 @@ def apply_feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
     df_eng['trimestre'] = df_eng['Data'].dt.quarter
     df_eng['eh_fim_de_semana'] = df_eng['dia_da_semana'].isin([5, 6]).astype(int)
 
-    # 5.2 Codificação Cíclica (Vento e Data)
     df_eng['vento_sin'] = np.sin(np.radians(df_eng['Direcao_Media']))
     df_eng['vento_cos'] = np.cos(np.radians(df_eng['Direcao_Media']))
     df_eng['dia_semana_sin'] = np.sin(2 * np.pi * df_eng['dia_da_semana'] / 7)
@@ -111,7 +107,6 @@ def apply_feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
     df_eng['dia_ano_sin'] = np.sin(2 * np.pi * df_eng['dia_do_ano'] / 366) # Use 366 for leap year safety
     df_eng['dia_ano_cos'] = np.cos(2 * np.pi * df_eng['dia_do_ano'] / 366)
 
-    # 5.3 Lag Features (Atrasos)
     lags_eolica = [1, 2, 3, 7, 14]
     lags_meteo = [1, 2, 3, 7]
 
@@ -124,7 +119,6 @@ def apply_feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
         df_eng[f'vento_sin_lag{lag}'] = df_eng['vento_sin'].shift(lag)
         df_eng[f'vento_cos_lag{lag}'] = df_eng['vento_cos'].shift(lag)
 
-    # 5.4 Rolling Window Features (Janelas Deslizantes)
     window_sizes = [3, 7, 14]
     for window in window_sizes:
         # Eólica
@@ -149,25 +143,21 @@ def handle_final_nans(df: pd.DataFrame) -> pd.DataFrame:
     df_filled = df.copy()
     cols_com_lags_roll = [col for col in df_filled.columns if '_lag' in col or '_roll_' in col]
     
-    # Pandas future warning for method='bfill' in fillna with DataFrame
-    # We can iterate or use bfill() directly on the subset
+
     for col in cols_com_lags_roll:
         df_filled[col] = df_filled[col].bfill()
 
-    # Check for any remaining NaNs
     nans_finais = df_filled.isnull().sum()
     if nans_finais.sum() > 0:
         print("WARNING: NaNs remaining after bfill:")
         print(nans_finais[nans_finais > 0])
         print("Attempting to fill remaining NaNs with 0 (this might not be ideal).")
-        df_filled.fillna(0, inplace=True) # Fallback, might need better strategy
+        df_filled.fillna(0, inplace=True) 
     else:
         print("No NaNs remaining after bfill.")
     return df_filled
 
 def main():
-    # 1. Load historical processed data (opcional, apenas para referência de colunas finais se quiser)
-    #    Se há um grande gap, não usaremos para contexto de lag.
     df_historical = None
     if HISTORICAL_PROCESSED_FILE.exists():
         print(f"Loading historical processed data (for column reference) from: {HISTORICAL_PROCESSED_FILE}")
