@@ -34,8 +34,11 @@ On Windows PowerShell:
 python -m venv venv
 .\venv\Scripts\python.exe -m pip install --upgrade pip
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
+.\venv\Scripts\python.exe -m pip install -e .
 .\venv\Scripts\python.exe -m ipykernel install --user --name wind-energy-forecast --display-name "Python (wind-energy-forecast)"
 ```
+
+The editable install makes the local `wind_forecast` package importable while keeping code changes immediately visible.
 
 ## API keys and secrets
 
