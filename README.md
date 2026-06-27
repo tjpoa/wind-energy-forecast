@@ -12,7 +12,18 @@ The project now uses English column names in scripts and generated API outputs, 
 - `data/processed/`: processed datasets and script-generated files.
 - `models/`: trained models and scalers.
 - `notebooks/`: exploratory analysis, data preparation, and modeling.
-- `scripts/`: reproducible entry points outside the notebooks.
+- `src/wind_forecast/`: reusable project package.
+- `scripts/`: backward-compatible executable wrappers outside the notebooks.
+
+The reusable package currently includes:
+
+- `paths.py`: repository and artifact path resolution.
+- `config.py`: explicit environment-based WeatherAPI configuration.
+- `schemas.py`: canonical column names and legacy compatibility.
+- `features.py`: shared feature-engineering logic.
+- `ingestion.py`: WeatherAPI history ingestion.
+- `inference.py`: model/scaler loading and prediction.
+- `evaluation.py`: regression metric calculation.
 
 ## Column naming
 
@@ -24,7 +35,7 @@ Use the English schema for new work:
 - `Average_Temperature`
 - `Average_Wind_Direction`
 
-The helper file `scripts/schema.py` translates older source/training names at the import/model boundary only. This keeps the project readable in English without breaking the raw data import or the already-trained models.
+The `wind_forecast.schemas` module translates older source/training names at the import/model boundary only. The `scripts/schema.py` file remains as a legacy compatibility wrapper. This keeps the project readable in English without breaking the raw data import or the already-trained models.
 
 ## Environment setup
 
@@ -38,7 +49,7 @@ python -m venv venv
 .\venv\Scripts\python.exe -m ipykernel install --user --name wind-energy-forecast --display-name "Python (wind-energy-forecast)"
 ```
 
-The editable install makes the local `wind_forecast` package importable while keeping code changes immediately visible.
+The editable install makes the local `wind_forecast` package importable while reflecting source-code changes immediately.
 
 ## API keys and secrets
 
@@ -90,21 +101,25 @@ Generate recent WeatherAPI feature data:
 .\venv\Scripts\python.exe .\scripts\process_api_data.py
 ```
 
+This script is a backward-compatible wrapper for WeatherAPI ingestion, feature engineering, and featured CSV generation.
+
 Apply the trained models to generate prediction outputs:
 
 ```powershell
 .\venv\Scripts\python.exe .\scripts\apply_models_to_api_data.py
 ```
 
+This script is a backward-compatible wrapper for model inference, evaluation, plotting, and prediction CSV generation.
+
 The scripts can be run from the project root. Internal paths are resolved automatically from each script location. API output files are date-stamped as `api_data_featured_YYYYMMDD.csv` and `api_data_predictions_YYYYMMDD.csv`.
 
 ## Notebooks
 
-The notebooks document the exploration and training workflow:
+The notebooks remain exploratory, experimental, and historical workflows. Not all notebook logic has been migrated into the package.
 
-- `notebooks/DataPreparation.ipynb`: data preparation.
+- `notebooks/DataPreparation.ipynb`: historical data preparation and station-data preprocessing.
 - `notebooks/EDA.ipynb`: exploratory data analysis.
-- `notebooks/Modeling.ipynb`: model training and comparison.
-- `notebooks/WAPI.ipynb`: WeatherAPI collection example.
+- `notebooks/Modeling.ipynb`: model training, tuning, comparison, and artifact generation.
+- `notebooks/WAPI.ipynb`: exploratory WeatherAPI collection example.
 
-For new work, prefer moving reusable logic into `scripts/` and keeping notebooks for exploration and documentation.
+For new work, put reusable production logic under `src/wind_forecast/` and keep `scripts/` as thin executable wrappers. Keep notebooks for exploration and documentation.
