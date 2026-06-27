@@ -1,320 +1,264 @@
-import requests
-import pandas as pd
-import numpy as np
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
-import os
+
+import numpy as np
+import pandas as pd
+import requests
+from dotenv import load_dotenv
+from schema import (
+    AVG_TEMPERATURE_COLUMN,
+    AVG_WIND_DIRECTION_COLUMN,
+    AVG_WIND_SPEED_COLUMN,
+    DATE_COLUMN,
+    RAW_DATE_TIME_COLUMN,
+    RAW_WIND_PRODUCTION_COLUMN,
+    RAW_PRODUCTION_FILENAME,
+    TARGET_COLUMN,
+    columns_to_english,
+)
+
 
 # --- Configuration ---
-API_KEY = '0681d32725f94e8b9cd95717252905'  
-LOCALIZACAO_API = '41.8345,-7.7889'  
-DAYS_TO_FETCH_API = 44
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(PROJECT_ROOT / ".env")
 
-# Define file paths
-BASE_DATA_PATH = Path("../data") 
+API_KEY = os.getenv("WEATHER_API_KEY")
+API_LOCATION = os.getenv("WEATHER_API_LOCATION", "41.8345,-7.7889")
+DAYS_TO_FETCH = int(os.getenv("WEATHER_API_DAYS", "44"))
+WEATHER_API_END_DATE = os.getenv("WEATHER_API_END_DATE")
+
+BASE_DATA_PATH = PROJECT_ROOT / "data"
 RAW_DATA_PATH = BASE_DATA_PATH / "raw"
 PROCESSED_DATA_PATH = BASE_DATA_PATH / "processed"
 HISTORICAL_PROCESSED_FILE = PROCESSED_DATA_PATH / "agg_data_ml.csv"
-PRODUCAO_RAW_FILE = RAW_DATA_PATH / "ReparticaoProducao.csv"
+PRODUCTION_RAW_FILE = RAW_DATA_PATH / RAW_PRODUCTION_FILENAME
 
-# --- Helper Functions ---
 
-def fetch_weather_api_data(api_key: str, location: str, num_days: int) -> pd.DataFrame:
-    """
-    Fetches historical weather data for the last num_days from WeatherAPI.
-    """
+def build_dates_to_fetch(num_days: int, end_date: str | None = None) -> list[str]:
+    """Build the list of past dates to request from WeatherAPI."""
+    if num_days <= 0:
+        raise ValueError("WEATHER_API_DAYS must be greater than zero.")
+
+    end = pd.to_datetime(end_date).to_pydatetime() if end_date else datetime.today()
+    return [(end - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(1, num_days + 1)]
+
+
+def fetch_weather_api_data(api_key: str | None, location: str, num_days: int) -> pd.DataFrame:
+    """Fetch historical weather data from WeatherAPI."""
+    if not api_key:
+        raise RuntimeError("Set WEATHER_API_KEY in a local .env file before calling the API.")
+
     print(f"Fetching weather data for the last {num_days} days...")
-    today = datetime.today()
-    dates_to_fetch = [(today - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(1, num_days + 1)]
-    
+    dates_to_fetch = build_dates_to_fetch(num_days, WEATHER_API_END_DATE)
+
     records = []
+    endpoint = "https://api.weatherapi.com/v1/history.json"
+
     for date_str in dates_to_fetch:
-        url = f"http://api.weatherapi.com/v1/history.json?key={api_key}&q={location}&dt={date_str}"
+        params = {"key": api_key, "q": location, "dt": date_str}
         try:
-            res = requests.get(url, timeout=10)
-            res.raise_for_status()  
-            data = res.json()
-            day_data = data['forecast']['forecastday'][0]['day']
-            wind_dir_noon = data['forecast']['forecastday'][0]['hour'][12]['wind_degree']
-            
-            records.append({
-                'Data': pd.to_datetime(date_str),
-                'Temperatura_Media': day_data['avgtemp_c'],
-                'Intensidade_Media': day_data['maxwind_kph'] / 3.6, # Convert km/h to m/s
-                'Direcao_Media': wind_dir_noon
-            })
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching data for {date_str}: {e}")
-        except KeyError as e:
-            print(f"Error parsing data for {date_str} (KeyError: {e}): {data}")
+            response = requests.get(endpoint, params=params, timeout=10)
+            if not response.ok:
+                print(f"Error fetching data for {date_str}: HTTP {response.status_code}")
+                continue
+
+            data = response.json()
+            forecast_day = data["forecast"]["forecastday"][0]
+            day_data = forecast_day["day"]
+            wind_direction_noon = forecast_day["hour"][12]["wind_degree"]
+
+            records.append(
+                {
+                    DATE_COLUMN: pd.to_datetime(date_str),
+                    AVG_TEMPERATURE_COLUMN: day_data["avgtemp_c"],
+                    AVG_WIND_SPEED_COLUMN: day_data["maxwind_kph"] / 3.6,
+                    AVG_WIND_DIRECTION_COLUMN: wind_direction_noon,
+                }
+            )
+        except requests.exceptions.RequestException as exc:
+            print(f"Network error fetching data for {date_str}: {exc.__class__.__name__}")
+        except (KeyError, ValueError, IndexError) as exc:
+            print(f"Error parsing data for {date_str}: {exc.__class__.__name__}")
 
     if not records:
-        print("No data fetched from API. Exiting.")
+        print("No data fetched from the API. Exiting.")
         return pd.DataFrame()
-        
-    df_api = pd.DataFrame(records)
-    df_api = df_api.sort_values('Data').reset_index(drop=True)
-    print(f"Successfully fetched {len(df_api)} records from API.")
+
+    df_api = pd.DataFrame(records).sort_values(DATE_COLUMN).reset_index(drop=True)
+    print(f"Successfully fetched {len(df_api)} records from the API.")
     return df_api
 
+
 def load_and_process_production_data(filepath: Path) -> pd.DataFrame:
-    """
-    Loads and processes the raw production data to get daily sums.
-    Mirrors the logic from DataPreparation.ipynb.
-    """
+    """Load source production data and aggregate wind production by day."""
     print(f"Loading production data from: {filepath}")
-    df_producao_raw = pd.read_csv(filepath, na_values=-990, sep=';', skiprows=2)
-    df_producao_raw.columns = df_producao_raw.columns.str.strip()
-    df_producao = df_producao_raw[['Data e Hora', 'Eólica']].copy()
-    df_producao['Data e Hora'] = pd.to_datetime(df_producao['Data e Hora'])
-    df_producao.set_index('Data e Hora', inplace=True)
-    
-    df_producao_diaria = df_producao.resample('D').sum().reset_index()
-    df_producao_diaria.rename(columns={'Data e Hora': 'Data', 'Eólica_Total_Dia': 'Eólica'}, inplace=True)
-    if 'Eólica_Total_Dia' in df_producao_diaria.columns:
-         df_producao_diaria.rename(columns={'Eólica_Total_Dia': 'Eólica'}, inplace=True)
-    else: # Ensure the column is named 'Eólica'
-         df_producao_diaria.rename(columns={'Eólica': 'Eólica'}, inplace=True)
+    df_raw = pd.read_csv(filepath, na_values=-990, sep=";", skiprows=2)
+    df_raw.columns = df_raw.columns.str.strip()
 
+    required_columns = {RAW_DATE_TIME_COLUMN, RAW_WIND_PRODUCTION_COLUMN}
+    missing_columns = required_columns.difference(df_raw.columns)
+    if missing_columns:
+        raise ValueError(f"Missing columns in production file: {sorted(missing_columns)}")
 
-    print(f"Processed production data. Shape: {df_producao_diaria.shape}")
-    return df_producao_diaria[['Data', 'Eólica']]
+    df_production = df_raw[[RAW_DATE_TIME_COLUMN, RAW_WIND_PRODUCTION_COLUMN]].copy()
+    df_production[RAW_DATE_TIME_COLUMN] = pd.to_datetime(
+        df_production[RAW_DATE_TIME_COLUMN], errors="coerce"
+    )
+    df_production[RAW_WIND_PRODUCTION_COLUMN] = pd.to_numeric(
+        df_production[RAW_WIND_PRODUCTION_COLUMN], errors="coerce"
+    )
+    df_production = df_production.dropna(subset=[RAW_DATE_TIME_COLUMN, RAW_WIND_PRODUCTION_COLUMN])
+
+    df_daily = (
+        df_production.set_index(RAW_DATE_TIME_COLUMN)
+        .resample("D")[RAW_WIND_PRODUCTION_COLUMN]
+        .sum()
+        .reset_index()
+        .rename(columns={RAW_DATE_TIME_COLUMN: DATE_COLUMN, RAW_WIND_PRODUCTION_COLUMN: TARGET_COLUMN})
+    )
+
+    print(f"Processed production data. Shape: {df_daily.shape}")
+    return df_daily[[DATE_COLUMN, TARGET_COLUMN]]
 
 
 def apply_feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Applies all feature engineering steps from DataPreparation.ipynb (section 5).
-    Assumes df has 'Data', 'Eólica', 'Intensidade_Media', 'Temperatura_Media', 'Direcao_Media'.
+    Apply the feature engineering steps used by the forecasting model.
+
+    Expected input columns:
+    Date, Wind_Production, Average_Wind_Speed, Average_Temperature, Average_Wind_Direction.
     """
     print("Applying feature engineering...")
-    df_eng = df.copy()
-    df_eng['Data'] = pd.to_datetime(df_eng['Data'])
-    df_eng = df_eng.sort_values('Data').reset_index(drop=True)
+    df_features = df.copy()
+    df_features[DATE_COLUMN] = pd.to_datetime(df_features[DATE_COLUMN])
+    df_features = df_features.sort_values(DATE_COLUMN).reset_index(drop=True)
 
-    df_eng['mes'] = df_eng['Data'].dt.month
-    df_eng['dia_da_semana'] = df_eng['Data'].dt.dayofweek
-    df_eng['dia_do_ano'] = df_eng['Data'].dt.dayofyear
-    df_eng['semana_do_ano'] = df_eng['Data'].dt.isocalendar().week.astype(int)
-    df_eng['trimestre'] = df_eng['Data'].dt.quarter
-    df_eng['eh_fim_de_semana'] = df_eng['dia_da_semana'].isin([5, 6]).astype(int)
+    df_features["Month"] = df_features[DATE_COLUMN].dt.month
+    df_features["Day_Of_Week"] = df_features[DATE_COLUMN].dt.dayofweek
+    df_features["Day_Of_Year"] = df_features[DATE_COLUMN].dt.dayofyear
+    df_features["ISO_Week"] = df_features[DATE_COLUMN].dt.isocalendar().week.astype(int)
+    df_features["Quarter"] = df_features[DATE_COLUMN].dt.quarter
+    df_features["Is_Weekend"] = df_features["Day_Of_Week"].isin([5, 6]).astype(int)
 
-    df_eng['vento_sin'] = np.sin(np.radians(df_eng['Direcao_Media']))
-    df_eng['vento_cos'] = np.cos(np.radians(df_eng['Direcao_Media']))
-    df_eng['dia_semana_sin'] = np.sin(2 * np.pi * df_eng['dia_da_semana'] / 7)
-    df_eng['dia_semana_cos'] = np.cos(2 * np.pi * df_eng['dia_da_semana'] / 7)
-    df_eng['mes_sin'] = np.sin(2 * np.pi * df_eng['mes'] / 12)
-    df_eng['mes_cos'] = np.cos(2 * np.pi * df_eng['mes'] / 12)
-    df_eng['dia_ano_sin'] = np.sin(2 * np.pi * df_eng['dia_do_ano'] / 366) # Use 366 for leap year safety
-    df_eng['dia_ano_cos'] = np.cos(2 * np.pi * df_eng['dia_do_ano'] / 366)
+    df_features["Wind_Direction_Sin"] = np.sin(np.radians(df_features[AVG_WIND_DIRECTION_COLUMN]))
+    df_features["Wind_Direction_Cos"] = np.cos(np.radians(df_features[AVG_WIND_DIRECTION_COLUMN]))
+    df_features["Day_Of_Week_Sin"] = np.sin(2 * np.pi * df_features["Day_Of_Week"] / 7)
+    df_features["Day_Of_Week_Cos"] = np.cos(2 * np.pi * df_features["Day_Of_Week"] / 7)
+    df_features["Month_Sin"] = np.sin(2 * np.pi * df_features["Month"] / 12)
+    df_features["Month_Cos"] = np.cos(2 * np.pi * df_features["Month"] / 12)
+    df_features["Day_Of_Year_Sin"] = np.sin(2 * np.pi * df_features["Day_Of_Year"] / 366)
+    df_features["Day_Of_Year_Cos"] = np.cos(2 * np.pi * df_features["Day_Of_Year"] / 366)
 
-    lags_eolica = [1, 2, 3, 7, 14]
-    lags_meteo = [1, 2, 3, 7]
+    wind_lags = [1, 2, 3, 7, 14]
+    weather_lags = [1, 2, 3, 7]
 
-    for lag in lags_eolica:
-        df_eng[f'Eólica_lag{lag}'] = df_eng['Eólica'].shift(lag)
+    for lag in wind_lags:
+        df_features[f"Wind_Production_Lag{lag}"] = df_features[TARGET_COLUMN].shift(lag)
 
-    for lag in lags_meteo:
-        df_eng[f'Intensidade_Media_lag{lag}'] = df_eng['Intensidade_Media'].shift(lag)
-        df_eng[f'Temperatura_Media_lag{lag}'] = df_eng['Temperatura_Media'].shift(lag)
-        df_eng[f'vento_sin_lag{lag}'] = df_eng['vento_sin'].shift(lag)
-        df_eng[f'vento_cos_lag{lag}'] = df_eng['vento_cos'].shift(lag)
+    for lag in weather_lags:
+        df_features[f"Average_Wind_Speed_Lag{lag}"] = df_features[AVG_WIND_SPEED_COLUMN].shift(lag)
+        df_features[f"Average_Temperature_Lag{lag}"] = df_features[AVG_TEMPERATURE_COLUMN].shift(lag)
+        df_features[f"Wind_Direction_Sin_Lag{lag}"] = df_features["Wind_Direction_Sin"].shift(lag)
+        df_features[f"Wind_Direction_Cos_Lag{lag}"] = df_features["Wind_Direction_Cos"].shift(lag)
 
     window_sizes = [3, 7, 14]
     for window in window_sizes:
-        # Eólica
-        df_eng[f'Eolica_roll_mean_{window}'] = df_eng['Eólica'].shift(1).rolling(window=window, min_periods=1).mean()
-        df_eng[f'Eolica_roll_std_{window}'] = df_eng['Eólica'].shift(1).rolling(window=window, min_periods=1).std()
-        # Intensidade Média
-        df_eng[f'Intensidade_Media_roll_mean_{window}'] = df_eng['Intensidade_Media'].shift(1).rolling(window=window, min_periods=1).mean()
-        df_eng[f'Intensidade_Media_roll_std_{window}'] = df_eng['Intensidade_Media'].shift(1).rolling(window=window, min_periods=1).std()
-        # Temperatura Média
-        df_eng[f'Temperatura_Media_roll_mean_{window}'] = df_eng['Temperatura_Media'].shift(1).rolling(window=window, min_periods=1).mean()
-        df_eng[f'Temperatura_Media_roll_std_{window}'] = df_eng['Temperatura_Media'].shift(1).rolling(window=window, min_periods=1).std()
-    
-    print("Feature engineering applied.")
-    return df_eng
+        df_features[f"Wind_Production_Rolling_Mean_{window}"] = (
+            df_features[TARGET_COLUMN].shift(1).rolling(window=window, min_periods=1).mean()
+        )
+        df_features[f"Wind_Production_Rolling_Std_{window}"] = (
+            df_features[TARGET_COLUMN].shift(1).rolling(window=window, min_periods=1).std()
+        )
+        df_features[f"Average_Wind_Speed_Rolling_Mean_{window}"] = (
+            df_features[AVG_WIND_SPEED_COLUMN].shift(1).rolling(window=window, min_periods=1).mean()
+        )
+        df_features[f"Average_Wind_Speed_Rolling_Std_{window}"] = (
+            df_features[AVG_WIND_SPEED_COLUMN].shift(1).rolling(window=window, min_periods=1).std()
+        )
+        df_features[f"Average_Temperature_Rolling_Mean_{window}"] = (
+            df_features[AVG_TEMPERATURE_COLUMN].shift(1).rolling(window=window, min_periods=1).mean()
+        )
+        df_features[f"Average_Temperature_Rolling_Std_{window}"] = (
+            df_features[AVG_TEMPERATURE_COLUMN].shift(1).rolling(window=window, min_periods=1).std()
+        )
+
+    print("Feature engineering completed.")
+    return df_features
+
 
 def handle_final_nans(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Handles NaNs created by lag/rolling features using backfill.
-    Mirrors logic from DataPreparation.ipynb (section 6).
-    """
+    """Handle NaNs created by lag and rolling-window features."""
     print("Handling final NaNs...")
     df_filled = df.copy()
-    cols_com_lags_roll = [col for col in df_filled.columns if '_lag' in col or '_roll_' in col]
-    
+    lag_roll_columns = [col for col in df_filled.columns if "_Lag" in col or "_Rolling_" in col]
 
-    for col in cols_com_lags_roll:
+    for col in lag_roll_columns:
         df_filled[col] = df_filled[col].bfill()
 
-    nans_finais = df_filled.isnull().sum()
-    if nans_finais.sum() > 0:
-        print("WARNING: NaNs remaining after bfill:")
-        print(nans_finais[nans_finais > 0])
-        print("Attempting to fill remaining NaNs with 0 (this might not be ideal).")
-        df_filled.fillna(0, inplace=True) 
+    remaining_nans = df_filled.isnull().sum()
+    if remaining_nans.sum() > 0:
+        print("WARNING: NaNs remaining after backfill:")
+        print(remaining_nans[remaining_nans > 0])
+        print("Filling remaining NaNs with 0.")
+        df_filled = df_filled.fillna(0)
     else:
-        print("No NaNs remaining after bfill.")
+        print("No NaNs remaining after backfill.")
+
     return df_filled
 
-def main():
-    df_historical = None
-    if HISTORICAL_PROCESSED_FILE.exists():
-        print(f"Loading historical processed data (for column reference) from: {HISTORICAL_PROCESSED_FILE}")
-        df_historical = pd.read_csv(HISTORICAL_PROCESSED_FILE, parse_dates=['Data'])
-    else:
-        print(f"WARNING: Historical processed file not found: {HISTORICAL_PROCESSED_FILE}")
-        print("Continuing without it, relying solely on API data for features.")
 
-    # 2. Fetch new weather data from API
-    #    Certifique-se que DAYS_TO_FETCH_API é grande o suficiente para cobrir
-    #    o período de interesse + o máximo de dias de lag/rolling.
-    #    Ex: Se quer prever Maio, e dados de Abril são input, e max_lag=14:
-    #    Fetch desde meados de Março até o final de Abril.
-    #    Ex: DAYS_TO_FETCH_API = 45 (para cobrir ~30 dias de Abril + 15 dias de contexto de Março)
-    #        e ajuste as datas de início/fim da API implicitamente pelo loop em fetch_weather_api_data
-    
-    num_context_days_for_api_lags = 15 # Dias extras para buscar ANTES do seu período de interesse
-                                       # Deve ser >= max(lags_eolica, lags_meteo, window_sizes)
-    # Suponha que seu período de interesse para features é Abril.
-    # Você precisa buscar dados da API desde meados de Março.
-    # A função fetch_weather_api_data já busca "para trás" a partir de hoje.
-    # Se você quer dados de Abril e Maio e hoje é, digamos, fim de Maio,
-    # DAYS_TO_FETCH_API deve cobrir todo esse período + contexto.
-    
-    # Exemplo: Se hoje é 29 de Maio e você quer features para Abril e Maio.
-    # E seu maior lag/janela é 14 dias.
-    # Você precisa de dados desde ~15 de Março para popular lags para 1º de Abril.
-    # Então DAYS_TO_FETCH_API deveria ser ~ (31mar+30abr+29mai) = 90 dias.
-    # Ajuste DAYS_TO_FETCH_API na configuração do script.
+def align_output_to_historical_columns(df: pd.DataFrame, historical_file: Path) -> pd.DataFrame:
+    """Use the historical feature order when available, converted to English names."""
+    if not historical_file.exists():
+        print("No historical file available for column reference. Using current column order.")
+        return df
 
-    df_api_meteo = fetch_weather_api_data(API_KEY, LOCALIZACAO_API, DAYS_TO_FETCH_API)
-    if df_api_meteo.empty:
+    df_historical = pd.read_csv(historical_file, nrows=1)
+    expected_columns = columns_to_english(df_historical.columns.tolist())
+    for col in df.columns:
+        if col not in expected_columns:
+            expected_columns.append(col)
+    return df.reindex(columns=expected_columns)
+
+
+def main() -> None:
+    df_api_weather = fetch_weather_api_data(API_KEY, API_LOCATION, DAYS_TO_FETCH)
+    if df_api_weather.empty:
         return
 
-    # 3. Load recent production data
-    if not PRODUCAO_RAW_FILE.exists():
-        print(f"ERROR: Raw production file not found: {PRODUCAO_RAW_FILE}")
-        return
-    df_producao_recent = load_and_process_production_data(PRODUCAO_RAW_FILE)
+    if not PRODUCTION_RAW_FILE.exists():
+        raise FileNotFoundError(f"Raw production file not found: {PRODUCTION_RAW_FILE}")
 
-    # 4. Merge API weather with recent production data
+    df_recent_production = load_and_process_production_data(PRODUCTION_RAW_FILE)
+
     print("Merging API weather data with recent production data...")
-    df_new_data_raw = pd.merge(df_api_meteo, df_producao_recent, on='Data', how='inner')
+    df_new_data_raw = pd.merge(df_api_weather, df_recent_production, on=DATE_COLUMN, how="inner")
     if df_new_data_raw.empty:
         print("No matching dates found between API weather data and production data. Cannot proceed.")
         return
-    df_new_data_raw = df_new_data_raw.sort_values('Data').reset_index(drop=True)
+
+    df_new_data_raw = df_new_data_raw.sort_values(DATE_COLUMN).reset_index(drop=True)
     print(f"Merged new data. Shape: {df_new_data_raw.shape}")
 
-    # 5. O DataFrame para feature engineering é AGORA APENAS os dados da API + produção recente
-    df_for_feature_eng = df_new_data_raw.copy()
-    
-    # Se você quiser focar em um subconjunto específico (ex: só Abril para input)
-    # mas buscou mais dados para contexto de lag, você pode filtrar aqui DEPOIS da feature engineering.
-    # Por agora, vamos processar tudo que foi baixado.
+    df_features = apply_feature_engineering(df_new_data_raw)
+    df_processed = handle_final_nans(df_features)
+    df_final_new_data = df_processed.dropna(subset=[TARGET_COLUMN]).copy()
 
-    print(f"Data for feature engineering (from API/Recent Production). Shape: {df_for_feature_eng.shape}")
-    
-    # 6. Apply feature engineering
-    df_features_applied = apply_feature_engineering(df_for_feature_eng)
-    
-    # 7. Handle NaNs from lags/rolling windows
-    #    O bfill aqui vai preencher os NaNs no início do período da API
-    #    usando os primeiros valores calculáveis dentro do período da API.
-    df_processed_combined = handle_final_nans(df_features_applied)
-
-    # 8. Definir o período de interesse para output
-    #    Ex: Se você buscou 60 dias, mas só quer os últimos 30 com features completas.
-    #    O handle_final_nans já fez bfill, então os primeiros dias terão features (embora preenchidas).
-    #    Se você quiser remover os primeiros dias onde o lag/rolling não pôde ser totalmente calculado
-    #    a partir de dados "reais" passados (e foram preenchidos por bfill), você pode dropar.
-    #    Por exemplo, se o maior lag/janela é 14, os primeiros 13-14 dias de
-    #    df_processed_combined terão algumas features preenchidas por bfill.
-    
-    # Suponha que você quer as features para um período específico (ex: Abril em diante)
-    # E que DAYS_TO_FETCH_API foi configurado para ter dados suficientes antes.
-    # start_date_of_interest = pd.to_datetime("2025-04-01")
-    # df_final_new_data = df_processed_combined[df_processed_combined['Data'] >= start_date_of_interest].copy()
-    
-    # Ou, simplesmente pegar tudo que foi processado e o usuário decide depois
-    df_final_new_data = df_processed_combined.copy()
-    
-    # Remover linhas onde 'Eólica' (target) é NaN, se houver
-    # Isso pode acontecer se a produção para os dias mais recentes da API ainda não estiver disponível.
-    df_final_new_data.dropna(subset=['Eólica'], inplace=True)
-
-
-    print(f"\n--- Final Processed New Data (first 5 rows) ---")
+    print("\n--- Final processed new data: first 5 rows ---")
     print(df_final_new_data.head())
-    
-    # (Restante do código de print e save...)
 
-    # Para a consistência de colunas, se df_historical foi carregado:
-    if df_historical is not None:
-        expected_cols = df_historical.columns.tolist()
-        # Adicionar colunas que podem ter sido criadas e não estão no histórico antigo
-        # (ex: se você adicionou novas features no apply_feature_engineering)
-        current_cols = df_final_new_data.columns.tolist()
-        for col in current_cols:
-            if col not in expected_cols:
-                expected_cols.append(col) # Mantém novas features
-
-        df_final_new_data = df_final_new_data.reindex(columns=expected_cols)
-    else: # Se não há histórico, a ordem atual é a que fica
-        print("No historical file for column reference, using current column order.")
-
+    df_final_new_data = align_output_to_historical_columns(df_final_new_data, HISTORICAL_PROCESSED_FILE)
 
     if df_final_new_data.isnull().sum().sum() > 0:
-        print("\nWARNING: Some NaNs detected in the final new data after column reordering:")
+        print("\nWARNING: NaNs detected in the final new data after column reordering:")
         print(df_final_new_data.isnull().sum()[df_final_new_data.isnull().sum() > 0])
 
     output_filename = PROCESSED_DATA_PATH / f"api_data_featured_{datetime.now().strftime('%Y%m%d')}.csv"
-    os.makedirs(PROCESSED_DATA_PATH, exist_ok=True)
+    PROCESSED_DATA_PATH.mkdir(parents=True, exist_ok=True)
     df_final_new_data.to_csv(output_filename, index=False)
     print(f"\nSuccessfully processed and saved new data to: {output_filename}")
 
+
 if __name__ == "__main__":
-    # Create dummy data/processed folders and files if they don't exist for testing
-    # In a real scenario, DataPreparation.ipynb would create agg_data_ml.csv
-    os.makedirs(RAW_DATA_PATH, exist_ok=True)
-    os.makedirs(PROCESSED_DATA_PATH, exist_ok=True)
-
-    # Create a dummy ReparticaoProducao.csv if it doesn't exist
-    if not PRODUCAO_RAW_FILE.exists():
-        print(f"Dummy {PRODUCAO_RAW_FILE} not found. Creating a minimal one for script to run.")
-        dummy_prod_data = {
-            "Data e Hora": pd.to_datetime([datetime.now() - timedelta(days=i) for i in range(30)]).strftime('%Y-%m-%d %H:%M:%S'),
-            "Eólica": np.random.randint(10000, 200000, 30)
-        }
-        # Add dummy header rows to match original skip
-        with open(PRODUCAO_RAW_FILE, 'w') as f:
-            f.write("Dummy Header 1\n")
-            f.write("Dummy Header 2\n")
-            pd.DataFrame(dummy_prod_data).to_csv(f, sep=';', index=False)
-
-    # Create a dummy agg_data_ml.csv if it doesn't exist
-    if not HISTORICAL_PROCESSED_FILE.exists():
-        print(f"Dummy {HISTORICAL_PROCESSED_FILE} not found. Creating a minimal one for script to run.")
-        # Create a minimal DataFrame with expected columns
-        # This is complex due to many engineered features. For a true test, run DataPreparation.ipynb.
-        # For this dummy, we'll just make it have the base columns.
-        # The script will still try to make features, but lags will be mostly NaN then bfilled.
-        num_dummy_historical_rows = 60
-        dummy_dates = [datetime.now() - timedelta(days=i) for i in range(DAYS_TO_FETCH_API + 1, DAYS_TO_FETCH_API + 1 + num_dummy_historical_rows)]
-        dummy_hist_data = {
-            'Data': pd.to_datetime(dummy_dates),
-            'Eólica': np.random.randint(50000, 150000, num_dummy_historical_rows),
-            'Intensidade_Media': np.random.rand(num_dummy_historical_rows) * 5 + 1,
-            'Temperatura_Media': np.random.rand(num_dummy_historical_rows) * 10 + 5,
-            'Direcao_Media': np.random.randint(0, 360, num_dummy_historical_rows)
-        }
-        df_dummy_hist = pd.DataFrame(dummy_hist_data)
-        # Apply feature engineering to this dummy historical data to get all columns
-        df_dummy_hist_featured = apply_feature_engineering(df_dummy_hist)
-        df_dummy_hist_featured = handle_final_nans(df_dummy_hist_featured)
-        df_dummy_hist_featured.to_csv(HISTORICAL_PROCESSED_FILE, index=False)
-        print(f"Created dummy {HISTORICAL_PROCESSED_FILE} with shape {df_dummy_hist_featured.shape} and columns: {df_dummy_hist_featured.columns.tolist()}")
-
-
     main()
