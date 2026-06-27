@@ -71,19 +71,29 @@ Note: the raw production data included in this project ends on `2025-04-28`. If 
 
 ## Running the pipeline
 
-Generate recent weather-based features:
+Processed CSV files in `data/processed/` are generated outputs and are not versioned by Git. Keep the raw input files in `data/raw/`, configure `.env`, and regenerate processed data when needed.
+
+Regenerate the historical training features by running all cells in the data-preparation notebook:
+
+```powershell
+.\venv\Scripts\python.exe -m jupyter notebook .\notebooks\DataPreparation.ipynb
+```
+
+This writes `data/processed/agg_data_ml.csv`. If the legacy pre-feature aggregate `agg_data.csv` is needed, recreate it from the merged daily aggregate in the same notebook.
+
+Generate recent WeatherAPI feature data:
 
 ```powershell
 .\venv\Scripts\python.exe .\scripts\process_api_data.py
 ```
 
-Apply the trained models to the generated data:
+Apply the trained models to generate prediction outputs:
 
 ```powershell
 .\venv\Scripts\python.exe .\scripts\apply_models_to_api_data.py
 ```
 
-The scripts can be run from the project root. Internal paths are resolved automatically from each script location.
+The scripts can be run from the project root. Internal paths are resolved automatically from each script location. API output files are date-stamped as `api_data_featured_YYYYMMDD.csv` and `api_data_predictions_YYYYMMDD.csv`.
 
 ## Notebooks
 

@@ -20,8 +20,8 @@ secrets/
 *.secrets
 secrets.*
 
-data/processed/api_data_featured_*.csv
-data/processed/api_data_predictions_*.csv
+data/processed/*.csv
+!data/processed/.gitkeep
 
 .DS_Store
 Thumbs.db
