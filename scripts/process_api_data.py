@@ -1,96 +1,30 @@
-import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
-import requests
-from dotenv import load_dotenv
-from schema import (
-    AVG_TEMPERATURE_COLUMN,
-    AVG_WIND_DIRECTION_COLUMN,
-    AVG_WIND_SPEED_COLUMN,
+from wind_forecast.config import load_weather_api_config
+from wind_forecast.features import (
+    align_output_to_historical_columns,
+    apply_feature_engineering,
+    handle_final_nans,
+)
+from wind_forecast.ingestion import fetch_weather_api_data
+from wind_forecast.schemas import (
     DATE_COLUMN,
     RAW_DATE_TIME_COLUMN,
     RAW_WIND_PRODUCTION_COLUMN,
     RAW_PRODUCTION_FILENAME,
     TARGET_COLUMN,
 )
-from wind_forecast.features import (
-    align_output_to_historical_columns,
-    apply_feature_engineering,
-    handle_final_nans,
-)
 
 
 # --- Configuration ---
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-load_dotenv(PROJECT_ROOT / ".env")
-
-API_KEY = os.getenv("WEATHER_API_KEY")
-API_LOCATION = os.getenv("WEATHER_API_LOCATION", "41.8345,-7.7889")
-DAYS_TO_FETCH = int(os.getenv("WEATHER_API_DAYS", "44"))
-WEATHER_API_END_DATE = os.getenv("WEATHER_API_END_DATE")
-
 BASE_DATA_PATH = PROJECT_ROOT / "data"
 RAW_DATA_PATH = BASE_DATA_PATH / "raw"
 PROCESSED_DATA_PATH = BASE_DATA_PATH / "processed"
 HISTORICAL_PROCESSED_FILE = PROCESSED_DATA_PATH / "agg_data_ml.csv"
 PRODUCTION_RAW_FILE = RAW_DATA_PATH / RAW_PRODUCTION_FILENAME
-
-
-def build_dates_to_fetch(num_days: int, end_date: str | None = None) -> list[str]:
-    """Build the list of past dates to request from WeatherAPI."""
-    if num_days <= 0:
-        raise ValueError("WEATHER_API_DAYS must be greater than zero.")
-
-    end = pd.to_datetime(end_date).to_pydatetime() if end_date else datetime.today()
-    return [(end - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(1, num_days + 1)]
-
-
-def fetch_weather_api_data(api_key: str | None, location: str, num_days: int) -> pd.DataFrame:
-    """Fetch historical weather data from WeatherAPI."""
-    if not api_key:
-        raise RuntimeError("Set WEATHER_API_KEY in a local .env file before calling the API.")
-
-    print(f"Fetching weather data for the last {num_days} days...")
-    dates_to_fetch = build_dates_to_fetch(num_days, WEATHER_API_END_DATE)
-
-    records = []
-    endpoint = "https://api.weatherapi.com/v1/history.json"
-
-    for date_str in dates_to_fetch:
-        params = {"key": api_key, "q": location, "dt": date_str}
-        try:
-            response = requests.get(endpoint, params=params, timeout=10)
-            if not response.ok:
-                print(f"Error fetching data for {date_str}: HTTP {response.status_code}")
-                continue
-
-            data = response.json()
-            forecast_day = data["forecast"]["forecastday"][0]
-            day_data = forecast_day["day"]
-            wind_direction_noon = forecast_day["hour"][12]["wind_degree"]
-
-            records.append(
-                {
-                    DATE_COLUMN: pd.to_datetime(date_str),
-                    AVG_TEMPERATURE_COLUMN: day_data["avgtemp_c"],
-                    AVG_WIND_SPEED_COLUMN: day_data["maxwind_kph"] / 3.6,
-                    AVG_WIND_DIRECTION_COLUMN: wind_direction_noon,
-                }
-            )
-        except requests.exceptions.RequestException as exc:
-            print(f"Network error fetching data for {date_str}: {exc.__class__.__name__}")
-        except (KeyError, ValueError, IndexError) as exc:
-            print(f"Error parsing data for {date_str}: {exc.__class__.__name__}")
-
-    if not records:
-        print("No data fetched from the API. Exiting.")
-        return pd.DataFrame()
-
-    df_api = pd.DataFrame(records).sort_values(DATE_COLUMN).reset_index(drop=True)
-    print(f"Successfully fetched {len(df_api)} records from the API.")
-    return df_api
 
 
 def load_and_process_production_data(filepath: Path) -> pd.DataFrame:
@@ -126,7 +60,13 @@ def load_and_process_production_data(filepath: Path) -> pd.DataFrame:
 
 
 def main() -> None:
-    df_api_weather = fetch_weather_api_data(API_KEY, API_LOCATION, DAYS_TO_FETCH)
+    api_config = load_weather_api_config(load_dotenv_file=True)
+    df_api_weather = fetch_weather_api_data(
+        api_config.api_key,
+        api_config.location,
+        api_config.days,
+        api_config.end_date,
+    )
     if df_api_weather.empty:
         return
 
