@@ -22,6 +22,7 @@ secrets.*
 
 data/processed/*.csv
 !data/processed/.gitkeep
+data/pilot/
 
 .DS_Store
 Thumbs.db
