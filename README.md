@@ -25,6 +25,38 @@ The reusable package currently includes:
 - `inference.py`: model/scaler loading and prediction.
 - `evaluation.py`: regression metric calculation.
 
+## Dataset versioning and v2 migration
+
+The current tracked raw files remain the v1 baseline in `data/raw/*.csv`.
+Generated v1-compatible outputs remain local under `data/processed/*.csv`, and
+the saved models and scalers in `models/` are v1-only artifacts.
+
+Future v2 data must use separate paths without moving or overwriting v1:
+
+- `data/raw/v2/production/`: REN production source snapshots.
+- `data/raw/v2/weather/`: ERA5-Land weather source snapshots.
+- `data/processed/v2/daily_merged/`: daily merged production/weather tables.
+- `data/processed/v2/ml_features/`: model-ready v2 feature tables.
+- `data/manifests/historical_v2.json`: the planned v2 dataset manifest.
+- `data/pilot/`: ignored temporary probe outputs only.
+
+V2 manifests use `wind_forecast.manifests.DatasetManifest` with deterministic
+JSON, schema version `wind_forecast.dataset_manifest.v1`, repository-relative
+paths, SHA-256 checksums, retrieval metadata, coverage, units, timezone,
+row/column counts, warnings, license and attribution notes, and no secrets.
+Use `extra_metadata` for source-specific fields such as REN overlap/revision
+notes, ERA5-Land product identifiers, station IDs, coordinates, UTC policy, and
+aggregation formulas.
+
+Future ingestion must write only to v2 paths and record raw-file checksums in
+the manifest. REN historical revisions must be represented as explicit v2
+revision metadata or overlap notes; never append to or silently mutate v1.
+Rollback is done by removing/reverting v2 generated outputs and manifests while
+leaving v1 usable. After v2 feature generation, scalers must be refit, models
+must be retrained, and metrics must be re-baselined before making any v2 model
+claim. The durable v2 decision record is
+`docs/PHASE_2_V2_DATA_CONTRACT_DECISION.md`.
+
 ## Column naming
 
 Use the English schema for new work:
