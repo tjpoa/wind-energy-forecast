@@ -698,6 +698,67 @@ def write_unavailable_status(
     }
 
 
+def write_invalid_partition(
+    output_root: Path,
+    capture: RenResponseCapture,
+    *,
+    message: str,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Write raw response evidence plus invalid status for a rejected partition."""
+    paths = ren_partition_paths(output_root, capture.requested_date)
+    existing = [path for path in (paths.raw_response, paths.normalized_csv, paths.status_json) if path.exists()]
+    if existing and not overwrite:
+        raise FileExistsError(
+            "REN invalid partition evidence already exists; use --overwrite to replace it explicitly."
+        )
+
+    raw_checksum = write_json(paths.raw_response, capture.payload)
+    status_payload = {
+        "endpoint_identifier": capture.endpoint_identifier,
+        "endpoint_url": capture.endpoint_url,
+        "http_status": capture.status_code,
+        "request_params": build_request_params(capture.requested_date),
+        "response_headers": dict(capture.response_headers),
+        "retrieval_timestamp_utc": capture.retrieval_timestamp_utc,
+        "source_date": capture.requested_date,
+        "timezone": UNRESOLVED_REN_TIMEZONE,
+        "validation": {
+            "validation_status": "invalid",
+            "source_date": capture.requested_date,
+            "row_count": 0,
+            "error": message,
+            "warnings": [
+                "Raw REN response was preserved because normalization or validation failed.",
+            ],
+        },
+        "paths": {
+            "raw_response": _manifest_path(paths.raw_response, output_root=output_root),
+            "normalized_csv": None,
+            "status_json": _manifest_path(paths.status_json, output_root=output_root),
+        },
+        "checksums": {
+            "raw_response_sha256": raw_checksum,
+        },
+        "source_status": "provisional_or_final_unknown",
+    }
+    status_checksum = write_json(paths.status_json, status_payload)
+    return {
+        "source_date": capture.requested_date,
+        "status": "invalid",
+        "row_count": 0,
+        "paths": {
+            "raw_response": paths.raw_response,
+            "status_json": paths.status_json,
+        },
+        "checksums": {
+            "raw_response_sha256": raw_checksum,
+            "status_json_sha256": status_checksum,
+        },
+        "warnings": list(status_payload["validation"]["warnings"]),
+    }
+
+
 def partition_is_verified(output_root: Path, source_date: str | date) -> bool:
     """Return True when a successful daily partition exists and checksums match."""
     paths = ren_partition_paths(output_root, source_date)
@@ -1031,6 +1092,7 @@ __all__ = [
     "ren_partition_paths",
     "validate_ren_normalized_day",
     "write_daily_partition",
+    "write_invalid_partition",
     "write_manifest",
     "write_unavailable_status",
 ]

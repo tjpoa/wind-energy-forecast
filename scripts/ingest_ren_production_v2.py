@@ -29,6 +29,7 @@ from wind_forecast.data_sources.ren import (
     utc_timestamp,
     validate_ren_normalized_day,
     write_daily_partition,
+    write_invalid_partition,
     write_manifest,
     write_unavailable_status,
 )
@@ -155,6 +156,7 @@ def run_ingestion(
                 "or --overwrite to replace it explicitly."
             )
 
+        capture = None
         try:
             capture = fetch_ren_production_day(
                 source_day,
@@ -193,7 +195,14 @@ def run_ingestion(
                     overwrite=partition_overwrite,
                 )
             )
-        except RenIngestionError:
+        except RenIngestionError as exc:
+            if capture is not None:
+                write_invalid_partition(
+                    output_root,
+                    capture,
+                    message=str(exc),
+                    overwrite=partition_overwrite,
+                )
             raise
 
         if request_delay and index < len(dates) - 1:
