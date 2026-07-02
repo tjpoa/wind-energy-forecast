@@ -23,6 +23,7 @@ from wind_forecast.data_sources.ren import (
     load_partition_summary,
     manifest_path,
     normalize_ren_payload,
+    partition_is_unavailable_status_only,
     partition_is_verified,
     ren_partition_paths,
     utc_timestamp,
@@ -56,12 +57,19 @@ def parse_args() -> argparse.Namespace:
         help="Delay in seconds between ordered one-date requests.",
     )
     parser.add_argument("--resume", action="store_true", help="Skip verified existing daily partitions.")
+    parser.add_argument(
+        "--retry-unavailable",
+        action="store_true",
+        help="With --resume, retry status-only unavailable daily partitions.",
+    )
     parser.add_argument("--overwrite", action="store_true", help="Explicitly overwrite existing daily partitions.")
     parser.add_argument("--dry-run", action="store_true", help="Print planned actions without network or writes.")
     parser.add_argument("--compare-v1-csv", type=Path, help="Optional frozen v1 production CSV for overlap metrics.")
     args = parser.parse_args()
     if args.resume and args.overwrite:
         parser.error("--resume and --overwrite are mutually exclusive.")
+    if args.retry_unavailable and not args.resume:
+        parser.error("--retry-unavailable requires --resume.")
     if args.timeout <= 0:
         parser.error("--timeout must be greater than zero.")
     if args.request_delay < 0:
@@ -77,6 +85,7 @@ def run_ingestion(
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     request_delay: float = 0.0,
     resume: bool = False,
+    retry_unavailable: bool = False,
     overwrite: bool = False,
     dry_run: bool = False,
     compare_v1_csv: Path | None = None,
@@ -85,6 +94,8 @@ def run_ingestion(
     """Run a controlled REN ingestion over an inclusive date range."""
     if resume and overwrite:
         raise ValueError("resume and overwrite are mutually exclusive.")
+    if retry_unavailable and not resume:
+        raise ValueError("retry_unavailable requires resume.")
     if timeout <= 0:
         raise ValueError("timeout must be greater than zero.")
     if request_delay < 0:
@@ -124,14 +135,21 @@ def run_ingestion(
 
     for index, source_day in enumerate(dates):
         source_date_text = source_day.isoformat()
-        if resume and partition_is_verified(output_root, source_day):
-            summary = load_partition_summary(output_root, source_day)
-            summary["skipped_existing"] = True
-            daily_results.append(summary)
-            continue
+        retrying_unavailable = False
+        if resume:
+            if partition_is_verified(output_root, source_day):
+                summary = load_partition_summary(output_root, source_day)
+                summary["skipped_existing"] = True
+                daily_results.append(summary)
+                continue
+            retrying_unavailable = (
+                retry_unavailable
+                and partition_is_unavailable_status_only(output_root, source_day)
+            )
         paths = ren_partition_paths(output_root, source_day)
         existing_paths = [paths.raw_response, paths.normalized_csv, paths.status_json]
-        if not overwrite and any(path.exists() for path in existing_paths):
+        partition_overwrite = overwrite or retrying_unavailable
+        if not partition_overwrite and any(path.exists() for path in existing_paths):
             raise FileExistsError(
                 "REN partition already exists; use --resume to skip verified partitions "
                 "or --overwrite to replace it explicitly."
@@ -160,7 +178,7 @@ def run_ingestion(
                     capture,
                     normalized,
                     validation,
-                    overwrite=overwrite,
+                    overwrite=partition_overwrite,
                 )
             )
         except RenHTTPError as exc:
@@ -172,7 +190,7 @@ def run_ingestion(
                     message=str(exc),
                     retrieval_timestamp_utc=utc_timestamp(),
                     status_code=exc.status_code,
-                    overwrite=overwrite,
+                    overwrite=partition_overwrite,
                 )
             )
         except RenIngestionError:
@@ -311,6 +329,7 @@ def main() -> None:
         timeout=args.timeout,
         request_delay=args.request_delay,
         resume=args.resume,
+        retry_unavailable=args.retry_unavailable,
         overwrite=args.overwrite,
         dry_run=args.dry_run,
         compare_v1_csv=args.compare_v1_csv,

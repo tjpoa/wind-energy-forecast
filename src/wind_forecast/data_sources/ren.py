@@ -568,6 +568,47 @@ def partition_is_verified(output_root: Path, source_date: str | date) -> bool:
     )
 
 
+def partition_is_unavailable_status_only(output_root: Path, source_date: str | date) -> bool:
+    """Return True when a partition has only strict unavailable status metadata."""
+    day = parse_source_date(source_date).isoformat()
+    paths = ren_partition_paths(output_root, day)
+    if not paths.status_json.is_file():
+        return False
+    if paths.raw_response.exists() or paths.normalized_csv.exists():
+        return False
+
+    try:
+        status = json.loads(paths.status_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(status, Mapping):
+        return False
+    if status.get("source_date") != day:
+        return False
+
+    validation = status.get("validation")
+    metadata_paths = status.get("paths")
+    checksums = status.get("checksums")
+    if not isinstance(validation, Mapping):
+        return False
+    if not isinstance(metadata_paths, Mapping) or not isinstance(checksums, Mapping):
+        return False
+    if validation.get("validation_status") != "unavailable":
+        return False
+
+    return (
+        _metadata_value_is_absent(metadata_paths, "raw_response")
+        and _metadata_value_is_absent(metadata_paths, "normalized_csv")
+        and _metadata_value_is_absent(checksums, "raw_response_sha256")
+        and _metadata_value_is_absent(checksums, "normalized_csv_sha256")
+    )
+
+
+def _metadata_value_is_absent(metadata: Mapping[str, Any], key: str) -> bool:
+    value = metadata.get(key)
+    return key not in metadata or value is None or value == ""
+
+
 def load_partition_summary(output_root: Path, source_date: str | date) -> dict[str, Any]:
     """Load a verified daily partition summary from status metadata."""
     paths = ren_partition_paths(output_root, source_date)
@@ -825,6 +866,7 @@ __all__ = [
     "load_all_partition_summaries",
     "manifest_path",
     "normalize_ren_payload",
+    "partition_is_unavailable_status_only",
     "partition_is_verified",
     "ren_partition_paths",
     "validate_ren_normalized_day",
