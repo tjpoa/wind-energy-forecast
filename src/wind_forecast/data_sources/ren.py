@@ -7,13 +7,14 @@ create directories, or read local datasets unless explicitly called.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from hashlib import sha256
 import json
 import math
 from pathlib import Path
 import unicodedata
 from typing import Any, Callable, Mapping
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
@@ -34,6 +35,8 @@ EXPECTED_UNIT = "MW"
 EXPECTED_ROWS_PER_COMPLETE_DAY = 96
 EXPECTED_FREQUENCY = "15min"
 UNRESOLVED_REN_TIMEZONE = "unresolved_ren_source_time"
+REN_WALL_CLOCK_TIMEZONE = "Europe/Lisbon"
+REN_TIMEZONE_STRATEGY = "ren_wall_clock_interpreted_as_europe_lisbon_for_dst_disambiguation"
 
 TIMESTAMP_COLUMN = "timestamp"
 PRODUCTION_COLUMN = "wind_production_mw"
@@ -98,6 +101,26 @@ class RenPartitionPaths:
     raw_response: Path
     normalized_csv: Path
     status_json: Path
+
+
+@dataclass(frozen=True)
+class RenExpectedInterval:
+    """One expected REN 15-minute interval under the explicit wall-clock strategy."""
+
+    label: str
+    local_naive: pd.Timestamp
+    local_aware_text: str
+    utc_timestamp: pd.Timestamp
+
+
+@dataclass(frozen=True)
+class RenTimestampComponents:
+    """Parsed timestamp identities used for DST-aware validation."""
+
+    local_naive: pd.Series
+    identity: pd.Series
+    identity_kind: str
+    timezone_aware: bool
 
 
 def parse_source_date(value: str | date) -> date:
@@ -297,6 +320,108 @@ def _category_to_timestamp(source_date: str, category: str) -> pd.Timestamp:
     return pd.Timestamp(parsed).tz_localize(None)
 
 
+def _expected_source_intervals(source_date: str | date) -> list[RenExpectedInterval]:
+    """Return expected physical intervals for one REN local source day."""
+    day = parse_source_date(source_date)
+    source_tz = ZoneInfo(REN_WALL_CLOCK_TIMEZONE)
+    local_start = datetime.combine(day, time.min, tzinfo=source_tz)
+    local_end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=source_tz)
+    current_utc = local_start.astimezone(timezone.utc)
+    end_utc = local_end.astimezone(timezone.utc)
+
+    intervals: list[RenExpectedInterval] = []
+    while current_utc < end_utc:
+        local = current_utc.astimezone(source_tz)
+        local_without_tz = local.replace(tzinfo=None)
+        intervals.append(
+            RenExpectedInterval(
+                label=local.strftime("%H:%M"),
+                local_naive=pd.Timestamp(local_without_tz),
+                local_aware_text=local.isoformat(timespec="seconds"),
+                utc_timestamp=pd.Timestamp(current_utc),
+            )
+        )
+        current_utc += timedelta(minutes=15)
+    return intervals
+
+
+def _expected_source_labels(source_date: str | date) -> list[str]:
+    return [item.label for item in _expected_source_intervals(source_date)]
+
+
+def _is_dst_transition_interval_sequence(intervals: list[RenExpectedInterval]) -> bool:
+    labels = [item.label for item in intervals]
+    return len(intervals) != EXPECTED_ROWS_PER_COMPLETE_DAY or len(set(labels)) != len(labels)
+
+
+def _timestamps_for_source_categories(source_date: str, categories: list[str]) -> list[pd.Timestamp | str]:
+    """Map REN wall-clock categories to timestamp values without dropping DST repeats."""
+    expected_intervals = _expected_source_intervals(source_date)
+    expected_labels = [item.label for item in expected_intervals]
+    if categories == expected_labels and _is_dst_transition_interval_sequence(expected_intervals):
+        return [item.local_aware_text for item in expected_intervals]
+    return [_category_to_timestamp(source_date, category) for category in categories]
+
+
+def _has_timezone_marker(value: object) -> bool:
+    text = str(value).strip()
+    if text.endswith("Z"):
+        return True
+    if len(text) < 6:
+        return False
+    suffix = text[-6:]
+    return (
+        suffix[0] in {"+", "-"}
+        and suffix[1:3].isdigit()
+        and suffix[3] == ":"
+        and suffix[4:6].isdigit()
+    )
+
+
+def _timestamp_components(values: pd.Series) -> RenTimestampComponents:
+    markers = values.map(_has_timezone_marker)
+    if markers.any() and not markers.all():
+        raise RenIngestionError("Normalized REN data mixes timezone-aware and timezone-naive timestamps.")
+    if markers.any():
+        identity = pd.to_datetime(values.astype(str), errors="coerce", utc=True)
+        local_naive = identity.dt.tz_convert(REN_WALL_CLOCK_TIMEZONE).dt.tz_localize(None)
+        return RenTimestampComponents(
+            local_naive=local_naive,
+            identity=identity,
+            identity_kind="utc",
+            timezone_aware=True,
+        )
+
+    local_naive = pd.to_datetime(values, errors="coerce")
+    return RenTimestampComponents(
+        local_naive=local_naive,
+        identity=local_naive,
+        identity_kind="local_wall_clock",
+        timezone_aware=False,
+    )
+
+
+def _duplicate_timestamp_groups(frame: pd.DataFrame, timestamps: pd.Series) -> list[dict[str, Any]]:
+    groups = []
+    duplicate_values = timestamps[timestamps.duplicated(keep=False)].dropna().drop_duplicates()
+    for timestamp in duplicate_values:
+        mask = timestamps == timestamp
+        values = pd.to_numeric(frame.loc[mask, PRODUCTION_COLUMN], errors="coerce").tolist()
+        groups.append(
+            {
+                "timestamp": pd.Timestamp(timestamp).isoformat(),
+                "count": int(mask.sum()),
+                "values": values,
+                "classification": "identical" if len(set(values)) <= 1 else "conflicting",
+            }
+        )
+    return groups
+
+
+def _comparison_local_timestamps(values: pd.Series) -> pd.Series:
+    return _timestamp_components(values).local_naive
+
+
 def normalize_ren_payload(
     source_date: str | date,
     payload: Any,
@@ -320,8 +445,8 @@ def normalize_ren_payload(
     if unit is None:
         raise RenIngestionError("REN response did not expose a production unit.")
     records = []
-    for category, value in zip(categories, values):
-        timestamp = _category_to_timestamp(day, category)
+    timestamps = _timestamps_for_source_categories(day, categories)
+    for timestamp, value in zip(timestamps, values):
         records.append(
             {
                 TIMESTAMP_COLUMN: timestamp,
@@ -351,7 +476,9 @@ def validate_ren_normalized_day(df: pd.DataFrame, source_date: str | date) -> di
         raise RenIngestionError(f"Normalized REN data is missing required columns: {missing_columns}.")
 
     frame = df.loc[:, NORMALIZED_COLUMNS].copy()
-    timestamps = pd.to_datetime(frame[TIMESTAMP_COLUMN], errors="coerce")
+    timestamp_components = _timestamp_components(frame[TIMESTAMP_COLUMN])
+    timestamps = timestamp_components.identity
+    local_timestamps = timestamp_components.local_naive
     values = pd.to_numeric(frame[PRODUCTION_COLUMN], errors="coerce")
 
     if timestamps.isna().any():
@@ -363,7 +490,11 @@ def validate_ren_normalized_day(df: pd.DataFrame, source_date: str | date) -> di
     if (values < 0).any():
         raise RenIngestionError("Normalized REN data contains negative production values.")
     if timestamps.duplicated().any():
-        raise RenIngestionError("Normalized REN data contains duplicate timestamps.")
+        duplicate_groups = _duplicate_timestamp_groups(frame, timestamps)
+        raise RenIngestionError(
+            "Normalized REN data contains duplicate timestamp identities: "
+            f"{duplicate_groups[:5]}."
+        )
     if not timestamps.is_monotonic_increasing:
         raise RenIngestionError("Normalized REN data is not sorted chronologically.")
 
@@ -372,23 +503,39 @@ def validate_ren_normalized_day(df: pd.DataFrame, source_date: str | date) -> di
     if set(frame[SOURCE_DATE_COLUMN].astype(str)) != {day}:
         raise RenIngestionError("Normalized REN data has inconsistent source_date values.")
 
-    expected = pd.date_range(
-        start=pd.Timestamp(day),
-        periods=EXPECTED_ROWS_PER_COMPLETE_DAY,
-        freq=EXPECTED_FREQUENCY,
-    )
+    expected_intervals = _expected_source_intervals(day)
+    expected_row_count = len(expected_intervals)
+    if timestamp_components.timezone_aware:
+        expected = pd.DatetimeIndex([item.utc_timestamp for item in expected_intervals])
+        expected_labels = [item.label for item in expected_intervals]
+        actual_labels = [pd.Timestamp(item).strftime("%H:%M") for item in local_timestamps]
+        if actual_labels != expected_labels:
+            raise RenIngestionError(
+                "Timezone-aware REN timestamps do not match the expected "
+                f"{REN_WALL_CLOCK_TIMEZONE} wall-clock interval sequence."
+            )
+    else:
+        expected = pd.DatetimeIndex([item.local_naive for item in expected_intervals])
+        local_duplicate_groups = _duplicate_timestamp_groups(frame, local_timestamps)
+        if local_duplicate_groups:
+            raise RenIngestionError(
+                "Normalized REN data contains duplicate local wall-clock timestamps "
+                "without timezone disambiguation: "
+                f"{local_duplicate_groups[:5]}."
+            )
     timestamp_index = pd.DatetimeIndex(timestamps)
     unexpected = timestamp_index.difference(expected)
     if len(unexpected):
         raise RenIngestionError("Normalized REN data contains timestamps outside the daily partition.")
 
     missing = expected.difference(timestamp_index)
-    is_complete = len(frame) == EXPECTED_ROWS_PER_COMPLETE_DAY and len(missing) == 0
-    if len(frame) > EXPECTED_ROWS_PER_COMPLETE_DAY:
+    is_complete = len(frame) == expected_row_count and len(missing) == 0
+    if len(frame) > expected_row_count:
         raise RenIngestionError("Normalized REN data has more rows than a complete 15-minute day.")
 
+    reusable_timestamps = timestamps if timestamp_components.timezone_aware else local_timestamps
     reusable_report = validate_raw_production_data(
-        frame[[TIMESTAMP_COLUMN, PRODUCTION_COLUMN]],
+        pd.DataFrame({TIMESTAMP_COLUMN: reusable_timestamps, PRODUCTION_COLUMN: values}),
         timestamp_column=TIMESTAMP_COLUMN,
         target_column=PRODUCTION_COLUMN,
         dataset_name=f"ren_production_{day}",
@@ -409,13 +556,18 @@ def validate_ren_normalized_day(df: pd.DataFrame, source_date: str | date) -> di
         "validation_status": "complete" if is_complete else "incomplete",
         "source_date": day,
         "row_count": int(len(frame)),
-        "expected_complete_row_count": EXPECTED_ROWS_PER_COMPLETE_DAY,
+        "expected_complete_row_count": expected_row_count,
         "missing_timestamp_count": int(len(missing)),
         "missing_timestamps": [item.isoformat() for item in missing],
         "earliest_timestamp": timestamp_index.min().isoformat() if len(timestamp_index) else None,
         "latest_timestamp": timestamp_index.max().isoformat() if len(timestamp_index) else None,
         "temporal_granularity": EXPECTED_FREQUENCY,
         "unit": EXPECTED_UNIT,
+        "timestamp_identity": timestamp_components.identity_kind,
+        "source_timezone_strategy": REN_TIMEZONE_STRATEGY,
+        "source_timezone": REN_WALL_CLOCK_TIMEZONE,
+        "dst_transition_day": expected_row_count != EXPECTED_ROWS_PER_COMPLETE_DAY,
+        "duplicate_local_wall_clock_timestamp_count": int(local_timestamps.duplicated(keep=False).sum()),
         "warnings": warnings,
         "reusable_validator": {
             "is_valid": reusable_report.passed,
@@ -666,10 +818,18 @@ def compare_normalized_with_v1(
     local_frame = local_frame.rename(
         columns={timestamp_column: TIMESTAMP_COLUMN, production_column: "v1_wind_production_mw"}
     )
+    local_frame["_timestamp_occurrence"] = local_frame.groupby(TIMESTAMP_COLUMN).cumcount()
+
     ren_frame = normalized[[TIMESTAMP_COLUMN, PRODUCTION_COLUMN]].copy()
-    ren_frame[TIMESTAMP_COLUMN] = pd.to_datetime(ren_frame[TIMESTAMP_COLUMN], errors="coerce")
-    aligned = pd.merge(local_frame, ren_frame, on=TIMESTAMP_COLUMN, how="inner").dropna()
-    aligned = aligned.sort_values(TIMESTAMP_COLUMN)
+    ren_frame[TIMESTAMP_COLUMN] = _comparison_local_timestamps(ren_frame[TIMESTAMP_COLUMN])
+    ren_frame["_timestamp_occurrence"] = ren_frame.groupby(TIMESTAMP_COLUMN).cumcount()
+    aligned = pd.merge(
+        local_frame,
+        ren_frame,
+        on=[TIMESTAMP_COLUMN, "_timestamp_occurrence"],
+        how="inner",
+    ).dropna()
+    aligned = aligned.sort_values([TIMESTAMP_COLUMN, "_timestamp_occurrence"])
     result: dict[str, Any] = {
         "aligned_timestamp_count": int(len(aligned)),
         "exact_match_count": None,
