@@ -7,7 +7,7 @@ functions such as :func:`run_ingestion`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 import csv
@@ -33,6 +33,12 @@ DEFAULT_CALM_THRESHOLD_M_S = 0.5
 EXPECTED_STATION_COUNT = 17
 UNMATCHED_STATION_ID = "1200579"
 TRANSFORMATION_VERSION = "era5_land_v2_weather_foundation_2A.12"
+GRID_STEP_DEGREES = 0.1
+GRID_POLICY_SINGLE_CELL = "single-cell"
+GRID_POLICY_NEAREST_VALID = "nearest-valid"
+DEFAULT_GRID_POLICY = GRID_POLICY_SINGLE_CELL
+DEFAULT_GRID_SEARCH_RADIUS = 0
+MAX_GRID_SEARCH_RADIUS = 1
 
 VARIABLE_ALIASES = {
     "temperature_2m_k": ("t2m", "2m_temperature"),
@@ -154,6 +160,19 @@ class Era5LandJob:
     chunk: Era5LandChunk
     request: Mapping[str, Any]
     paths: Era5LandPaths
+    grid_policy: str = DEFAULT_GRID_POLICY
+    grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS
+
+
+@dataclass(frozen=True)
+class GridCandidate:
+    """One deterministic ERA5-Land grid candidate for a station."""
+
+    rank: int
+    grid_latitude: float
+    grid_longitude: float
+    distance_km: float
+    is_nearest: bool
 
 
 def utc_timestamp() -> str:
@@ -206,22 +225,152 @@ def nearest_era5_land_grid_coordinate(value: float) -> float:
     return float(Decimal(str(value)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
 
 
+def normalized_grid_coordinate(value: float) -> float:
+    """Return a stable one-decimal ERA5-Land grid coordinate."""
+    rounded = round(float(value), 1)
+    return 0.0 if rounded == -0.0 else rounded
+
+
+def haversine_distance_km(latitude_a: float, longitude_a: float, latitude_b: float, longitude_b: float) -> float:
+    """Return great-circle distance between two WGS84 coordinates."""
+    radius_km = 6371.0088
+    lat_a = math.radians(latitude_a)
+    lat_b = math.radians(latitude_b)
+    delta_lat = math.radians(latitude_b - latitude_a)
+    delta_lon = math.radians(longitude_b - longitude_a)
+    a = (
+        math.sin(delta_lat / 2.0) ** 2
+        + math.cos(lat_a) * math.cos(lat_b) * math.sin(delta_lon / 2.0) ** 2
+    )
+    return 2.0 * radius_km * math.asin(math.sqrt(a))
+
+
+def validate_grid_selection_options(grid_policy: str, grid_search_radius: int) -> None:
+    """Validate the bounded grid-selection policy for Step 2A.13."""
+    if grid_policy not in {GRID_POLICY_SINGLE_CELL, GRID_POLICY_NEAREST_VALID}:
+        raise ValueError(f"grid_policy must be one of: {GRID_POLICY_SINGLE_CELL}, {GRID_POLICY_NEAREST_VALID}.")
+    if grid_search_radius < 0:
+        raise ValueError("grid_search_radius must be zero or greater.")
+    if grid_search_radius > MAX_GRID_SEARCH_RADIUS:
+        raise ValueError(f"grid_search_radius is bounded to {MAX_GRID_SEARCH_RADIUS} for Step 2A.13.")
+    if grid_policy == GRID_POLICY_SINGLE_CELL and grid_search_radius != 0:
+        raise ValueError("single-cell grid policy requires grid_search_radius=0.")
+
+
+def grid_policy_segment(grid_policy: str, grid_search_radius: int) -> str | None:
+    """Return the policy-specific path segment, preserving default paths for radius 0."""
+    if grid_policy == GRID_POLICY_NEAREST_VALID and grid_search_radius > 0:
+        return f"grid_policy=nearest_valid_r{grid_search_radius}"
+    return None
+
+
+def grid_candidates_for_station(
+    station: StationMapping,
+    *,
+    grid_policy: str = DEFAULT_GRID_POLICY,
+    grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
+) -> list[GridCandidate]:
+    """Return deterministic grid candidates ordered by distance and tie-breakers."""
+    validate_grid_selection_options(grid_policy, grid_search_radius)
+    nearest_latitude = nearest_era5_land_grid_coordinate(station.latitude)
+    nearest_longitude = nearest_era5_land_grid_coordinate(station.longitude)
+    candidates = []
+    for latitude_offset in range(-grid_search_radius, grid_search_radius + 1):
+        for longitude_offset in range(-grid_search_radius, grid_search_radius + 1):
+            grid_latitude = normalized_grid_coordinate(nearest_latitude + GRID_STEP_DEGREES * latitude_offset)
+            grid_longitude = normalized_grid_coordinate(nearest_longitude + GRID_STEP_DEGREES * longitude_offset)
+            candidates.append(
+                {
+                    "grid_latitude": grid_latitude,
+                    "grid_longitude": grid_longitude,
+                    "distance_km": haversine_distance_km(
+                        station.latitude,
+                        station.longitude,
+                        grid_latitude,
+                        grid_longitude,
+                    ),
+                    "is_nearest": latitude_offset == 0 and longitude_offset == 0,
+                }
+            )
+    ordered = sorted(
+        candidates,
+        key=lambda item: (
+            item["distance_km"],
+            abs(item["grid_latitude"] - station.latitude),
+            abs(item["grid_longitude"] - station.longitude),
+            item["grid_latitude"],
+            item["grid_longitude"],
+        ),
+    )
+    return [
+        GridCandidate(
+            rank=rank,
+            grid_latitude=float(item["grid_latitude"]),
+            grid_longitude=float(item["grid_longitude"]),
+            distance_km=float(item["distance_km"]),
+            is_nearest=bool(item["is_nearest"]),
+        )
+        for rank, item in enumerate(ordered)
+    ]
+
+
+def request_area_for_grid(latitude: float, longitude: float) -> list[float]:
+    """Build a single-grid-cell CDS area for an explicit ERA5-Land grid coordinate."""
+    grid_latitude = normalized_grid_coordinate(latitude)
+    grid_longitude = normalized_grid_coordinate(longitude)
+    return [grid_latitude, grid_longitude, grid_latitude, grid_longitude]
+
+
+def request_area_for_candidates(candidates: Sequence[GridCandidate]) -> list[float]:
+    """Build one CDS area covering all candidate ERA5-Land grid cells."""
+    if not candidates:
+        raise ValueError("At least one ERA5-Land grid candidate is required.")
+    latitudes = [candidate.grid_latitude for candidate in candidates]
+    longitudes = [candidate.grid_longitude for candidate in candidates]
+    return [
+        normalized_grid_coordinate(max(latitudes)),
+        normalized_grid_coordinate(min(longitudes)),
+        normalized_grid_coordinate(min(latitudes)),
+        normalized_grid_coordinate(max(longitudes)),
+    ]
+
+
 def request_area_for_station(latitude: float, longitude: float) -> list[float]:
     """Build a single-grid-cell CDS area for a station coordinate."""
     grid_latitude = nearest_era5_land_grid_coordinate(latitude)
     grid_longitude = nearest_era5_land_grid_coordinate(longitude)
-    return [grid_latitude, grid_longitude, grid_latitude, grid_longitude]
+    return request_area_for_grid(grid_latitude, grid_longitude)
 
 
-def build_cds_request(chunk: Era5LandChunk, station: StationMapping) -> dict[str, Any]:
+def build_cds_request(
+    chunk: Era5LandChunk,
+    station: StationMapping,
+    *,
+    grid_candidate: GridCandidate | None = None,
+    grid_policy: str = DEFAULT_GRID_POLICY,
+    grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
+) -> dict[str, Any]:
     """Build one deterministic ERA5-Land CDS request."""
+    validate_grid_selection_options(grid_policy, grid_search_radius)
+    if grid_candidate is not None:
+        area = request_area_for_grid(grid_candidate.grid_latitude, grid_candidate.grid_longitude)
+    elif grid_policy == GRID_POLICY_NEAREST_VALID and grid_search_radius > 0:
+        area = request_area_for_candidates(
+            grid_candidates_for_station(
+                station,
+                grid_policy=grid_policy,
+                grid_search_radius=grid_search_radius,
+            )
+        )
+    else:
+        area = request_area_for_station(station.latitude, station.longitude)
     return {
         "variable": list(REQUEST_VARIABLES),
         "year": f"{chunk.start.year:04d}",
         "month": f"{chunk.start.month:02d}",
         "day": requested_days(chunk),
         "time": list(REQUEST_TIMES),
-        "area": request_area_for_station(station.latitude, station.longitude),
+        "area": area,
         "data_format": "netcdf",
         "download_format": "unarchived",
     }
@@ -303,9 +452,20 @@ def _station_from_row(row: Mapping[str, str]) -> StationMapping:
     )
 
 
-def era5_land_paths(output_root: str | Path, station_id: str, chunk: Era5LandChunk) -> Era5LandPaths:
+def era5_land_paths(
+    output_root: str | Path,
+    station_id: str,
+    chunk: Era5LandChunk,
+    *,
+    grid_policy: str = DEFAULT_GRID_POLICY,
+    grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
+) -> Era5LandPaths:
     """Return deterministic paths below ``output_root/era5_land``."""
+    validate_grid_selection_options(grid_policy, grid_search_radius)
     root = Path(output_root) / "era5_land"
+    policy_segment = grid_policy_segment(grid_policy, grid_search_radius)
+    if policy_segment is not None:
+        root = root / policy_segment
     station_part = f"station_id={station_id}"
     period_part = f"period={chunk.period_label}"
     return Era5LandPaths(
@@ -316,35 +476,67 @@ def era5_land_paths(output_root: str | Path, station_id: str, chunk: Era5LandChu
     )
 
 
-def aggregate_path(output_root: str | Path, start_date: str | date, end_date: str | date) -> Path:
+def aggregate_path(
+    output_root: str | Path,
+    start_date: str | date,
+    end_date: str | date,
+    *,
+    grid_policy: str = DEFAULT_GRID_POLICY,
+    grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
+) -> Path:
     """Return the requested-period aggregate daily-weather CSV path."""
+    validate_grid_selection_options(grid_policy, grid_search_radius)
     start = parse_source_date(start_date, "start_date").isoformat()
     end = parse_source_date(end_date, "end_date").isoformat()
+    root = Path(output_root) / "era5_land"
+    policy_segment = grid_policy_segment(grid_policy, grid_search_radius)
+    if policy_segment is not None:
+        root = root / policy_segment
     return (
-        Path(output_root)
-        / "era5_land"
+        root
         / "daily_aggregate"
         / f"period={start}_{end}"
         / "daily_weather_aggregate.csv"
     )
 
 
-def comparison_path(output_root: str | Path, start_date: str | date, end_date: str | date) -> Path:
+def comparison_path(
+    output_root: str | Path,
+    start_date: str | date,
+    end_date: str | date,
+    *,
+    grid_policy: str = DEFAULT_GRID_POLICY,
+    grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
+) -> Path:
     """Return the requested-period prior-pilot comparison CSV path."""
+    validate_grid_selection_options(grid_policy, grid_search_radius)
     start = parse_source_date(start_date, "start_date").isoformat()
     end = parse_source_date(end_date, "end_date").isoformat()
+    root = Path(output_root) / "era5_land"
+    policy_segment = grid_policy_segment(grid_policy, grid_search_radius)
+    if policy_segment is not None:
+        root = root / policy_segment
     return (
-        Path(output_root)
-        / "era5_land"
+        root
         / "comparisons"
         / f"period={start}_{end}"
         / "prior_era5_pilot_overlap.csv"
     )
 
 
-def manifest_path(output_root: str | Path) -> Path:
+def manifest_path(
+    output_root: str | Path,
+    *,
+    grid_policy: str = DEFAULT_GRID_POLICY,
+    grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
+) -> Path:
     """Return the ERA5-Land v2 weather manifest path."""
-    return Path(output_root) / "era5_land" / "manifests" / "era5_land_weather_manifest.json"
+    validate_grid_selection_options(grid_policy, grid_search_radius)
+    root = Path(output_root) / "era5_land"
+    policy_segment = grid_policy_segment(grid_policy, grid_search_radius)
+    if policy_segment is not None:
+        root = root / policy_segment
+    return root / "manifests" / "era5_land_weather_manifest.json"
 
 
 def retrieve_era5_land(dataset: str, request: Mapping[str, Any], target: str | Path) -> None:
@@ -442,6 +634,7 @@ def load_hourly_frame(
     raw_path: str | Path,
     *,
     station: StationMapping,
+    grid_candidate: GridCandidate | None = None,
     calm_threshold: float = DEFAULT_CALM_THRESHOLD_M_S,
 ) -> tuple[Any, dict[str, Any]]:
     """Open one NetCDF file, extract one point, and build hourly rows."""
@@ -453,9 +646,11 @@ def load_hourly_frame(
         latitude_name = coordinate_name(dataset, ("latitude", "lat"), "latitude")
         longitude_name = coordinate_name(dataset, ("longitude", "lon"), "longitude")
         time_name = time_coordinate_name(dataset)
-        selection_longitude = longitude_for_selection(dataset[longitude_name], station.longitude)
+        selection_latitude = grid_candidate.grid_latitude if grid_candidate is not None else station.latitude
+        selection_longitude_raw = grid_candidate.grid_longitude if grid_candidate is not None else station.longitude
+        selection_longitude = longitude_for_selection(dataset[longitude_name], selection_longitude_raw)
         point = dataset.sel(
-            {latitude_name: station.latitude, longitude_name: selection_longitude},
+            {latitude_name: selection_latitude, longitude_name: selection_longitude},
             method="nearest",
         ).load()
 
@@ -502,6 +697,13 @@ def load_hourly_frame(
     return frame, {
         "coordinate_names": {"latitude": latitude_name, "longitude": longitude_name, "time": time_name},
         "selected_grid_coordinate": {"latitude": grid_latitude, "longitude": grid_longitude},
+        "station_coordinate": {"latitude": station.latitude, "longitude": station.longitude},
+        "station_to_grid_distance_km": haversine_distance_km(
+            station.latitude,
+            station.longitude,
+            grid_latitude,
+            grid_longitude,
+        ),
         "source_variables": source_variables,
         "netcdf_dimensions_after_point_extraction": {str(key): int(value) for key, value in point.sizes.items()},
         "netcdf_variable_units": netcdf_variable_units,
@@ -713,6 +915,7 @@ def write_partition_outputs(
     daily_points: Any,
     validation: Mapping[str, Any],
     extraction_metadata: Mapping[str, Any],
+    grid_selection_metadata: Mapping[str, Any],
     retrieval_started_at_utc: str,
     retrieval_finished_at_utc: str,
     overwrite: bool = False,
@@ -755,6 +958,7 @@ def write_partition_outputs(
         },
         "validation": dict(validation),
         "extraction": dict(extraction_metadata),
+        "grid_selection": dict(grid_selection_metadata),
         "units": output_units(),
         "aggregation_contract": aggregation_contract(),
         "transformation_version": TRANSFORMATION_VERSION,
@@ -772,6 +976,7 @@ def write_invalid_status(
     message: str,
     retrieval_started_at_utc: str | None,
     retrieval_finished_at_utc: str | None,
+    grid_selection_metadata: Mapping[str, Any] | None = None,
     overwrite: bool = False,
 ) -> dict[str, Any]:
     """Write invalid metadata while preserving any raw NetCDF evidence."""
@@ -807,9 +1012,11 @@ def write_invalid_status(
         "checksums": checksums,
         "validation": {
             "validation_status": "invalid",
+            "readiness_status": "BLOCKED",
             "passed": False,
             "issues": [message],
         },
+        "grid_selection": dict(grid_selection_metadata or {}),
         "transformation_version": TRANSFORMATION_VERSION,
     }
     status_checksum = write_json(paths.status_json, status_payload)
@@ -821,17 +1028,28 @@ def write_invalid_status(
         "paths": {"status_json": paths.status_json, "raw_netcdf": paths.raw_netcdf if paths.raw_netcdf.exists() else None},
         "checksums": {"status_json_sha256": status_checksum, **checksums},
         "warnings": [message],
+        "readiness_status": "BLOCKED",
     }
 
 
-def partition_is_verified(output_root: str | Path, station_id: str, chunk: Era5LandChunk) -> bool:
+def partition_is_verified(
+    output_root: str | Path,
+    station_id: str,
+    chunk: Era5LandChunk,
+    *,
+    grid_policy: str = DEFAULT_GRID_POLICY,
+    grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
+) -> bool:
     """Return True when a station/chunk partition exists and checksums match."""
-    paths = era5_land_paths(output_root, station_id, chunk)
-    if not all(path.is_file() for path in (paths.raw_netcdf, paths.hourly_csv, paths.daily_points_csv, paths.status_json)):
+    paths = era5_land_paths(output_root, station_id, chunk, grid_policy=grid_policy, grid_search_radius=grid_search_radius)
+    if not all(path.is_file() for path in (paths.hourly_csv, paths.daily_points_csv, paths.status_json)):
         return False
     try:
         status = json.loads(paths.status_json.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        return False
+    raw_path = raw_path_from_status(status, output_root=Path(output_root), fallback=paths.raw_netcdf)
+    if not raw_path.is_file():
         return False
     validation = status.get("validation")
     checksums = status.get("checksums")
@@ -840,19 +1058,41 @@ def partition_is_verified(output_root: str | Path, station_id: str, chunk: Era5L
     if validation.get("validation_status") != "complete":
         return False
     return (
-        checksums.get("raw_netcdf_sha256") == sha256_file(paths.raw_netcdf)
+        checksums.get("raw_netcdf_sha256") == sha256_file(raw_path)
         and checksums.get("hourly_csv_sha256") == sha256_file(paths.hourly_csv)
         and checksums.get("daily_points_csv_sha256") == sha256_file(paths.daily_points_csv)
     )
 
 
-def load_partition_summary(output_root: str | Path, station_id: str, chunk: Era5LandChunk) -> dict[str, Any]:
+def load_partition_summary(
+    output_root: str | Path,
+    station_id: str,
+    chunk: Era5LandChunk,
+    *,
+    grid_policy: str = DEFAULT_GRID_POLICY,
+    grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
+) -> dict[str, Any]:
     """Load a verified station/chunk summary from status metadata."""
-    paths = era5_land_paths(output_root, station_id, chunk)
+    paths = era5_land_paths(output_root, station_id, chunk, grid_policy=grid_policy, grid_search_radius=grid_search_radius)
     status = json.loads(paths.status_json.read_text(encoding="utf-8"))
+    paths = replace(paths, raw_netcdf=raw_path_from_status(status, output_root=Path(output_root), fallback=paths.raw_netcdf))
     result = partition_summary(output_root=Path(output_root), paths=paths, status_payload=status)
     result["checksums"]["status_json_sha256"] = sha256_file(paths.status_json)
     return result
+
+
+def raw_path_from_status(status_payload: Mapping[str, Any], *, output_root: Path, fallback: Path) -> Path:
+    """Resolve the selected raw NetCDF path recorded in a status payload."""
+    path_value = (status_payload.get("paths") or {}).get("raw_netcdf")
+    if not path_value:
+        return fallback
+    raw_path = Path(str(path_value))
+    if raw_path.is_absolute():
+        return raw_path
+    project_candidate = project_root() / raw_path
+    if project_candidate.exists() or str(path_value).startswith("data/"):
+        return project_candidate
+    return output_root / raw_path
 
 
 def partition_summary(
@@ -866,11 +1106,15 @@ def partition_summary(
     station = status_payload.get("station", {})
     period = status_payload.get("requested_period", {})
     checksums = dict(status_payload.get("checksums") or {})
+    grid_selection = status_payload.get("grid_selection") or {}
+    extraction = status_payload.get("extraction") or {}
+    warnings = list(validation.get("issues") or []) + list(validation.get("warnings") or [])
     return {
         "station_id": str(station.get("station_id")),
         "period_start": str(period.get("start_date")),
         "period_end": str(period.get("end_date")),
         "status": str(validation.get("validation_status")),
+        "readiness_status": validation.get("readiness_status") or grid_selection.get("readiness_status"),
         "hourly_rows": int(validation.get("hourly_rows", 0)),
         "daily_point_rows": int(validation.get("daily_point_rows", 0)),
         "paths": {
@@ -881,9 +1125,13 @@ def partition_summary(
         },
         "manifest_paths": dict(status_payload.get("paths") or {}),
         "checksums": checksums,
-        "warnings": list(validation.get("issues") or []),
+        "warnings": warnings,
         "retrieval_finished_at_utc": (status_payload.get("retrieval") or {}).get("finished_at_utc"),
-        "selected_grid_coordinate": (status_payload.get("extraction") or {}).get("selected_grid_coordinate"),
+        "selected_grid_coordinate": extraction.get("selected_grid_coordinate"),
+        "station_to_grid_distance_km": extraction.get("station_to_grid_distance_km"),
+        "selected_candidate_rank": grid_selection.get("selected_candidate_rank"),
+        "candidate_count": grid_selection.get("candidate_count"),
+        "grid_selection": dict(grid_selection),
     }
 
 
@@ -957,13 +1205,130 @@ def station_payload(station: StationMapping) -> dict[str, Any]:
     }
 
 
+def candidate_payload(candidate: GridCandidate, *, output_root: Path | None = None, raw_path: Path | None = None) -> dict[str, Any]:
+    """Return JSON-ready candidate metadata."""
+    payload: dict[str, Any] = {
+        "rank": candidate.rank,
+        "grid_coordinate": {
+            "latitude": candidate.grid_latitude,
+            "longitude": candidate.grid_longitude,
+        },
+        "station_to_grid_distance_km": round(candidate.distance_km, 6),
+        "is_nearest": candidate.is_nearest,
+        "request_area": request_area_for_grid(candidate.grid_latitude, candidate.grid_longitude),
+    }
+    if output_root is not None and raw_path is not None:
+        payload["raw_netcdf"] = _manifest_path(raw_path, output_root=output_root)
+    return payload
+
+
+def readiness_status_for_candidate(candidate: GridCandidate) -> str:
+    """Return Step 2A.13 readiness status for a selected valid candidate."""
+    return "READY" if candidate.is_nearest else "READY_WITH_WARNING"
+
+
+def readiness_warning_for_candidate(candidate: GridCandidate) -> list[str]:
+    """Return warnings caused by selecting a non-nearest candidate."""
+    if candidate.is_nearest:
+        return []
+    return [
+        (
+            "ERA5-Land nearest requested grid cell was invalid; selected nearest valid neighbour "
+            f"rank {candidate.rank} at {candidate.grid_latitude:.1f}, {candidate.grid_longitude:.1f}."
+        )
+    ]
+
+
+def evaluate_grid_candidate(
+    *,
+    job: Era5LandJob,
+    candidate: GridCandidate,
+    raw_path: Path,
+    output_root: Path,
+) -> dict[str, Any]:
+    """Extract and validate one grid candidate from a shared NetCDF."""
+    evidence = candidate_payload(candidate, output_root=output_root, raw_path=raw_path)
+    try:
+        hourly, extraction = load_hourly_frame(raw_path, station=job.station, grid_candidate=candidate)
+        daily_points = daily_point_aggregates(hourly, job.chunk)
+        validation = validate_partition_outputs(hourly, daily_points, job.chunk)
+        evidence["validation_status"] = validation["validation_status"]
+        evidence["passed"] = bool(validation["passed"])
+        evidence["issues"] = list(validation.get("issues") or [])
+        evidence["null_counts"] = dict(validation.get("null_counts") or {})
+        evidence["hourly_rows"] = int(validation.get("hourly_rows", 0))
+        evidence["daily_point_rows"] = int(validation.get("daily_point_rows", 0))
+        evidence["selected"] = bool(validation["passed"])
+        return {
+            "candidate": candidate,
+            "raw_path": raw_path,
+            "hourly": hourly,
+            "daily_points": daily_points,
+            "validation": validation,
+            "extraction": extraction,
+            "evidence": evidence,
+            "passed": bool(validation["passed"]),
+        }
+    except Exception as exc:
+        message = str(exc) if isinstance(exc, Era5LandIngestionError) else f"{type(exc).__name__}: {exc}"
+        evidence["validation_status"] = "invalid"
+        evidence["passed"] = False
+        evidence["issues"] = [message]
+        evidence["null_counts"] = {}
+        evidence["hourly_rows"] = 0
+        evidence["daily_point_rows"] = 0
+        evidence["selected"] = False
+        return {
+            "candidate": candidate,
+            "raw_path": raw_path,
+            "evidence": evidence,
+            "passed": False,
+        }
+
+
+def readiness_summary(partition_results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Summarize partition readiness statuses for CLI output."""
+    counts = {"READY": 0, "READY_WITH_WARNING": 0, "BLOCKED": 0, "UNKNOWN": 0}
+    for item in partition_results:
+        status = str(item.get("readiness_status") or "UNKNOWN")
+        counts[status if status in counts else "UNKNOWN"] += 1
+    return {
+        "counts": counts,
+        "ready_partition_count": counts["READY"] + counts["READY_WITH_WARNING"],
+        "blocked_partition_count": counts["BLOCKED"],
+        "warning_partition_count": counts["READY_WITH_WARNING"],
+    }
+
+
+def readiness_table(partition_results: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Return concise per-partition readiness rows for CLI output."""
+    rows = []
+    for item in partition_results:
+        rows.append(
+            {
+                "station_id": item.get("station_id"),
+                "period_start": item.get("period_start"),
+                "period_end": item.get("period_end"),
+                "readiness_status": item.get("readiness_status"),
+                "selected_grid_coordinate": item.get("selected_grid_coordinate"),
+                "station_to_grid_distance_km": item.get("station_to_grid_distance_km"),
+                "selected_candidate_rank": item.get("selected_candidate_rank"),
+                "candidate_count": item.get("candidate_count"),
+            }
+        )
+    return rows
+
+
 def planned_jobs(
     *,
     output_root: str | Path,
     stations: Sequence[StationMapping],
     chunks: Sequence[Era5LandChunk],
+    grid_policy: str = DEFAULT_GRID_POLICY,
+    grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
 ) -> list[Era5LandJob]:
     """Build the deterministic station/chunk job list."""
+    validate_grid_selection_options(grid_policy, grid_search_radius)
     jobs = []
     for chunk in chunks:
         for station in stations:
@@ -971,8 +1336,21 @@ def planned_jobs(
                 Era5LandJob(
                     station=station,
                     chunk=chunk,
-                    request=build_cds_request(chunk, station),
-                    paths=era5_land_paths(output_root, station.station_id, chunk),
+                    request=build_cds_request(
+                        chunk,
+                        station,
+                        grid_policy=grid_policy,
+                        grid_search_radius=grid_search_radius,
+                    ),
+                    paths=era5_land_paths(
+                        output_root,
+                        station.station_id,
+                        chunk,
+                        grid_policy=grid_policy,
+                        grid_search_radius=grid_search_radius,
+                    ),
+                    grid_policy=grid_policy,
+                    grid_search_radius=grid_search_radius,
                 )
             )
     return jobs
@@ -991,6 +1369,8 @@ def run_ingestion(
     overwrite: bool = False,
     dry_run: bool = False,
     prior_pilot_dir: str | Path | None = None,
+    grid_policy: str = DEFAULT_GRID_POLICY,
+    grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
     retrieve_func: Callable[[str, Mapping[str, Any], Path], None] | None = None,
 ) -> dict[str, Any]:
     """Run controlled ERA5-Land v2 weather ingestion."""
@@ -1000,10 +1380,17 @@ def run_ingestion(
         raise ValueError("max_chunks must be greater than zero.")
     if request_delay < 0:
         raise ValueError("request_delay must be zero or greater.")
+    validate_grid_selection_options(grid_policy, grid_search_radius)
 
     chunks = iter_same_month_chunks(start_date, end_date)
     stations = load_station_mapping(station_mapping, station_ids=station_ids)
-    jobs = planned_jobs(output_root=output_root, stations=stations, chunks=chunks)
+    jobs = planned_jobs(
+        output_root=output_root,
+        stations=stations,
+        chunks=chunks,
+        grid_policy=grid_policy,
+        grid_search_radius=grid_search_radius,
+    )
     if len(jobs) > max_chunks:
         raise ValueError(f"Planned ERA5-Land chunks ({len(jobs)}) exceed max_chunks={max_chunks}.")
 
@@ -1020,20 +1407,50 @@ def run_ingestion(
             "writes_planned": False,
             "requested_start_date": requested_start,
             "requested_end_date": requested_end,
+            "grid_policy": grid_policy,
+            "grid_search_radius": grid_search_radius,
             "station_count": len(stations),
             "chunk_count": len(jobs),
             "planned_requests": [_job_plan_payload(job, output_root_path) for job in jobs],
-            "aggregate_path": str(aggregate_path(output_root_path, requested_start, requested_end)),
-            "comparison_path": str(comparison_path(output_root_path, requested_start, requested_end)),
-            "manifest_path": str(manifest_path(output_root_path)),
+            "aggregate_path": str(
+                aggregate_path(
+                    output_root_path,
+                    requested_start,
+                    requested_end,
+                    grid_policy=grid_policy,
+                    grid_search_radius=grid_search_radius,
+                )
+            ),
+            "comparison_path": str(
+                comparison_path(
+                    output_root_path,
+                    requested_start,
+                    requested_end,
+                    grid_policy=grid_policy,
+                    grid_search_radius=grid_search_radius,
+                )
+            ),
+            "manifest_path": str(manifest_path(output_root_path, grid_policy=grid_policy, grid_search_radius=grid_search_radius)),
         }
 
     retriever = retrieve_func or retrieve_era5_land
     results: list[dict[str, Any]] = []
     requests_made = 0
     for index, job in enumerate(jobs):
-        if resume and partition_is_verified(output_root_path, job.station.station_id, job.chunk):
-            summary = load_partition_summary(output_root_path, job.station.station_id, job.chunk)
+        if resume and partition_is_verified(
+            output_root_path,
+            job.station.station_id,
+            job.chunk,
+            grid_policy=grid_policy,
+            grid_search_radius=grid_search_radius,
+        ):
+            summary = load_partition_summary(
+                output_root_path,
+                job.station.station_id,
+                job.chunk,
+                grid_policy=grid_policy,
+                grid_search_radius=grid_search_radius,
+            )
             summary["skipped_existing"] = True
             results.append(summary)
             continue
@@ -1048,33 +1465,87 @@ def run_ingestion(
 
         started_at = utc_timestamp()
         finished_at = None
+        candidate_results = []
+        selected_result = None
+        candidates = grid_candidates_for_station(
+            job.station,
+            grid_policy=grid_policy,
+            grid_search_radius=grid_search_radius,
+        )
         try:
             job.paths.raw_netcdf.parent.mkdir(parents=True, exist_ok=True)
             requests_made += 1
             retriever(DATASET_ID, job.request, job.paths.raw_netcdf)
             finished_at = utc_timestamp()
-            hourly, extraction = load_hourly_frame(job.paths.raw_netcdf, station=job.station)
-            daily_points = daily_point_aggregates(hourly, job.chunk)
-            validation = validate_partition_outputs(hourly, daily_points, job.chunk)
-            if not validation["passed"]:
+            for candidate in candidates:
+                candidate_result = evaluate_grid_candidate(
+                    job=job,
+                    candidate=candidate,
+                    raw_path=job.paths.raw_netcdf,
+                    output_root=output_root_path,
+                )
+                candidate_results.append(candidate_result)
+                if candidate_result["passed"]:
+                    selected_result = selected_result or candidate_result
+            candidate_evidence = [dict(item["evidence"], selected=item is selected_result) for item in candidate_results]
+            if selected_result is None:
+                grid_selection_metadata = {
+                    "grid_policy": grid_policy,
+                    "grid_search_radius": grid_search_radius,
+                    "readiness_status": "BLOCKED",
+                    "candidate_count": len(candidate_evidence),
+                    "selected_candidate_rank": None,
+                    "selected_grid_coordinate": None,
+                    "candidate_evidence": candidate_evidence,
+                }
+                issue_summaries = [
+                    f"rank {item.get('rank')}: {item.get('issues')}"
+                    for item in candidate_evidence
+                    if item.get("issues")
+                ]
+                detail = f" Candidate issues: {issue_summaries}." if issue_summaries else ""
+                message = (
+                    "ERA5-Land grid selection failed: no valid candidate within the approved search radius."
+                    f"{detail}"
+                )
                 write_invalid_status(
                     output_root=output_root_path,
                     job=job,
-                    message=f"ERA5-Land validation failed: {validation['issues']}.",
+                    message=message,
                     retrieval_started_at_utc=started_at,
                     retrieval_finished_at_utc=finished_at,
+                    grid_selection_metadata=grid_selection_metadata,
                     overwrite=overwrite,
                 )
-                raise Era5LandIngestionError(
-                    f"ERA5-Land validation failed for {job.station.station_id}: {validation['issues']}."
-                )
+                raise Era5LandIngestionError(f"{message} Station {job.station.station_id}; period {job.chunk.period_label}.")
+
+            selected_candidate = selected_result["candidate"]
+            readiness_status = readiness_status_for_candidate(selected_candidate)
+            validation = dict(selected_result["validation"])
+            validation["readiness_status"] = readiness_status
+            validation["warnings"] = readiness_warning_for_candidate(selected_candidate)
+            extraction = dict(selected_result["extraction"])
+            extraction["selected_candidate_rank"] = selected_candidate.rank
+            extraction["grid_policy"] = grid_policy
+            extraction["grid_search_radius"] = grid_search_radius
+            grid_selection_metadata = {
+                "grid_policy": grid_policy,
+                "grid_search_radius": grid_search_radius,
+                "readiness_status": readiness_status,
+                "candidate_count": len(candidate_evidence),
+                "selected_candidate_rank": selected_candidate.rank,
+                "selected_grid_coordinate": extraction.get("selected_grid_coordinate"),
+                "station_to_grid_distance_km": extraction.get("station_to_grid_distance_km"),
+                "candidate_evidence": candidate_evidence,
+            }
             result = write_partition_outputs(
                 output_root=output_root_path,
                 job=job,
-                hourly=hourly,
-                daily_points=daily_points,
+                hourly=selected_result["hourly"],
+                daily_points=selected_result["daily_points"],
                 validation=validation,
                 extraction_metadata=extraction,
+                grid_selection_metadata=grid_selection_metadata,
                 retrieval_started_at_utc=started_at,
                 retrieval_finished_at_utc=finished_at,
                 overwrite=overwrite,
@@ -1094,6 +1565,13 @@ def run_ingestion(
                     message=message,
                     retrieval_started_at_utc=started_at,
                     retrieval_finished_at_utc=finished_at,
+                    grid_selection_metadata={
+                        "grid_policy": grid_policy,
+                        "grid_search_radius": grid_search_radius,
+                        "readiness_status": "BLOCKED",
+                        "candidate_count": len(candidate_results),
+                        "candidate_evidence": [item.get("evidence") for item in candidate_results],
+                    },
                     overwrite=overwrite,
                 )
             raise
@@ -1105,13 +1583,39 @@ def run_ingestion(
 
     daily_points_all = load_daily_points_for_jobs(output_root_path, jobs)
     aggregate = aggregate_daily_weather(daily_points_all, expected_point_count=len(stations))
-    aggregate_checksum = write_csv(aggregate_path(output_root_path, requested_start, requested_end), aggregate)
+    aggregate_csv = aggregate_path(
+        output_root_path,
+        requested_start,
+        requested_end,
+        grid_policy=grid_policy,
+        grid_search_radius=grid_search_radius,
+    )
+    aggregate_checksum = write_csv(aggregate_csv, aggregate)
     comparison = compare_with_prior_pilot(daily_points_all, prior_pilot_dir=prior_pilot_dir)
-    comparison_checksum = write_csv(comparison_path(output_root_path, requested_start, requested_end), comparison)
+    comparison_csv = comparison_path(
+        output_root_path,
+        requested_start,
+        requested_end,
+        grid_policy=grid_policy,
+        grid_search_radius=grid_search_radius,
+    )
+    comparison_checksum = write_csv(comparison_csv, comparison)
     summaries = [
-        load_partition_summary(output_root_path, job.station.station_id, job.chunk)
+        load_partition_summary(
+            output_root_path,
+            job.station.station_id,
+            job.chunk,
+            grid_policy=grid_policy,
+            grid_search_radius=grid_search_radius,
+        )
         for job in jobs
-        if partition_is_verified(output_root_path, job.station.station_id, job.chunk)
+        if partition_is_verified(
+            output_root_path,
+            job.station.station_id,
+            job.chunk,
+            grid_policy=grid_policy,
+            grid_search_radius=grid_search_radius,
+        )
     ]
     manifest = build_manifest(
         output_root=output_root_path,
@@ -1119,29 +1623,35 @@ def run_ingestion(
         requested_end_date=requested_end,
         stations=stations,
         partition_results=summaries,
-        aggregate_csv=aggregate_path(output_root_path, requested_start, requested_end),
+        aggregate_csv=aggregate_csv,
         aggregate_checksum=aggregate_checksum,
-        comparison_csv=comparison_path(output_root_path, requested_start, requested_end),
+        comparison_csv=comparison_csv,
         comparison_checksum=comparison_checksum,
         aggregate_row_count=len(aggregate),
         aggregate_column_count=len(aggregate.columns),
+        grid_policy=grid_policy,
+        grid_search_radius=grid_search_radius,
     )
-    manifest_checksum = write_manifest(output_root_path, manifest)
+    manifest_checksum = write_manifest(output_root_path, manifest, grid_policy=grid_policy, grid_search_radius=grid_search_radius)
     return {
         "dry_run": False,
         "dataset": DATASET_ID,
         "variables": list(REQUEST_VARIABLES),
         "requested_start_date": requested_start,
         "requested_end_date": requested_end,
+        "grid_policy": grid_policy,
+        "grid_search_radius": grid_search_radius,
         "station_count": len(stations),
         "chunk_count": len(jobs),
         "requests_made": requests_made,
         "partition_results": _json_ready(results),
-        "aggregate_path": str(aggregate_path(output_root_path, requested_start, requested_end)),
+        "readiness_summary": readiness_summary(results),
+        "readiness_table": readiness_table(results),
+        "aggregate_path": str(aggregate_csv),
         "aggregate_sha256": aggregate_checksum,
-        "comparison_path": str(comparison_path(output_root_path, requested_start, requested_end)),
+        "comparison_path": str(comparison_csv),
         "comparison_sha256": comparison_checksum,
-        "manifest_path": str(manifest_path(output_root_path)),
+        "manifest_path": str(manifest_path(output_root_path, grid_policy=grid_policy, grid_search_radius=grid_search_radius)),
         "manifest_sha256": manifest_checksum,
     }
 
@@ -1153,7 +1663,13 @@ def load_daily_points_for_jobs(output_root: Path, jobs: Sequence[Era5LandJob]) -
     frames = []
     missing = []
     for job in jobs:
-        if not partition_is_verified(output_root, job.station.station_id, job.chunk):
+        if not partition_is_verified(
+            output_root,
+            job.station.station_id,
+            job.chunk,
+            grid_policy=job.grid_policy,
+            grid_search_radius=job.grid_search_radius,
+        ):
             missing.append(f"{job.station.station_id}/{job.chunk.period_label}")
             continue
         frames.append(pd.read_csv(job.paths.daily_points_csv))
@@ -1255,8 +1771,11 @@ def build_manifest(
     comparison_checksum: str,
     aggregate_row_count: int,
     aggregate_column_count: int,
+    grid_policy: str = DEFAULT_GRID_POLICY,
+    grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
 ) -> DatasetManifest:
     """Build a deterministic ERA5-Land v2 weather manifest."""
+    validate_grid_selection_options(grid_policy, grid_search_radius)
     path_checksum_map: dict[str, str] = {
         _manifest_path(aggregate_csv, output_root=output_root): aggregate_checksum,
         _manifest_path(comparison_csv, output_root=output_root): comparison_checksum,
@@ -1266,6 +1785,8 @@ def build_manifest(
     normalized_paths = []
     retrieval_timestamps = []
     selected_grid = {}
+    selected_grid_by_partition = {}
+    grid_selection_by_partition = {}
     warnings = []
     for item in partition_results:
         manifest_paths = item.get("manifest_paths") or {}
@@ -1290,6 +1811,9 @@ def build_manifest(
             retrieval_timestamps.append(str(item["retrieval_finished_at_utc"]))
         if item.get("selected_grid_coordinate"):
             selected_grid[str(item["station_id"])] = item["selected_grid_coordinate"]
+            partition_key = f"{item['station_id']}:{item['period_start']}_{item['period_end']}"
+            selected_grid_by_partition[partition_key] = item["selected_grid_coordinate"]
+            grid_selection_by_partition[partition_key] = item.get("grid_selection") or {}
         warnings.extend(str(warning) for warning in item.get("warnings", []))
 
     warnings.extend(
@@ -1314,6 +1838,8 @@ def build_manifest(
         geographic_coverage={
             "strategy": "17_exact_match_ipma_station_points_equal_weight_aggregate",
             "excluded_station_ids": [UNMATCHED_STATION_ID],
+            "grid_policy": grid_policy,
+            "grid_search_radius": grid_search_radius,
         },
         station_ids=tuple(station.station_id for station in stations),
         coordinates=tuple(station_payload(station) for station in stations),
@@ -1340,7 +1866,27 @@ def build_manifest(
             "metadata_file_paths": sorted(metadata_paths),
             "aggregate_file_path": _manifest_path(aggregate_csv, output_root=output_root),
             "prior_pilot_comparison_file_path": _manifest_path(comparison_csv, output_root=output_root),
+            "grid_selection_policy": {
+                "policy": grid_policy,
+                "search_radius_grid_steps": grid_search_radius,
+                "grid_step_degrees": GRID_STEP_DEGREES,
+                "max_candidates_per_station_chunk": (2 * grid_search_radius + 1) ** 2,
+                "candidate_order": [
+                    "haversine_distance_km_ascending",
+                    "absolute_latitude_delta_ascending",
+                    "absolute_longitude_delta_ascending",
+                    "grid_latitude_ascending",
+                    "grid_longitude_ascending",
+                ],
+                "readiness_statuses": {
+                    "nearest_valid": "READY",
+                    "neighbour_valid": "READY_WITH_WARNING",
+                    "none_valid": "BLOCKED",
+                },
+            },
             "selected_grid_coordinates_by_station_id": selected_grid,
+            "selected_grid_coordinates_by_partition": selected_grid_by_partition,
+            "grid_selection_by_partition": grid_selection_by_partition,
             "request_contract": {
                 "data_format": "netcdf",
                 "download_format": "unarchived",
@@ -1358,14 +1904,25 @@ def build_manifest(
     )
 
 
-def write_manifest(output_root: str | Path, manifest: DatasetManifest) -> str:
+def write_manifest(
+    output_root: str | Path,
+    manifest: DatasetManifest,
+    *,
+    grid_policy: str = DEFAULT_GRID_POLICY,
+    grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
+) -> str:
     """Write the ERA5-Land weather manifest and return its checksum."""
-    path = manifest_path(output_root)
+    path = manifest_path(output_root, grid_policy=grid_policy, grid_search_radius=grid_search_radius)
     write_text_if_changed(path, manifest_to_json(manifest))
     return sha256_file(path)
 
 
 def _job_plan_payload(job: Era5LandJob, output_root: Path) -> dict[str, Any]:
+    candidates = grid_candidates_for_station(
+        job.station,
+        grid_policy=job.grid_policy,
+        grid_search_radius=job.grid_search_radius,
+    )
     return {
         "dataset": DATASET_ID,
         "station": station_payload(job.station),
@@ -1374,6 +1931,16 @@ def _job_plan_payload(job: Era5LandJob, output_root: Path) -> dict[str, Any]:
             "end_date": job.chunk.end.isoformat(),
             "timezone": "UTC",
         },
+        "grid_policy": job.grid_policy,
+        "grid_search_radius": job.grid_search_radius,
+        "grid_candidates": [
+            candidate_payload(
+                candidate,
+                output_root=output_root,
+                raw_path=job.paths.raw_netcdf,
+            )
+            for candidate in candidates
+        ],
         "request": dict(job.request),
         "paths": {
             "raw_netcdf": str(job.paths.raw_netcdf),
@@ -1415,7 +1982,13 @@ def _json_ready(value: Any) -> Any:
 __all__ = [
     "DATASET_ID",
     "DEFAULT_CALM_THRESHOLD_M_S",
+    "DEFAULT_GRID_POLICY",
+    "DEFAULT_GRID_SEARCH_RADIUS",
     "EXPECTED_STATION_COUNT",
+    "GRID_POLICY_NEAREST_VALID",
+    "GRID_POLICY_SINGLE_CELL",
+    "GRID_STEP_DEGREES",
+    "MAX_GRID_SEARCH_RADIUS",
     "REQUEST_TIMES",
     "REQUEST_VARIABLES",
     "DAILY_AGGREGATE_COLUMNS",
@@ -1425,6 +1998,7 @@ __all__ = [
     "Era5LandIngestionError",
     "Era5LandJob",
     "Era5LandPaths",
+    "GridCandidate",
     "StationMapping",
     "aggregate_daily_weather",
     "aggregate_path",
@@ -1434,13 +2008,17 @@ __all__ = [
     "comparison_path",
     "daily_point_aggregates",
     "era5_land_paths",
+    "grid_candidates_for_station",
     "iter_same_month_chunks",
     "load_hourly_frame",
     "load_station_mapping",
     "manifest_path",
     "nearest_era5_land_grid_coordinate",
     "partition_is_verified",
+    "request_area_for_candidates",
     "request_area_for_station",
+    "readiness_summary",
+    "readiness_table",
     "retrieve_era5_land",
     "run_ingestion",
     "validate_partition_outputs",

@@ -7,7 +7,12 @@ import json
 from pathlib import Path
 
 from wind_forecast.data_sources.era5_land import (
+    DEFAULT_GRID_POLICY,
+    DEFAULT_GRID_SEARCH_RADIUS,
     EXPECTED_STATION_COUNT,
+    GRID_POLICY_NEAREST_VALID,
+    GRID_POLICY_SINGLE_CELL,
+    MAX_GRID_SEARCH_RADIUS,
     run_ingestion,
 )
 from wind_forecast.paths import v2_raw_weather_dir
@@ -57,6 +62,18 @@ def parse_args() -> argparse.Namespace:
         default=Path("data/pilot/era5_land"),
         help="Existing ERA5-Land pilot directory for optional overlap comparison.",
     )
+    parser.add_argument(
+        "--grid-policy",
+        choices=(GRID_POLICY_SINGLE_CELL, GRID_POLICY_NEAREST_VALID),
+        default=DEFAULT_GRID_POLICY,
+        help="ERA5-Land grid-cell selection policy.",
+    )
+    parser.add_argument(
+        "--grid-search-radius",
+        type=int,
+        default=DEFAULT_GRID_SEARCH_RADIUS,
+        help="Neighbourhood radius in ERA5-Land grid steps; Step 2A.13 is bounded to 1.",
+    )
     parser.add_argument("--resume", action="store_true", help="Skip verified complete existing chunks.")
     parser.add_argument("--overwrite", action="store_true", help="Explicitly overwrite existing chunks.")
     parser.add_argument("--dry-run", action="store_true", help="Print planned actions without network or writes.")
@@ -67,6 +84,12 @@ def parse_args() -> argparse.Namespace:
         parser.error("--max-chunks must be greater than zero.")
     if args.request_delay < 0:
         parser.error("--request-delay must be zero or greater.")
+    if args.grid_search_radius < 0:
+        parser.error("--grid-search-radius must be zero or greater.")
+    if args.grid_search_radius > MAX_GRID_SEARCH_RADIUS:
+        parser.error(f"--grid-search-radius is bounded to {MAX_GRID_SEARCH_RADIUS} for Step 2A.13.")
+    if args.grid_policy == GRID_POLICY_SINGLE_CELL and args.grid_search_radius != 0:
+        parser.error("--grid-policy single-cell requires --grid-search-radius 0.")
     return args
 
 
@@ -85,6 +108,8 @@ def main() -> None:
         overwrite=args.overwrite,
         dry_run=args.dry_run,
         prior_pilot_dir=args.prior_pilot_dir,
+        grid_policy=args.grid_policy,
+        grid_search_radius=args.grid_search_radius,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True, default=str))
 
