@@ -9,10 +9,13 @@ from pathlib import Path
 from wind_forecast.data_sources.era5_land import (
     DEFAULT_GRID_POLICY,
     DEFAULT_GRID_SEARCH_RADIUS,
+    DEFAULT_REQUEST_MODE,
     EXPECTED_STATION_COUNT,
     GRID_POLICY_NEAREST_VALID,
     GRID_POLICY_SINGLE_CELL,
     MAX_GRID_SEARCH_RADIUS,
+    REQUEST_MODE_MONTHLY_BBOX,
+    REQUEST_MODE_STATION_MONTH,
     run_ingestion,
 )
 from wind_forecast.paths import v2_raw_weather_dir
@@ -74,6 +77,12 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_GRID_SEARCH_RADIUS,
         help="Neighbourhood radius in ERA5-Land grid steps; Step 2A.13 is bounded to 1.",
     )
+    parser.add_argument(
+        "--request-mode",
+        choices=(REQUEST_MODE_STATION_MONTH, REQUEST_MODE_MONTHLY_BBOX),
+        default=DEFAULT_REQUEST_MODE,
+        help="CDS request planning mode; station-month preserves existing paths and behavior.",
+    )
     parser.add_argument("--resume", action="store_true", help="Skip verified complete existing chunks.")
     parser.add_argument("--overwrite", action="store_true", help="Explicitly overwrite existing chunks.")
     parser.add_argument("--dry-run", action="store_true", help="Print planned actions without network or writes.")
@@ -90,6 +99,12 @@ def parse_args() -> argparse.Namespace:
         parser.error(f"--grid-search-radius is bounded to {MAX_GRID_SEARCH_RADIUS} for Step 2A.13.")
     if args.grid_policy == GRID_POLICY_SINGLE_CELL and args.grid_search_radius != 0:
         parser.error("--grid-policy single-cell requires --grid-search-radius 0.")
+    if args.request_mode == REQUEST_MODE_MONTHLY_BBOX and (
+        args.grid_policy != GRID_POLICY_NEAREST_VALID or args.grid_search_radius != 1
+    ):
+        parser.error("--request-mode monthly-bbox requires --grid-policy nearest-valid --grid-search-radius 1.")
+    if args.request_mode == REQUEST_MODE_MONTHLY_BBOX and args.station_ids:
+        parser.error("--request-mode monthly-bbox always covers all 17 approved stations; omit --station-id.")
     return args
 
 
@@ -110,6 +125,7 @@ def main() -> None:
         prior_pilot_dir=args.prior_pilot_dir,
         grid_policy=args.grid_policy,
         grid_search_radius=args.grid_search_radius,
+        request_mode=args.request_mode,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True, default=str))
 

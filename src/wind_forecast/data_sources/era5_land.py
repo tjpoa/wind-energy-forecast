@@ -39,6 +39,11 @@ GRID_POLICY_NEAREST_VALID = "nearest-valid"
 DEFAULT_GRID_POLICY = GRID_POLICY_SINGLE_CELL
 DEFAULT_GRID_SEARCH_RADIUS = 0
 MAX_GRID_SEARCH_RADIUS = 1
+REQUEST_MODE_STATION_MONTH = "station-month"
+REQUEST_MODE_MONTHLY_BBOX = "monthly-bbox"
+DEFAULT_REQUEST_MODE = REQUEST_MODE_STATION_MONTH
+MONTHLY_BBOX_PATH_SEGMENT = "request_mode=monthly_bbox"
+EXPECTED_MONTHLY_BBOX_R1 = [41.9, -9.0, 36.9, -6.6]
 
 VARIABLE_ALIASES = {
     "temperature_2m_k": ("t2m", "2m_temperature"),
@@ -162,6 +167,7 @@ class Era5LandJob:
     paths: Era5LandPaths
     grid_policy: str = DEFAULT_GRID_POLICY
     grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS
+    request_mode: str = DEFAULT_REQUEST_MODE
 
 
 @dataclass(frozen=True)
@@ -257,11 +263,36 @@ def validate_grid_selection_options(grid_policy: str, grid_search_radius: int) -
         raise ValueError("single-cell grid policy requires grid_search_radius=0.")
 
 
+def validate_request_mode(request_mode: str) -> None:
+    """Validate the ERA5-Land request planning mode."""
+    if request_mode not in {REQUEST_MODE_STATION_MONTH, REQUEST_MODE_MONTHLY_BBOX}:
+        raise ValueError(f"request_mode must be one of: {REQUEST_MODE_STATION_MONTH}, {REQUEST_MODE_MONTHLY_BBOX}.")
+
+
 def grid_policy_segment(grid_policy: str, grid_search_radius: int) -> str | None:
     """Return the policy-specific path segment, preserving default paths for radius 0."""
     if grid_policy == GRID_POLICY_NEAREST_VALID and grid_search_radius > 0:
         return f"grid_policy=nearest_valid_r{grid_search_radius}"
     return None
+
+
+def era5_land_root(
+    output_root: str | Path,
+    *,
+    grid_policy: str = DEFAULT_GRID_POLICY,
+    grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
+    request_mode: str = DEFAULT_REQUEST_MODE,
+) -> Path:
+    """Return the root for ERA5-Land outputs, preserving default station-month paths."""
+    validate_grid_selection_options(grid_policy, grid_search_radius)
+    validate_request_mode(request_mode)
+    root = Path(output_root) / "era5_land"
+    policy_segment = grid_policy_segment(grid_policy, grid_search_radius)
+    if policy_segment is not None:
+        root = root / policy_segment
+    if request_mode == REQUEST_MODE_MONTHLY_BBOX:
+        root = root / MONTHLY_BBOX_PATH_SEGMENT
+    return root
 
 
 def grid_candidates_for_station(
@@ -333,6 +364,85 @@ def request_area_for_candidates(candidates: Sequence[GridCandidate]) -> list[flo
         normalized_grid_coordinate(min(latitudes)),
         normalized_grid_coordinate(max(longitudes)),
     ]
+
+
+def validate_request_area(area: Sequence[float]) -> None:
+    """Validate CDS north/west/south/east ordering and ERA5-Land grid alignment."""
+    if len(area) != 4:
+        raise ValueError("ERA5-Land request area must contain [north, west, south, east].")
+    north, west, south, east = [float(value) for value in area]
+    if north < south:
+        raise ValueError("ERA5-Land request area north must be greater than or equal to south.")
+    if west > east:
+        raise ValueError("ERA5-Land request area west must be less than or equal to east.")
+    for value in (north, west, south, east):
+        scaled = value / GRID_STEP_DEGREES
+        if not math.isclose(scaled, round(scaled), abs_tol=1e-9):
+            raise ValueError(f"ERA5-Land request area coordinate {value!r} is not aligned to the 0.1-degree grid.")
+
+
+def monthly_bbox_for_stations(
+    stations: Sequence[StationMapping],
+    *,
+    grid_policy: str = GRID_POLICY_NEAREST_VALID,
+    grid_search_radius: int = MAX_GRID_SEARCH_RADIUS,
+) -> list[float]:
+    """Return the deterministic monthly bbox covering all station candidate grid cells."""
+    validate_grid_selection_options(grid_policy, grid_search_radius)
+    if not stations:
+        raise ValueError("At least one station is required to build a monthly ERA5-Land bbox.")
+    candidates = [
+        candidate
+        for station in sorted(stations, key=lambda item: item.station_id)
+        for candidate in grid_candidates_for_station(
+            station,
+            grid_policy=grid_policy,
+            grid_search_radius=grid_search_radius,
+        )
+    ]
+    area = request_area_for_candidates(candidates)
+    validate_request_area(area)
+    north, west, south, east = area
+    missing = [
+        candidate_payload(candidate)
+        for candidate in candidates
+        if not (south <= candidate.grid_latitude <= north and west <= candidate.grid_longitude <= east)
+    ]
+    if missing:
+        raise ValueError(f"Monthly ERA5-Land bbox does not include all station candidates: {missing}.")
+    if len(stations) == EXPECTED_STATION_COUNT and grid_policy == GRID_POLICY_NEAREST_VALID and grid_search_radius == 1:
+        if area != EXPECTED_MONTHLY_BBOX_R1:
+            raise ValueError(
+                "Unexpected all-station radius-1 monthly ERA5-Land bbox: "
+                f"{area}; expected {EXPECTED_MONTHLY_BBOX_R1}."
+            )
+    return area
+
+
+def build_monthly_bbox_request(
+    chunk: Era5LandChunk,
+    stations: Sequence[StationMapping],
+    *,
+    grid_policy: str = GRID_POLICY_NEAREST_VALID,
+    grid_search_radius: int = MAX_GRID_SEARCH_RADIUS,
+) -> dict[str, Any]:
+    """Build one deterministic monthly-bbox ERA5-Land CDS request."""
+    if grid_policy != GRID_POLICY_NEAREST_VALID or grid_search_radius != 1:
+        raise ValueError("monthly-bbox request mode requires nearest-valid grid policy with radius 1.")
+    return {
+        "variable": list(REQUEST_VARIABLES),
+        "year": f"{chunk.start.year:04d}",
+        "month": f"{chunk.start.month:02d}",
+        "day": requested_days(chunk),
+        "time": list(REQUEST_TIMES),
+        "area": monthly_bbox_for_stations(
+            stations,
+            grid_policy=grid_policy,
+            grid_search_radius=grid_search_radius,
+        ),
+        "data_format": "netcdf",
+        "download_format": "unarchived",
+    }
 
 
 def request_area_for_station(latitude: float, longitude: float) -> list[float]:
@@ -459,13 +569,15 @@ def era5_land_paths(
     *,
     grid_policy: str = DEFAULT_GRID_POLICY,
     grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
+    request_mode: str = DEFAULT_REQUEST_MODE,
 ) -> Era5LandPaths:
     """Return deterministic paths below ``output_root/era5_land``."""
-    validate_grid_selection_options(grid_policy, grid_search_radius)
-    root = Path(output_root) / "era5_land"
-    policy_segment = grid_policy_segment(grid_policy, grid_search_radius)
-    if policy_segment is not None:
-        root = root / policy_segment
+    root = era5_land_root(
+        output_root,
+        grid_policy=grid_policy,
+        grid_search_radius=grid_search_radius,
+        request_mode=request_mode,
+    )
     station_part = f"station_id={station_id}"
     period_part = f"period={chunk.period_label}"
     return Era5LandPaths(
@@ -476,6 +588,23 @@ def era5_land_paths(
     )
 
 
+def monthly_bbox_raw_path(
+    output_root: str | Path,
+    chunk: Era5LandChunk,
+    *,
+    grid_policy: str = GRID_POLICY_NEAREST_VALID,
+    grid_search_radius: int = MAX_GRID_SEARCH_RADIUS,
+) -> Path:
+    """Return the shared monthly-bbox raw NetCDF path for one calendar-month chunk."""
+    root = era5_land_root(
+        output_root,
+        grid_policy=grid_policy,
+        grid_search_radius=grid_search_radius,
+        request_mode=REQUEST_MODE_MONTHLY_BBOX,
+    )
+    return root / "raw" / f"period={chunk.period_label}" / "era5_land.nc"
+
+
 def aggregate_path(
     output_root: str | Path,
     start_date: str | date,
@@ -483,15 +612,17 @@ def aggregate_path(
     *,
     grid_policy: str = DEFAULT_GRID_POLICY,
     grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
+    request_mode: str = DEFAULT_REQUEST_MODE,
 ) -> Path:
     """Return the requested-period aggregate daily-weather CSV path."""
-    validate_grid_selection_options(grid_policy, grid_search_radius)
     start = parse_source_date(start_date, "start_date").isoformat()
     end = parse_source_date(end_date, "end_date").isoformat()
-    root = Path(output_root) / "era5_land"
-    policy_segment = grid_policy_segment(grid_policy, grid_search_radius)
-    if policy_segment is not None:
-        root = root / policy_segment
+    root = era5_land_root(
+        output_root,
+        grid_policy=grid_policy,
+        grid_search_radius=grid_search_radius,
+        request_mode=request_mode,
+    )
     return (
         root
         / "daily_aggregate"
@@ -507,15 +638,17 @@ def comparison_path(
     *,
     grid_policy: str = DEFAULT_GRID_POLICY,
     grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
+    request_mode: str = DEFAULT_REQUEST_MODE,
 ) -> Path:
     """Return the requested-period prior-pilot comparison CSV path."""
-    validate_grid_selection_options(grid_policy, grid_search_radius)
     start = parse_source_date(start_date, "start_date").isoformat()
     end = parse_source_date(end_date, "end_date").isoformat()
-    root = Path(output_root) / "era5_land"
-    policy_segment = grid_policy_segment(grid_policy, grid_search_radius)
-    if policy_segment is not None:
-        root = root / policy_segment
+    root = era5_land_root(
+        output_root,
+        grid_policy=grid_policy,
+        grid_search_radius=grid_search_radius,
+        request_mode=request_mode,
+    )
     return (
         root
         / "comparisons"
@@ -529,13 +662,15 @@ def manifest_path(
     *,
     grid_policy: str = DEFAULT_GRID_POLICY,
     grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
+    request_mode: str = DEFAULT_REQUEST_MODE,
 ) -> Path:
     """Return the ERA5-Land v2 weather manifest path."""
-    validate_grid_selection_options(grid_policy, grid_search_radius)
-    root = Path(output_root) / "era5_land"
-    policy_segment = grid_policy_segment(grid_policy, grid_search_radius)
-    if policy_segment is not None:
-        root = root / policy_segment
+    root = era5_land_root(
+        output_root,
+        grid_policy=grid_policy,
+        grid_search_radius=grid_search_radius,
+        request_mode=request_mode,
+    )
     return root / "manifests" / "era5_land_weather_manifest.json"
 
 
@@ -611,6 +746,19 @@ def longitude_for_selection(dataset_longitudes: Any, station_longitude: float) -
     return station_longitude
 
 
+def exact_coordinate_value(dataset_coordinate: Any, requested_value: float, description: str) -> float:
+    """Return the exact coordinate value from a NetCDF coordinate or fail explicitly."""
+    values = [float(value) for value in dataset_coordinate.values.ravel()]
+    for value in values:
+        if math.isclose(value, requested_value, abs_tol=1e-6):
+            return value
+    available = sorted(normalized_grid_coordinate(value) for value in values)
+    raise Era5LandIngestionError(
+        f"NetCDF is missing requested {description} coordinate {requested_value:.6g}; "
+        f"available coordinates: {available}."
+    )
+
+
 def scalar_coordinate(point_dataset: Any, name: str, description: str) -> float:
     """Return a scalar selected coordinate."""
     coord = point_dataset[name]
@@ -649,10 +797,15 @@ def load_hourly_frame(
         selection_latitude = grid_candidate.grid_latitude if grid_candidate is not None else station.latitude
         selection_longitude_raw = grid_candidate.grid_longitude if grid_candidate is not None else station.longitude
         selection_longitude = longitude_for_selection(dataset[longitude_name], selection_longitude_raw)
-        point = dataset.sel(
-            {latitude_name: selection_latitude, longitude_name: selection_longitude},
-            method="nearest",
-        ).load()
+        if grid_candidate is not None:
+            selection_latitude = exact_coordinate_value(dataset[latitude_name], selection_latitude, "latitude")
+            selection_longitude = exact_coordinate_value(dataset[longitude_name], selection_longitude, "longitude")
+            point = dataset.sel({latitude_name: selection_latitude, longitude_name: selection_longitude}).load()
+        else:
+            point = dataset.sel(
+                {latitude_name: selection_latitude, longitude_name: selection_longitude},
+                method="nearest",
+            ).load()
 
     grid_latitude = scalar_coordinate(point, latitude_name, "latitude")
     grid_longitude = scalar_coordinate(point, longitude_name, "longitude")
@@ -907,6 +1060,110 @@ def validate_partition_outputs(hourly: Any, daily_points: Any, chunk: Era5LandCh
     }
 
 
+def validate_monthly_raw_netcdf(
+    raw_path: str | Path,
+    *,
+    chunk: Era5LandChunk,
+    stations: Sequence[StationMapping],
+    request: Mapping[str, Any],
+    grid_policy: str = GRID_POLICY_NEAREST_VALID,
+    grid_search_radius: int = MAX_GRID_SEARCH_RADIUS,
+) -> dict[str, Any]:
+    """Validate a shared monthly-bbox NetCDF before local station extraction."""
+    import pandas as pd
+    import xarray as xr
+
+    path = Path(raw_path)
+    if not path.is_file():
+        raise Era5LandIngestionError(f"Monthly ERA5-Land raw NetCDF is missing: {path}.")
+
+    expected_area = monthly_bbox_for_stations(
+        stations,
+        grid_policy=grid_policy,
+        grid_search_radius=grid_search_radius,
+    )
+    actual_area = [float(value) for value in request.get("area", [])]
+    if actual_area != expected_area:
+        raise Era5LandIngestionError(f"Monthly ERA5-Land request area {actual_area} does not match expected {expected_area}.")
+
+    candidates = [
+        candidate
+        for station in stations
+        for candidate in grid_candidates_for_station(
+            station,
+            grid_policy=grid_policy,
+            grid_search_radius=grid_search_radius,
+        )
+    ]
+    with xr.open_dataset(path) as dataset:
+        latitude_name = coordinate_name(dataset, ("latitude", "lat"), "latitude")
+        longitude_name = coordinate_name(dataset, ("longitude", "lon"), "longitude")
+        time_name = time_coordinate_name(dataset)
+        source_variables = {
+            output_name: source_variable(dataset, aliases, output_name)
+            for output_name, aliases in VARIABLE_ALIASES.items()
+        }
+        netcdf_variable_units = validate_netcdf_units(dataset, source_variables)
+        timestamps = pd.DatetimeIndex(pd.to_datetime(dataset[time_name].values, utc=True))
+        expected = expected_hourly_index(chunk.start, chunk.end)
+        missing = expected.difference(timestamps)
+        unexpected = timestamps.difference(expected)
+        duplicate_count = int(timestamps.duplicated().sum())
+        if len(missing) or len(unexpected) or duplicate_count:
+            raise Era5LandIngestionError(
+                "Monthly ERA5-Land raw NetCDF has incomplete or unexpected hourly coverage: "
+                f"missing={len(missing)}, unexpected={len(unexpected)}, duplicates={duplicate_count}."
+            )
+        for candidate in candidates:
+            selection_longitude = longitude_for_selection(dataset[longitude_name], candidate.grid_longitude)
+            exact_coordinate_value(dataset[latitude_name], candidate.grid_latitude, "latitude")
+            exact_coordinate_value(dataset[longitude_name], selection_longitude, "longitude")
+        dimensions = {str(key): int(value) for key, value in dataset.sizes.items()}
+
+    return {
+        "validation_status": "complete",
+        "path": str(path),
+        "sha256": sha256_file(path),
+        "request_area": expected_area,
+        "candidate_count": len(candidates),
+        "unique_candidate_count": len({(item.grid_latitude, item.grid_longitude) for item in candidates}),
+        "coordinate_names": {"latitude": latitude_name, "longitude": longitude_name, "time": time_name},
+        "timestamp_coverage": {
+            "expected_start_utc": expected[0].isoformat().replace("+00:00", "Z"),
+            "expected_end_utc": expected[-1].isoformat().replace("+00:00", "Z"),
+            "actual_start_utc": timestamps.min().isoformat().replace("+00:00", "Z"),
+            "actual_end_utc": timestamps.max().isoformat().replace("+00:00", "Z"),
+            "missing_timestamp_count": int(len(missing)),
+            "unexpected_timestamp_count": int(len(unexpected)),
+            "duplicate_timestamp_count": duplicate_count,
+        },
+        "netcdf_dimensions": dimensions,
+        "netcdf_variable_units": netcdf_variable_units,
+    }
+
+
+def aggregate_output_is_verified(path: Path, chunk: Era5LandChunk, *, expected_point_count: int) -> bool:
+    """Return True when an aggregate CSV has complete daily station coverage for a chunk."""
+    import pandas as pd
+
+    if not path.is_file():
+        return False
+    try:
+        frame = pd.read_csv(path)
+    except Exception:
+        return False
+    if list(frame.columns) != list(DAILY_AGGREGATE_COLUMNS):
+        return False
+    expected_dates = pd.date_range(chunk.start.isoformat(), chunk.end.isoformat(), freq="D").strftime("%Y-%m-%d")
+    if list(frame["date_utc"]) != list(expected_dates):
+        return False
+    if not (frame["point_count"] == expected_point_count).all():
+        return False
+    if not (frame["expected_point_count"] == expected_point_count).all():
+        return False
+    return bool((frame["missing_point_count"] == 0).all())
+
+
 def write_partition_outputs(
     *,
     output_root: Path,
@@ -918,6 +1175,7 @@ def write_partition_outputs(
     grid_selection_metadata: Mapping[str, Any],
     retrieval_started_at_utc: str,
     retrieval_finished_at_utc: str,
+    retrieval_service_status: str = "cds_retrieve_completed",
     overwrite: bool = False,
 ) -> dict[str, Any]:
     """Write one station/chunk output partition and status JSON."""
@@ -933,6 +1191,7 @@ def write_partition_outputs(
         "source_dataset": DATASET_ID,
         "source_url": DATASET_URL,
         "provider": PROVIDER,
+        "request_mode": job.request_mode,
         "station": station_payload(job.station),
         "requested_period": {
             "start_date": job.chunk.start.isoformat(),
@@ -943,7 +1202,7 @@ def write_partition_outputs(
         "retrieval": {
             "started_at_utc": retrieval_started_at_utc,
             "finished_at_utc": retrieval_finished_at_utc,
-            "service_status": "cds_retrieve_completed",
+            "service_status": retrieval_service_status,
         },
         "paths": {
             "raw_netcdf": _manifest_path(paths.raw_netcdf, output_root=output_root),
@@ -959,6 +1218,12 @@ def write_partition_outputs(
         "validation": dict(validation),
         "extraction": dict(extraction_metadata),
         "grid_selection": dict(grid_selection_metadata),
+        "coverage": {
+            "hourly_rows": int(validation.get("hourly_rows", 0)),
+            "daily_point_rows": int(validation.get("daily_point_rows", 0)),
+            "missing_hour_count": int((validation.get("timestamp_coverage") or {}).get("missing_timestamp_count", 0)),
+            "timestamp_coverage": dict(validation.get("timestamp_coverage") or {}),
+        },
         "units": output_units(),
         "aggregation_contract": aggregation_contract(),
         "transformation_version": TRANSFORMATION_VERSION,
@@ -991,6 +1256,7 @@ def write_invalid_status(
     status_payload = {
         "source_dataset": DATASET_ID,
         "provider": PROVIDER,
+        "request_mode": job.request_mode,
         "station": station_payload(job.station),
         "requested_period": {
             "start_date": job.chunk.start.isoformat(),
@@ -1039,9 +1305,17 @@ def partition_is_verified(
     *,
     grid_policy: str = DEFAULT_GRID_POLICY,
     grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
+    request_mode: str = DEFAULT_REQUEST_MODE,
 ) -> bool:
     """Return True when a station/chunk partition exists and checksums match."""
-    paths = era5_land_paths(output_root, station_id, chunk, grid_policy=grid_policy, grid_search_radius=grid_search_radius)
+    paths = era5_land_paths(
+        output_root,
+        station_id,
+        chunk,
+        grid_policy=grid_policy,
+        grid_search_radius=grid_search_radius,
+        request_mode=request_mode,
+    )
     if not all(path.is_file() for path in (paths.hourly_csv, paths.daily_points_csv, paths.status_json)):
         return False
     try:
@@ -1071,9 +1345,17 @@ def load_partition_summary(
     *,
     grid_policy: str = DEFAULT_GRID_POLICY,
     grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
+    request_mode: str = DEFAULT_REQUEST_MODE,
 ) -> dict[str, Any]:
     """Load a verified station/chunk summary from status metadata."""
-    paths = era5_land_paths(output_root, station_id, chunk, grid_policy=grid_policy, grid_search_radius=grid_search_radius)
+    paths = era5_land_paths(
+        output_root,
+        station_id,
+        chunk,
+        grid_policy=grid_policy,
+        grid_search_radius=grid_search_radius,
+        request_mode=request_mode,
+    )
     status = json.loads(paths.status_json.read_text(encoding="utf-8"))
     paths = replace(paths, raw_netcdf=raw_path_from_status(status, output_root=Path(output_root), fallback=paths.raw_netcdf))
     result = partition_summary(output_root=Path(output_root), paths=paths, status_payload=status)
@@ -1113,6 +1395,7 @@ def partition_summary(
         "station_id": str(station.get("station_id")),
         "period_start": str(period.get("start_date")),
         "period_end": str(period.get("end_date")),
+        "request_mode": status_payload.get("request_mode", DEFAULT_REQUEST_MODE),
         "status": str(validation.get("validation_status")),
         "readiness_status": validation.get("readiness_status") or grid_selection.get("readiness_status"),
         "hourly_rows": int(validation.get("hourly_rows", 0)),
@@ -1132,6 +1415,7 @@ def partition_summary(
         "selected_candidate_rank": grid_selection.get("selected_candidate_rank"),
         "candidate_count": grid_selection.get("candidate_count"),
         "grid_selection": dict(grid_selection),
+        "coverage": dict(status_payload.get("coverage") or {}),
     }
 
 
@@ -1326,17 +1610,22 @@ def planned_jobs(
     chunks: Sequence[Era5LandChunk],
     grid_policy: str = DEFAULT_GRID_POLICY,
     grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
+    request_mode: str = DEFAULT_REQUEST_MODE,
+    monthly_request: Mapping[str, Any] | None = None,
 ) -> list[Era5LandJob]:
     """Build the deterministic station/chunk job list."""
     validate_grid_selection_options(grid_policy, grid_search_radius)
+    validate_request_mode(request_mode)
     jobs = []
     for chunk in chunks:
+        chunk_request = monthly_request if request_mode == REQUEST_MODE_MONTHLY_BBOX else None
         for station in stations:
             jobs.append(
                 Era5LandJob(
                     station=station,
                     chunk=chunk,
-                    request=build_cds_request(
+                    request=chunk_request
+                    or build_cds_request(
                         chunk,
                         station,
                         grid_policy=grid_policy,
@@ -1348,12 +1637,117 @@ def planned_jobs(
                         chunk,
                         grid_policy=grid_policy,
                         grid_search_radius=grid_search_radius,
+                        request_mode=request_mode,
                     ),
                     grid_policy=grid_policy,
                     grid_search_radius=grid_search_radius,
+                    request_mode=request_mode,
                 )
             )
     return jobs
+
+
+def generate_station_partition_from_raw(
+    *,
+    output_root: Path,
+    job: Era5LandJob,
+    raw_path: Path,
+    retrieval_started_at_utc: str,
+    retrieval_finished_at_utc: str,
+    overwrite: bool = False,
+    monthly_raw_metadata: Mapping[str, Any] | None = None,
+    retrieval_service_status: str = "cds_retrieve_completed",
+) -> dict[str, Any]:
+    """Evaluate candidates from an existing raw NetCDF and write one station partition."""
+    candidate_results = []
+    selected_result = None
+    candidates = grid_candidates_for_station(
+        job.station,
+        grid_policy=job.grid_policy,
+        grid_search_radius=job.grid_search_radius,
+    )
+    raw_job = replace(job, paths=replace(job.paths, raw_netcdf=raw_path))
+    for candidate in candidates:
+        candidate_result = evaluate_grid_candidate(
+            job=raw_job,
+            candidate=candidate,
+            raw_path=raw_path,
+            output_root=output_root,
+        )
+        candidate_results.append(candidate_result)
+        if candidate_result["passed"]:
+            selected_result = selected_result or candidate_result
+    candidate_evidence = [dict(item["evidence"], selected=item is selected_result) for item in candidate_results]
+    if selected_result is None:
+        grid_selection_metadata = {
+            "grid_policy": job.grid_policy,
+            "grid_search_radius": job.grid_search_radius,
+            "readiness_status": "BLOCKED",
+            "candidate_count": len(candidate_evidence),
+            "selected_candidate_rank": None,
+            "selected_grid_coordinate": None,
+            "candidate_evidence": candidate_evidence,
+            "request_mode": job.request_mode,
+        }
+        if monthly_raw_metadata:
+            grid_selection_metadata["monthly_bbox"] = dict(monthly_raw_metadata)
+        issue_summaries = [
+            f"rank {item.get('rank')}: {item.get('issues')}"
+            for item in candidate_evidence
+            if item.get("issues")
+        ]
+        detail = f" Candidate issues: {issue_summaries}." if issue_summaries else ""
+        message = (
+            "ERA5-Land grid selection failed: no valid candidate within the approved search radius."
+            f"{detail}"
+        )
+        write_invalid_status(
+            output_root=output_root,
+            job=raw_job,
+            message=message,
+            retrieval_started_at_utc=retrieval_started_at_utc,
+            retrieval_finished_at_utc=retrieval_finished_at_utc,
+            grid_selection_metadata=grid_selection_metadata,
+            overwrite=overwrite,
+        )
+        raise Era5LandIngestionError(f"{message} Station {job.station.station_id}; period {job.chunk.period_label}.")
+
+    selected_candidate = selected_result["candidate"]
+    readiness_status = readiness_status_for_candidate(selected_candidate)
+    validation = dict(selected_result["validation"])
+    validation["readiness_status"] = readiness_status
+    validation["warnings"] = readiness_warning_for_candidate(selected_candidate)
+    extraction = dict(selected_result["extraction"])
+    extraction["selected_candidate_rank"] = selected_candidate.rank
+    extraction["grid_policy"] = job.grid_policy
+    extraction["grid_search_radius"] = job.grid_search_radius
+    extraction["request_mode"] = job.request_mode
+    grid_selection_metadata = {
+        "grid_policy": job.grid_policy,
+        "grid_search_radius": job.grid_search_radius,
+        "readiness_status": readiness_status,
+        "candidate_count": len(candidate_evidence),
+        "selected_candidate_rank": selected_candidate.rank,
+        "selected_grid_coordinate": extraction.get("selected_grid_coordinate"),
+        "station_to_grid_distance_km": extraction.get("station_to_grid_distance_km"),
+        "candidate_evidence": candidate_evidence,
+        "request_mode": job.request_mode,
+    }
+    if monthly_raw_metadata:
+        grid_selection_metadata["monthly_bbox"] = dict(monthly_raw_metadata)
+    return write_partition_outputs(
+        output_root=output_root,
+        job=raw_job,
+        hourly=selected_result["hourly"],
+        daily_points=selected_result["daily_points"],
+        validation=validation,
+        extraction_metadata=extraction,
+        grid_selection_metadata=grid_selection_metadata,
+        retrieval_started_at_utc=retrieval_started_at_utc,
+        retrieval_finished_at_utc=retrieval_finished_at_utc,
+        retrieval_service_status=retrieval_service_status,
+        overwrite=overwrite,
+    )
 
 
 def run_ingestion(
@@ -1371,6 +1765,7 @@ def run_ingestion(
     prior_pilot_dir: str | Path | None = None,
     grid_policy: str = DEFAULT_GRID_POLICY,
     grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
+    request_mode: str = DEFAULT_REQUEST_MODE,
     retrieve_func: Callable[[str, Mapping[str, Any], Path], None] | None = None,
 ) -> dict[str, Any]:
     """Run controlled ERA5-Land v2 weather ingestion."""
@@ -1381,6 +1776,13 @@ def run_ingestion(
     if request_delay < 0:
         raise ValueError("request_delay must be zero or greater.")
     validate_grid_selection_options(grid_policy, grid_search_radius)
+    validate_request_mode(request_mode)
+    if request_mode == REQUEST_MODE_MONTHLY_BBOX and (
+        grid_policy != GRID_POLICY_NEAREST_VALID or grid_search_radius != 1
+    ):
+        raise ValueError("monthly-bbox request mode requires --grid-policy nearest-valid --grid-search-radius 1.")
+    if request_mode == REQUEST_MODE_MONTHLY_BBOX and station_ids is not None:
+        raise ValueError("monthly-bbox request mode always covers all 17 approved stations; omit station_ids.")
 
     chunks = iter_same_month_chunks(start_date, end_date)
     stations = load_station_mapping(station_mapping, station_ids=station_ids)
@@ -1390,20 +1792,50 @@ def run_ingestion(
         chunks=chunks,
         grid_policy=grid_policy,
         grid_search_radius=grid_search_radius,
+        request_mode=request_mode,
     )
-    if len(jobs) > max_chunks:
-        raise ValueError(f"Planned ERA5-Land chunks ({len(jobs)}) exceed max_chunks={max_chunks}.")
+    planned_request_count = len(chunks) if request_mode == REQUEST_MODE_MONTHLY_BBOX else len(jobs)
+    if planned_request_count > max_chunks:
+        raise ValueError(f"Planned ERA5-Land chunks ({planned_request_count}) exceed max_chunks={max_chunks}.")
 
     output_root_path = Path(output_root)
     requested_start = parse_source_date(start_date, "start_date").isoformat()
     requested_end = parse_source_date(end_date, "end_date").isoformat()
 
     if dry_run:
+        monthly_requests = [
+            {
+                "dataset": DATASET_ID,
+                "period": {"start_date": chunk.start.isoformat(), "end_date": chunk.end.isoformat()},
+                "request": build_monthly_bbox_request(
+                    chunk,
+                    stations,
+                    grid_policy=grid_policy,
+                    grid_search_radius=grid_search_radius,
+                ),
+                "raw_netcdf": str(
+                    monthly_bbox_raw_path(
+                        output_root_path,
+                        chunk,
+                        grid_policy=grid_policy,
+                        grid_search_radius=grid_search_radius,
+                    )
+                ),
+            }
+            for chunk in chunks
+        ] if request_mode == REQUEST_MODE_MONTHLY_BBOX else []
         return {
             "dry_run": True,
             "dataset": DATASET_ID,
             "variables": list(REQUEST_VARIABLES),
-            "network_requests_planned": len(jobs),
+            "request_mode": request_mode,
+            "network_requests_planned": planned_request_count,
+            "monthly_requests_planned": len(monthly_requests),
+            "monthly_requests_made": 0,
+            "raw_months_reused": 0,
+            "station_outputs_generated": 0,
+            "station_outputs_skipped": 0,
+            "incomplete_months": [],
             "writes_planned": False,
             "requested_start_date": requested_start,
             "requested_end_date": requested_end,
@@ -1412,6 +1844,7 @@ def run_ingestion(
             "station_count": len(stations),
             "chunk_count": len(jobs),
             "planned_requests": [_job_plan_payload(job, output_root_path) for job in jobs],
+            "planned_monthly_requests": monthly_requests,
             "aggregate_path": str(
                 aggregate_path(
                     output_root_path,
@@ -1419,6 +1852,7 @@ def run_ingestion(
                     requested_end,
                     grid_policy=grid_policy,
                     grid_search_radius=grid_search_radius,
+                    request_mode=request_mode,
                 )
             ),
             "comparison_path": str(
@@ -1428,10 +1862,36 @@ def run_ingestion(
                     requested_end,
                     grid_policy=grid_policy,
                     grid_search_radius=grid_search_radius,
+                    request_mode=request_mode,
                 )
             ),
-            "manifest_path": str(manifest_path(output_root_path, grid_policy=grid_policy, grid_search_radius=grid_search_radius)),
+            "manifest_path": str(
+                manifest_path(
+                    output_root_path,
+                    grid_policy=grid_policy,
+                    grid_search_radius=grid_search_radius,
+                    request_mode=request_mode,
+                )
+            ),
         }
+
+    if request_mode == REQUEST_MODE_MONTHLY_BBOX:
+        return run_monthly_bbox_ingestion(
+            output_root_path=output_root_path,
+            chunks=chunks,
+            stations=stations,
+            jobs=jobs,
+            requested_start=requested_start,
+            requested_end=requested_end,
+            max_chunks=max_chunks,
+            request_delay=request_delay,
+            resume=resume,
+            overwrite=overwrite,
+            prior_pilot_dir=prior_pilot_dir,
+            grid_policy=grid_policy,
+            grid_search_radius=grid_search_radius,
+            retrieve_func=retrieve_func,
+        )
 
     retriever = retrieve_func or retrieve_era5_land
     results: list[dict[str, Any]] = []
@@ -1637,6 +2097,7 @@ def run_ingestion(
         "dry_run": False,
         "dataset": DATASET_ID,
         "variables": list(REQUEST_VARIABLES),
+        "request_mode": request_mode,
         "requested_start_date": requested_start,
         "requested_end_date": requested_end,
         "grid_policy": grid_policy,
@@ -1644,6 +2105,12 @@ def run_ingestion(
         "station_count": len(stations),
         "chunk_count": len(jobs),
         "requests_made": requests_made,
+        "monthly_requests_planned": 0,
+        "monthly_requests_made": 0,
+        "raw_months_reused": 0,
+        "station_outputs_generated": len([item for item in results if not item.get("skipped_existing")]),
+        "station_outputs_skipped": len([item for item in results if item.get("skipped_existing")]),
+        "incomplete_months": [],
         "partition_results": _json_ready(results),
         "readiness_summary": readiness_summary(results),
         "readiness_table": readiness_table(results),
@@ -1652,6 +2119,273 @@ def run_ingestion(
         "comparison_path": str(comparison_csv),
         "comparison_sha256": comparison_checksum,
         "manifest_path": str(manifest_path(output_root_path, grid_policy=grid_policy, grid_search_radius=grid_search_radius)),
+        "manifest_sha256": manifest_checksum,
+    }
+
+
+def run_monthly_bbox_ingestion(
+    *,
+    output_root_path: Path,
+    chunks: Sequence[Era5LandChunk],
+    stations: Sequence[StationMapping],
+    jobs: Sequence[Era5LandJob],
+    requested_start: str,
+    requested_end: str,
+    max_chunks: int,
+    request_delay: float,
+    resume: bool,
+    overwrite: bool,
+    prior_pilot_dir: str | Path | None,
+    grid_policy: str,
+    grid_search_radius: int,
+    retrieve_func: Callable[[str, Mapping[str, Any], Path], None] | None,
+) -> dict[str, Any]:
+    """Run monthly-bbox ERA5-Land ingestion with one raw request per calendar month."""
+    del max_chunks
+    retriever = retrieve_func or retrieve_era5_land
+    results: list[dict[str, Any]] = []
+    monthly_requests_made = 0
+    raw_months_reused = 0
+    station_outputs_generated = 0
+    station_outputs_skipped = 0
+    incomplete_months: list[dict[str, Any]] = []
+
+    for chunk_index, chunk in enumerate(chunks):
+        month_jobs = [job for job in jobs if job.chunk == chunk]
+        monthly_request = build_monthly_bbox_request(
+            chunk,
+            stations,
+            grid_policy=grid_policy,
+            grid_search_radius=grid_search_radius,
+        )
+        raw_path = monthly_bbox_raw_path(
+            output_root_path,
+            chunk,
+            grid_policy=grid_policy,
+            grid_search_radius=grid_search_radius,
+        )
+        chunk_aggregate_path = aggregate_path(
+            output_root_path,
+            chunk.start,
+            chunk.end,
+            grid_policy=grid_policy,
+            grid_search_radius=grid_search_radius,
+            request_mode=REQUEST_MODE_MONTHLY_BBOX,
+        )
+        if resume and all(
+            partition_is_verified(
+                output_root_path,
+                job.station.station_id,
+                job.chunk,
+                grid_policy=grid_policy,
+                grid_search_radius=grid_search_radius,
+                request_mode=REQUEST_MODE_MONTHLY_BBOX,
+            )
+            for job in month_jobs
+        ) and aggregate_output_is_verified(chunk_aggregate_path, chunk, expected_point_count=len(stations)):
+            for job in month_jobs:
+                summary = load_partition_summary(
+                    output_root_path,
+                    job.station.station_id,
+                    job.chunk,
+                    grid_policy=grid_policy,
+                    grid_search_radius=grid_search_radius,
+                    request_mode=REQUEST_MODE_MONTHLY_BBOX,
+                )
+                summary["skipped_existing"] = True
+                results.append(summary)
+            station_outputs_skipped += len(month_jobs)
+            raw_months_reused += 1
+            continue
+
+        raw_reused = False
+        started_at = utc_timestamp()
+        finished_at = None
+        if raw_path.exists() and not overwrite:
+            monthly_raw_metadata = validate_monthly_raw_netcdf(
+                raw_path,
+                chunk=chunk,
+                stations=stations,
+                request=monthly_request,
+                grid_policy=grid_policy,
+                grid_search_radius=grid_search_radius,
+            )
+            raw_reused = True
+            raw_months_reused += 1
+            finished_at = utc_timestamp()
+        else:
+            raw_path.parent.mkdir(parents=True, exist_ok=True)
+            monthly_requests_made += 1
+            retriever(DATASET_ID, monthly_request, raw_path)
+            finished_at = utc_timestamp()
+            monthly_raw_metadata = validate_monthly_raw_netcdf(
+                raw_path,
+                chunk=chunk,
+                stations=stations,
+                request=monthly_request,
+                grid_policy=grid_policy,
+                grid_search_radius=grid_search_radius,
+            )
+
+        for job in month_jobs:
+            if resume and partition_is_verified(
+                output_root_path,
+                job.station.station_id,
+                job.chunk,
+                grid_policy=grid_policy,
+                grid_search_radius=grid_search_radius,
+                request_mode=REQUEST_MODE_MONTHLY_BBOX,
+            ):
+                summary = load_partition_summary(
+                    output_root_path,
+                    job.station.station_id,
+                    job.chunk,
+                    grid_policy=grid_policy,
+                    grid_search_radius=grid_search_radius,
+                    request_mode=REQUEST_MODE_MONTHLY_BBOX,
+                )
+                summary["skipped_existing"] = True
+                results.append(summary)
+                station_outputs_skipped += 1
+                continue
+
+            if not overwrite:
+                existing = [job.paths.hourly_csv, job.paths.daily_points_csv, job.paths.status_json]
+                if any(path.exists() for path in existing):
+                    raise FileExistsError(
+                        "ERA5-Land monthly-bbox station output exists but is not verified; "
+                        "use --overwrite to replace explicitly."
+                    )
+
+            result = generate_station_partition_from_raw(
+                output_root=output_root_path,
+                job=replace(job, request=monthly_request),
+                raw_path=raw_path,
+                retrieval_started_at_utc=started_at,
+                retrieval_finished_at_utc=finished_at or utc_timestamp(),
+                overwrite=overwrite,
+                monthly_raw_metadata=monthly_raw_metadata,
+                retrieval_service_status="raw_month_reused" if raw_reused else "cds_retrieve_completed",
+            )
+            results.append(result)
+            station_outputs_generated += 1
+
+        missing_verified = [
+            job.station.station_id
+            for job in month_jobs
+            if not partition_is_verified(
+                output_root_path,
+                job.station.station_id,
+                job.chunk,
+                grid_policy=grid_policy,
+                grid_search_radius=grid_search_radius,
+                request_mode=REQUEST_MODE_MONTHLY_BBOX,
+            )
+        ]
+        if missing_verified:
+            incomplete_months.append({"period": chunk.period_label, "missing_or_invalid_station_ids": missing_verified})
+
+        if request_delay and chunk_index < len(chunks) - 1:
+            import time
+
+            time.sleep(request_delay)
+
+    daily_points_all = load_daily_points_for_jobs(output_root_path, jobs)
+    aggregate = aggregate_daily_weather(daily_points_all, expected_point_count=len(stations))
+    aggregate_csv = aggregate_path(
+        output_root_path,
+        requested_start,
+        requested_end,
+        grid_policy=grid_policy,
+        grid_search_radius=grid_search_radius,
+        request_mode=REQUEST_MODE_MONTHLY_BBOX,
+    )
+    aggregate_checksum = write_csv(aggregate_csv, aggregate)
+    comparison = compare_with_prior_pilot(daily_points_all, prior_pilot_dir=prior_pilot_dir)
+    comparison_csv = comparison_path(
+        output_root_path,
+        requested_start,
+        requested_end,
+        grid_policy=grid_policy,
+        grid_search_radius=grid_search_radius,
+        request_mode=REQUEST_MODE_MONTHLY_BBOX,
+    )
+    comparison_checksum = write_csv(comparison_csv, comparison)
+    summaries = [
+        load_partition_summary(
+            output_root_path,
+            job.station.station_id,
+            job.chunk,
+            grid_policy=grid_policy,
+            grid_search_radius=grid_search_radius,
+            request_mode=REQUEST_MODE_MONTHLY_BBOX,
+        )
+        for job in jobs
+        if partition_is_verified(
+            output_root_path,
+            job.station.station_id,
+            job.chunk,
+            grid_policy=grid_policy,
+            grid_search_radius=grid_search_radius,
+            request_mode=REQUEST_MODE_MONTHLY_BBOX,
+        )
+    ]
+    manifest = build_manifest(
+        output_root=output_root_path,
+        requested_start_date=requested_start,
+        requested_end_date=requested_end,
+        stations=stations,
+        partition_results=summaries,
+        aggregate_csv=aggregate_csv,
+        aggregate_checksum=aggregate_checksum,
+        comparison_csv=comparison_csv,
+        comparison_checksum=comparison_checksum,
+        aggregate_row_count=len(aggregate),
+        aggregate_column_count=len(aggregate.columns),
+        grid_policy=grid_policy,
+        grid_search_radius=grid_search_radius,
+        request_mode=REQUEST_MODE_MONTHLY_BBOX,
+    )
+    manifest_checksum = write_manifest(
+        output_root_path,
+        manifest,
+        grid_policy=grid_policy,
+        grid_search_radius=grid_search_radius,
+        request_mode=REQUEST_MODE_MONTHLY_BBOX,
+    )
+    return {
+        "dry_run": False,
+        "dataset": DATASET_ID,
+        "variables": list(REQUEST_VARIABLES),
+        "request_mode": REQUEST_MODE_MONTHLY_BBOX,
+        "requested_start_date": requested_start,
+        "requested_end_date": requested_end,
+        "grid_policy": grid_policy,
+        "grid_search_radius": grid_search_radius,
+        "station_count": len(stations),
+        "chunk_count": len(jobs),
+        "monthly_requests_planned": len(chunks),
+        "monthly_requests_made": monthly_requests_made,
+        "requests_made": monthly_requests_made,
+        "raw_months_reused": raw_months_reused,
+        "station_outputs_generated": station_outputs_generated,
+        "station_outputs_skipped": station_outputs_skipped,
+        "incomplete_months": incomplete_months,
+        "partition_results": _json_ready(results),
+        "readiness_summary": readiness_summary(results),
+        "readiness_table": readiness_table(results),
+        "aggregate_path": str(aggregate_csv),
+        "aggregate_sha256": aggregate_checksum,
+        "comparison_path": str(comparison_csv),
+        "comparison_sha256": comparison_checksum,
+        "manifest_path": str(
+            manifest_path(
+                output_root_path,
+                grid_policy=grid_policy,
+                grid_search_radius=grid_search_radius,
+                request_mode=REQUEST_MODE_MONTHLY_BBOX,
+            )
+        ),
         "manifest_sha256": manifest_checksum,
     }
 
@@ -1669,6 +2403,7 @@ def load_daily_points_for_jobs(output_root: Path, jobs: Sequence[Era5LandJob]) -
             job.chunk,
             grid_policy=job.grid_policy,
             grid_search_radius=job.grid_search_radius,
+            request_mode=job.request_mode,
         ):
             missing.append(f"{job.station.station_id}/{job.chunk.period_label}")
             continue
@@ -1773,9 +2508,11 @@ def build_manifest(
     aggregate_column_count: int,
     grid_policy: str = DEFAULT_GRID_POLICY,
     grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
+    request_mode: str = DEFAULT_REQUEST_MODE,
 ) -> DatasetManifest:
     """Build a deterministic ERA5-Land v2 weather manifest."""
     validate_grid_selection_options(grid_policy, grid_search_radius)
+    validate_request_mode(request_mode)
     path_checksum_map: dict[str, str] = {
         _manifest_path(aggregate_csv, output_root=output_root): aggregate_checksum,
         _manifest_path(comparison_csv, output_root=output_root): comparison_checksum,
@@ -1787,6 +2524,7 @@ def build_manifest(
     selected_grid = {}
     selected_grid_by_partition = {}
     grid_selection_by_partition = {}
+    monthly_bbox_by_partition = {}
     warnings = []
     for item in partition_results:
         manifest_paths = item.get("manifest_paths") or {}
@@ -1814,6 +2552,9 @@ def build_manifest(
             partition_key = f"{item['station_id']}:{item['period_start']}_{item['period_end']}"
             selected_grid_by_partition[partition_key] = item["selected_grid_coordinate"]
             grid_selection_by_partition[partition_key] = item.get("grid_selection") or {}
+            monthly_bbox = (item.get("grid_selection") or {}).get("monthly_bbox")
+            if monthly_bbox:
+                monthly_bbox_by_partition[partition_key] = monthly_bbox
         warnings.extend(str(warning) for warning in item.get("warnings", []))
 
     warnings.extend(
@@ -1840,10 +2581,11 @@ def build_manifest(
             "excluded_station_ids": [UNMATCHED_STATION_ID],
             "grid_policy": grid_policy,
             "grid_search_radius": grid_search_radius,
+            "request_mode": request_mode,
         },
         station_ids=tuple(station.station_id for station in stations),
         coordinates=tuple(station_payload(station) for station in stations),
-        raw_file_paths=tuple(sorted(raw_paths)),
+        raw_file_paths=tuple(sorted(set(raw_paths))),
         sha256_checksums=dict(sorted(path_checksum_map.items())),
         row_count=int(aggregate_row_count),
         column_count=int(aggregate_column_count),
@@ -1884,13 +2626,16 @@ def build_manifest(
                     "none_valid": "BLOCKED",
                 },
             },
+            "request_mode": request_mode,
             "selected_grid_coordinates_by_station_id": selected_grid,
             "selected_grid_coordinates_by_partition": selected_grid_by_partition,
             "grid_selection_by_partition": grid_selection_by_partition,
+            "monthly_bbox_by_partition": monthly_bbox_by_partition,
             "request_contract": {
                 "data_format": "netcdf",
                 "download_format": "unarchived",
-                "one_request_per_station_per_same_month_chunk": True,
+                "one_request_per_station_per_same_month_chunk": request_mode == REQUEST_MODE_STATION_MONTH,
+                "one_request_per_calendar_month_bbox": request_mode == REQUEST_MODE_MONTHLY_BBOX,
                 "variables_are_fixed": True,
             },
             "model_compatibility": {
@@ -1910,9 +2655,15 @@ def write_manifest(
     *,
     grid_policy: str = DEFAULT_GRID_POLICY,
     grid_search_radius: int = DEFAULT_GRID_SEARCH_RADIUS,
+    request_mode: str = DEFAULT_REQUEST_MODE,
 ) -> str:
     """Write the ERA5-Land weather manifest and return its checksum."""
-    path = manifest_path(output_root, grid_policy=grid_policy, grid_search_radius=grid_search_radius)
+    path = manifest_path(
+        output_root,
+        grid_policy=grid_policy,
+        grid_search_radius=grid_search_radius,
+        request_mode=request_mode,
+    )
     write_text_if_changed(path, manifest_to_json(manifest))
     return sha256_file(path)
 
@@ -1931,6 +2682,7 @@ def _job_plan_payload(job: Era5LandJob, output_root: Path) -> dict[str, Any]:
             "end_date": job.chunk.end.isoformat(),
             "timezone": "UTC",
         },
+        "request_mode": job.request_mode,
         "grid_policy": job.grid_policy,
         "grid_search_radius": job.grid_search_radius,
         "grid_candidates": [
@@ -1984,11 +2736,14 @@ __all__ = [
     "DEFAULT_CALM_THRESHOLD_M_S",
     "DEFAULT_GRID_POLICY",
     "DEFAULT_GRID_SEARCH_RADIUS",
+    "DEFAULT_REQUEST_MODE",
     "EXPECTED_STATION_COUNT",
     "GRID_POLICY_NEAREST_VALID",
     "GRID_POLICY_SINGLE_CELL",
     "GRID_STEP_DEGREES",
     "MAX_GRID_SEARCH_RADIUS",
+    "REQUEST_MODE_MONTHLY_BBOX",
+    "REQUEST_MODE_STATION_MONTH",
     "REQUEST_TIMES",
     "REQUEST_VARIABLES",
     "DAILY_AGGREGATE_COLUMNS",
@@ -2003,6 +2758,7 @@ __all__ = [
     "aggregate_daily_weather",
     "aggregate_path",
     "build_cds_request",
+    "build_monthly_bbox_request",
     "build_manifest",
     "compare_with_prior_pilot",
     "comparison_path",
@@ -2013,6 +2769,8 @@ __all__ = [
     "load_hourly_frame",
     "load_station_mapping",
     "manifest_path",
+    "monthly_bbox_for_stations",
+    "monthly_bbox_raw_path",
     "nearest_era5_land_grid_coordinate",
     "partition_is_verified",
     "request_area_for_candidates",
