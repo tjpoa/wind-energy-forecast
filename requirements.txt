@@ -4,6 +4,11 @@ pandas>=2.2,<3
 requests>=2.32,<3
 python-dotenv>=1.1,<2
 
+# Pilot data sources
+cdsapi>=0.7.7,<0.8
+xarray>=2025.1,<2027
+netCDF4>=1.7,<2
+
 # Modeling
 joblib>=1.5,<2
 scikit-learn==1.6.1

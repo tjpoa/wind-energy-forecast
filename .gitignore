@@ -22,6 +22,19 @@ secrets.*
 
 data/processed/*.csv
 !data/processed/.gitkeep
+data/raw/v2/**
+!data/raw/v2/
+!data/raw/v2/production/
+!data/raw/v2/production/.gitkeep
+!data/raw/v2/weather/
+!data/raw/v2/weather/.gitkeep
+data/processed/v2/**
+!data/processed/v2/
+!data/processed/v2/daily_merged/
+!data/processed/v2/daily_merged/.gitkeep
+!data/processed/v2/ml_features/
+!data/processed/v2/ml_features/.gitkeep
+data/pilot/
 
 .DS_Store
 Thumbs.db
