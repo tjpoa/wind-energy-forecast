@@ -12,7 +12,8 @@ netCDF4>=1.7,<2
 # Modeling
 joblib>=1.5,<2
 scikit-learn==1.6.1
-tensorflow-intel==2.18.0
+tensorflow-intel==2.18.0; platform_system == "Windows"
+tensorflow==2.18.0; platform_system != "Windows"
 keras>=3.9,<4
 xgboost>=3.0,<4
 
