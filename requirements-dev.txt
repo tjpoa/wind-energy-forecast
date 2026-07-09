@@ -1,0 +1,2 @@
+# Install after the runtime dependencies in requirements.txt.
+pytest>=8.0,<9
