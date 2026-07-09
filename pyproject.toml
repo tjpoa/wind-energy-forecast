@@ -11,3 +11,8 @@ requires-python = ">=3.10"
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["wind_forecast*"]
+
+[tool.pytest.ini_options]
+addopts = ["--strict-config", "--strict-markers"]
+pythonpath = ["src"]
+testpaths = ["tests"]
