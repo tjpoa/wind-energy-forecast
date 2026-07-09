@@ -28,7 +28,7 @@ each checkpoint was written. This file reflects the latest repository state.
 
 | Area | Status | Evidence | Current limitation |
 | --- | --- | --- | --- |
-| Python package structure | Implemented | `src/wind_forecast/`, `pyproject.toml` | Package is focused on runtime and data-engineering helpers; training remains notebook-based. |
+| Python package structure | Implemented | `src/wind_forecast/`, `pyproject.toml` | Full tuned training still lives in notebooks. |
 | Configuration and paths | Implemented | `wind_forecast.config`, `wind_forecast.paths`, `.env.example` | WeatherAPI workflows still require local credentials and network access. |
 | Schema compatibility | Implemented | `wind_forecast.schemas`, schema tests | Existing saved artifacts still depend on the recovered v1 feature order. |
 | Feature engineering | Implemented | `wind_forecast.features`, `wind_forecast.v2_features` | V2 features are built locally but v2 scalers and models are not promoted. |
@@ -37,10 +37,11 @@ each checkpoint was written. This file reflects the latest repository state.
 | Automated tests | Implemented | `tests/`, pytest configuration | Coverage reporting is not yet configured. |
 | Code quality | Implemented baseline | Ruff configuration in `pyproject.toml` | Ruff rule set is intentionally minimal. |
 | Prediction API | Implemented for local/container use | `wind_forecast.api`, `docs/API.md`, API tests | The API is not deployed and depends on local mounted artifacts for full serving. |
+| Baseline training CLI | Implemented baseline | `wind_forecast.training`, `scripts/train_baseline.py`, `docs/TRAINING.md` | Lightweight tree baseline only; tuned ANN/Optuna workflow remains notebook-based. |
 | Docker support | Implemented baseline | `Dockerfile`, `.dockerignore`, Docker CI build | No production hardening, image publishing, or runtime healthcheck yet. |
 | CI | Implemented baseline | `.github/workflows/ci.yml` | CI runs tests, Ruff, and Docker build; it does not yet publish coverage or run container smoke tests. |
 | MLflow tracking | Partial | `wind_forecast.tracking`, optional `--mlflow` evaluation logging | Local tracking only; model registry, aliases, and promotion workflow are not implemented. |
-| Documentation | Strong | `README.md`, roadmap, phase audits, decision records | A short demo-oriented walkthrough is still missing. |
+| Documentation | Strong | `README.md`, `docs/DEMO.md`, roadmap, phase audits, decision records | Model-card and data-card documentation are still missing. |
 
 ## Roadmap Status
 
@@ -50,7 +51,7 @@ each checkpoint was written. This file reflects the latest repository state.
 | 1 | Modular project structure and configuration | Completed. Reusable package modules and configuration helpers exist. |
 | 2 | Data validation and sanity checks | Substantially implemented. V1 and v2 validation work exists, with documented v2 contracts and acceptance checks. |
 | 3 | Automated testing and code quality | Implemented baseline. Pytest and Ruff are configured and covered by CI. |
-| 4 | MLflow experiment tracking and model registry | Partial. Local MLflow tracking exists; registry and promotion are not implemented. |
+| 4 | MLflow experiment tracking and model registry | Partial. Local MLflow tracking and a lightweight baseline-training CLI exist; registry and promotion are not implemented. |
 | 5 | Prediction API with FastAPI | Implemented for local/container inference over saved artifacts. |
 | 6 | Docker containerization | Implemented baseline Dockerfile and Docker build CI. |
 | 7 | GitHub Actions continuous integration | Implemented baseline CI for tests, linting, and Docker build. |
@@ -102,7 +103,8 @@ This repository demonstrates:
 
 ## Known Limitations
 
-- Model training remains in `notebooks/Modeling.ipynb`.
+- The full tuned modelling workflow remains in `notebooks/Modeling.ipynb`;
+  the CLI covers only a lightweight baseline.
 - No production cloud deployment exists.
 - No Airflow orchestration exists.
 - No PySpark implementation exists.
@@ -114,11 +116,10 @@ This repository demonstrates:
 
 ## Recommended Next Steps
 
-1. Add a short reproducible demo guide with API and Docker smoke commands.
-2. Extract a deterministic training/evaluation CLI from the notebook workflow.
-3. Add model-card and data-card documentation for the v1 baseline.
-4. Add test coverage reporting and a container health smoke test to CI.
-5. Define a local model registry or promotion convention before claiming model
+1. Extend the baseline training CLI toward the tuned notebook workflow.
+2. Add model-card and data-card documentation for the v1 baseline.
+3. Add test coverage reporting and a container health smoke test to CI.
+4. Define a local model registry or promotion convention before claiming model
    lifecycle operations.
-6. Decide whether generated data and model artifacts should use DVC, GitHub
+5. Decide whether generated data and model artifacts should use DVC, GitHub
    Releases, or another explicit artifact versioning mechanism.

@@ -20,6 +20,7 @@ workflow orchestration, or model-registry operations.
 - Data validation for raw production data, parsed weather data, and feature-ready
   v2 datasets.
 - Feature engineering for calendar, cyclic, lag, and rolling-window features.
+- Reproducible baseline training CLI for a lightweight historical holdout run.
 - Backward-compatible batch scripts for API data processing and saved-model
   inference.
 - FastAPI service for health checks, model artifact inspection, and prediction.
@@ -40,6 +41,7 @@ wind-energy-forecast/
 |   |-- features.py           # Shared feature engineering
 |   |-- ingestion.py          # WeatherAPI ingestion helpers
 |   |-- inference.py          # Saved-model loading and prediction workflow
+|   |-- training.py           # Lightweight baseline training helpers
 |   |-- tracking.py           # Local MLflow tracking helpers
 |   |-- validation/           # Data validation modules
 |   `-- data_sources/         # v2 source-specific ingestion helpers
@@ -54,9 +56,10 @@ wind-energy-forecast/
 `-- pyproject.toml            # Package, pytest, and Ruff configuration
 ```
 
-The current model-training workflow still lives in notebooks. Reusable runtime
-logic has been moved into the package, while scripts remain available as stable
-entry points for data processing and inference.
+The current tuned ANN/Optuna training workflow still lives in notebooks. A
+lightweight baseline training CLI is available for reproducible historical
+holdout runs, and scripts remain stable entry points for data processing,
+training, and inference.
 
 ## Local setup
 
@@ -106,6 +109,12 @@ Run linting:
 
 ```powershell
 .\venv\Scripts\python.exe -m ruff check .
+```
+
+Train a lightweight historical baseline:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\train_baseline.py --input data\processed\agg_data_ml.csv --output-dir outputs\training\baseline --overwrite
 ```
 
 Generate recent WeatherAPI feature data:
@@ -186,6 +195,8 @@ Important compatibility choices:
 - `wind_forecast.schemas` keeps compatibility with the original source headers
   and saved model/scaler feature order.
 - Generated processed CSV files and MLflow runs remain local and ignored by Git.
+- Local baseline-training outputs under `outputs/training/` remain ignored by
+  Git.
 - V2 data-source work uses separate `data/raw/v2/` and `data/processed/v2/`
   paths so the v1 baseline is not overwritten.
 
@@ -201,7 +212,8 @@ The standard CI jobs do not require real WeatherAPI credentials.
 
 ## Current limitations
 
-- Model training is still notebook-based in `notebooks/Modeling.ipynb`.
+- Full tuned model training is still notebook-based in
+  `notebooks/Modeling.ipynb`; the CLI covers a lightweight baseline.
 - MLflow support is local tracking only; MLflow model registry is not
   implemented.
 - There is no cloud deployment.
@@ -210,5 +222,6 @@ The standard CI jobs do not require real WeatherAPI credentials.
 - The FastAPI service is a local/container serving interface, not a deployed
   production service.
 
-See `docs/ML_ENGINEERING_ROADMAP.md` for the longer engineering roadmap and
-`docs/` for phase notes, validation records, and data-source decisions.
+See `docs/ML_ENGINEERING_ROADMAP.md` for the longer engineering roadmap,
+`docs/TRAINING.md` for the baseline training CLI, and `docs/` for phase notes,
+validation records, and data-source decisions.

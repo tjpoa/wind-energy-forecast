@@ -36,6 +36,7 @@ data/processed/v2/**
 !data/processed/v2/ml_features/
 !data/processed/v2/ml_features/.gitkeep
 data/pilot/
+outputs/training/
 
 .DS_Store
 Thumbs.db
