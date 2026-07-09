@@ -37,3 +37,14 @@ jobs:
 
       - name: Run ruff
         run: python -m ruff check .
+
+  docker-build:
+    name: Docker build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build FastAPI Docker image
+        run: docker build --file Dockerfile --tag wind-energy-forecast-api:ci .
