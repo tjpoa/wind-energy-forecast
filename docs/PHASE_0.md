@@ -230,8 +230,8 @@ No risk in this table should be fixed during Phase 0. Phase 0 only records the b
 git status --short --ignored
 git ls-files
 git check-ignore -v .env data/processed/agg_data_ml.csv
-rg -n -i "api[_-]?key|token|secret|password|authorization|bearer" README.md .env.example scripts notebooks docs\PHASE_0_AUDIT_BASELINE.md
-rg -n "\b[A-Fa-f0-9]{32}\b|Bearer\s+[A-Za-z0-9._\-]{12,}" README.md .env.example scripts notebooks docs\PHASE_0_AUDIT_BASELINE.md
+rg -n -i "api[_-]?key|token|secret|password|authorization|bearer" README.md .env.example scripts notebooks docs\PHASE_0.md
+rg -n "\b[A-Fa-f0-9]{32}\b|Bearer\s+[A-Za-z0-9._\-]{12,}" README.md .env.example scripts notebooks docs\PHASE_0.md
 .\venv\Scripts\python.exe -c "<read-only syntax, notebook-output, and CSV shape/date checks>"
 ```
 

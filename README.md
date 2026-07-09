@@ -50,7 +50,7 @@ wind-energy-forecast/
 |-- notebooks/                # Exploratory data prep, EDA, and training
 |-- data/                     # Raw inputs and ignored generated outputs
 |-- models/                   # Existing trained models and scalers
-|-- docs/                     # Roadmap, phase notes, API docs, decisions
+|-- docs/                     # Documentation index, roadmap, guides, and phase notes
 |-- .github/workflows/ci.yml  # Test/lint CI and Docker build CI
 |-- Dockerfile                # FastAPI container image
 `-- pyproject.toml            # Package, pytest, and Ruff configuration
@@ -179,7 +179,7 @@ batch scripts.
 - `GET /model-info`: model, scaler, and feature-reference artifact readiness.
 - `POST /predict`: prediction endpoint for feature-ready records.
 
-See `docs/API.md` for request examples and Docker notes.
+See `docs/PHASE_5.md` for request examples and Docker notes.
 
 ## Data and model workflow
 
@@ -222,6 +222,6 @@ The standard CI jobs do not require real WeatherAPI credentials.
 - The FastAPI service is a local/container serving interface, not a deployed
   production service.
 
-See `docs/ML_ENGINEERING_ROADMAP.md` for the longer engineering roadmap,
-`docs/TRAINING.md` for the baseline training CLI, and `docs/` for phase notes,
-validation records, and data-source decisions.
+See `docs/README.md` for the documentation index,
+`docs/ML_ENGINEERING_ROADMAP.md` for the longer engineering roadmap, and
+`docs/PHASE_4.md` for the baseline training CLI, model card, and data card.
