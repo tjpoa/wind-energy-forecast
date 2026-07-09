@@ -1,11 +1,13 @@
+import argparse
 import os
+from collections.abc import Sequence
+from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from wind_forecast.schemas import DATE_COLUMN, TARGET_COLUMN
 from wind_forecast.evaluation import evaluate_predictions
 from wind_forecast.inference import (
     BEST_MODEL_LOG_NAME_FROM_NOTEBOOK,
@@ -15,8 +17,18 @@ from wind_forecast.inference import (
     load_new_data,
     load_trained_model_and_scalers,
     make_predictions,
+    model_and_scaler_paths,
     prepare_data_for_prediction,
     select_log_x_scaler,
+)
+from wind_forecast.schemas import DATE_COLUMN, TARGET_COLUMN
+from wind_forecast.tracking import (
+    DEFAULT_EXPERIMENT_NAME,
+    DEFAULT_TRACKING_DIRNAME,
+    ArtifactReference,
+    flatten_metric_groups,
+    log_run_data,
+    start_local_run,
 )
 
 
@@ -25,6 +37,30 @@ BASE_DATA_PATH = PROJECT_ROOT / "data"
 PROCESSED_DATA_PATH = BASE_DATA_PATH / "processed"
 MODELS_PATH = PROJECT_ROOT / "models"
 HISTORICAL_PROCESSED_FILE = PROCESSED_DATA_PATH / "agg_data_ml.csv"
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """Parse command-line options."""
+    parser = argparse.ArgumentParser(
+        description="Apply saved wind-forecast models to the latest API feature data.",
+    )
+    parser.add_argument(
+        "--mlflow",
+        action="store_true",
+        help="Log this evaluation run to a local MLflow tracking store.",
+    )
+    parser.add_argument(
+        "--mlflow-tracking-dir",
+        type=Path,
+        default=PROJECT_ROOT / DEFAULT_TRACKING_DIRNAME,
+        help="Local MLflow tracking directory. Defaults to ./mlruns.",
+    )
+    parser.add_argument(
+        "--mlflow-experiment-name",
+        default=DEFAULT_EXPERIMENT_NAME,
+        help=f"MLflow experiment name. Defaults to {DEFAULT_EXPERIMENT_NAME}.",
+    )
+    return parser.parse_args(argv)
 
 
 def select_latest_api_data_file(processed_data_path: Path) -> Path:
@@ -40,7 +76,25 @@ def select_latest_api_data_file(processed_data_path: Path) -> Path:
     return latest_api_data_file
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> None:
+    args = parse_args(argv)
+    run_context = nullcontext()
+    if args.mlflow:
+        run_context = start_local_run(
+            "apply-models-to-api-data",
+            tracking_dir=args.mlflow_tracking_dir,
+            experiment_name=args.mlflow_experiment_name,
+            tags={
+                "workflow": "apply_models_to_api_data",
+                "phase": "4A",
+            },
+        )
+
+    with run_context:
+        _run_workflow(args)
+
+
+def _run_workflow(args: argparse.Namespace) -> None:
     latest_api_data_file = select_latest_api_data_file(PROCESSED_DATA_PATH)
     df_new = load_new_data(latest_api_data_file)
     if df_new.empty:
@@ -158,6 +212,78 @@ def main() -> None:
     output_comparison_filename = PROCESSED_DATA_PATH / f"api_data_predictions_{datetime.now().strftime('%Y%m%d')}.csv"
     comparison_df_new.to_csv(output_comparison_filename, index=False)
     print(f"\nComparison DataFrame saved to: {output_comparison_filename}")
+
+    if args.mlflow:
+        _log_mlflow_evaluation_run(
+            latest_api_data_file=latest_api_data_file,
+            output_comparison_filename=output_comparison_filename,
+            row_count=len(df_new),
+            positive_inf_cap=positive_inf_cap,
+            metrics_results=metrics_results,
+        )
+
+
+def _log_mlflow_evaluation_run(
+    *,
+    latest_api_data_file: Path,
+    output_comparison_filename: Path,
+    row_count: int,
+    positive_inf_cap: float,
+    metrics_results: dict,
+) -> None:
+    original_model_path, original_scaler_x_path, original_scaler_y_path = model_and_scaler_paths(
+        BEST_MODEL_ORIG_NAME_FROM_NOTEBOOK,
+        "original",
+        MODELS_PATH,
+    )
+    log_model_path, log_scaler_x_path, log_scaler_y_path = model_and_scaler_paths(
+        BEST_MODEL_LOG_NAME_FROM_NOTEBOOK,
+        "log",
+        MODELS_PATH,
+    )
+
+    params = {
+        "workflow": "apply_models_to_api_data",
+        "input_data_path": _display_path(latest_api_data_file),
+        "historical_feature_path": _display_path(HISTORICAL_PROCESSED_FILE),
+        "prediction_output_path": _display_path(output_comparison_filename),
+        "row_count": row_count,
+        "positive_inf_cap": positive_inf_cap,
+        "original_model_name": BEST_MODEL_ORIG_NAME_FROM_NOTEBOOK,
+        "original_model_path": _display_path(original_model_path),
+        "original_scaler_x_path": _display_optional_path(original_scaler_x_path),
+        "original_scaler_y_path": _display_optional_path(original_scaler_y_path),
+        "log_model_name": BEST_MODEL_LOG_NAME_FROM_NOTEBOOK,
+        "log_model_path": _display_path(log_model_path),
+        "log_scaler_x_path": _display_optional_path(log_scaler_x_path),
+        "log_scaler_y_path": _display_optional_path(log_scaler_y_path),
+    }
+
+    log_run_data(
+        params=params,
+        metrics=flatten_metric_groups(metrics_results),
+        artifact_paths=[
+            ArtifactReference(
+                path=output_comparison_filename,
+                artifact_path="predictions",
+            )
+        ],
+    )
+    print("MLflow run logged to local tracking store.")
+
+
+def _display_optional_path(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    return _display_path(path)
+
+
+def _display_path(path: Path) -> str:
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(PROJECT_ROOT.resolve()).as_posix()
+    except ValueError:
+        return str(resolved)
 
 
 if __name__ == "__main__":
