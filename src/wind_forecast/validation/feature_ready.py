@@ -306,6 +306,23 @@ def run_synthetic_feature_ready_validation_checks() -> dict[str, Any]:
                 },
             },
         ),
+        "matching_wrong_row_count": _mutate_payload(
+            valid_payloads,
+            validation_payload={
+                **dict(valid_payloads.validation_payload),
+                "actual_counts": {
+                    **dict(valid_payloads.validation_payload["actual_counts"]),
+                    "feature_ready_rows": 999,
+                },
+            },
+            manifest={
+                **dict(valid_payloads.manifest),
+                "row_counts": {
+                    **dict(valid_payloads.manifest["row_counts"]),
+                    "feature_ready_rows": 999,
+                },
+            },
+        ),
         "source_lineage_mismatch": _mutate_payload(
             valid_payloads,
             manifest={
@@ -586,6 +603,12 @@ def _validate_payload_metadata(
     row_counts = dict(validation.get("actual_counts") or {})
     manifest_row_counts = dict(manifest.get("row_counts") or {})
     _expect_equal(report, manifest_row_counts, row_counts, "manifest_validation_row_counts")
+    _validate_metadata_row_counts_against_payloads(
+        report,
+        payloads=payloads,
+        validation_row_counts=row_counts,
+        manifest_row_counts=manifest_row_counts,
+    )
     _expect_equal(
         report,
         manifest.get("feature_coverage_status_counts"),
@@ -622,6 +645,42 @@ def _validate_payload_metadata(
         integrated_root=Path(integrated_root) if integrated_root is not None else None,
         v1_feature_table=Path(v1_feature_table) if v1_feature_table is not None else None,
     )
+
+
+def _validate_metadata_row_counts_against_payloads(
+    report: ValidationReport,
+    *,
+    payloads: FeatureReadyPayloads,
+    validation_row_counts: Mapping[str, Any],
+    manifest_row_counts: Mapping[str, Any],
+) -> None:
+    expected_counts = {
+        "feature_ready_rows": int(len(payloads.feature_ready_daily)),
+    }
+    if "coverage_rows" in validation_row_counts or "coverage_rows" in manifest_row_counts:
+        expected_counts["coverage_rows"] = int(len(payloads.feature_coverage))
+    if (
+        "feature_coverage_rows" in validation_row_counts
+        or "feature_coverage_rows" in manifest_row_counts
+    ):
+        expected_counts["feature_coverage_rows"] = int(len(payloads.feature_coverage))
+
+    for label, row_counts in (
+        ("validation.actual_counts", validation_row_counts),
+        ("manifest.row_counts", manifest_row_counts),
+    ):
+        mismatches = {
+            key: {"actual": row_counts.get(key), "expected": expected}
+            for key, expected in expected_counts.items()
+            if row_counts.get(key) != expected
+        }
+        if mismatches:
+            report.add_issue(
+                ValidationSeverity.ERROR,
+                "metadata_row_count_mismatch",
+                f"{label} row counts do not match loaded payload row counts.",
+                sample={"metadata": label, "mismatches": mismatches},
+            )
 
 
 def _validate_manifest_paths(
