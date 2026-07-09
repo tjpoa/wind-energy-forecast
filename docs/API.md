@@ -14,6 +14,32 @@ Install runtime dependencies and the editable package, then start Uvicorn:
 .\venv\Scripts\python.exe -m uvicorn wind_forecast.api:app --reload
 ```
 
+## Run with Docker
+
+Build the minimal API-serving image from the repository root:
+
+```powershell
+docker build -t wind-energy-forecast-api:phase6a .
+```
+
+Start the FastAPI app with Uvicorn:
+
+```powershell
+docker run --rm -p 8000:8000 wind-energy-forecast-api:phase6a
+```
+
+The container does not require WeatherAPI keys at startup. The image does not
+include local notebooks, datasets, model artifacts, caches, or virtual
+environments. To serve endpoints that need the current local data and model
+artifacts, mount them read-only:
+
+```powershell
+docker run --rm -p 8000:8000 `
+  --mount "type=bind,source=${PWD}\data,target=/app/data,readonly" `
+  --mount "type=bind,source=${PWD}\models,target=/app/models,readonly" `
+  wind-energy-forecast-api:phase6a
+```
+
 ## Endpoints
 
 - `GET /health`: returns API process health.
