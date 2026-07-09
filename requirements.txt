@@ -17,6 +17,9 @@ tensorflow==2.18.0; platform_system != "Windows"
 keras>=3.9,<4
 xgboost>=3.0,<4
 
+# Local experiment tracking
+mlflow>=3.0,<4
+
 # API serving
 fastapi>=0.115,<1
 uvicorn>=0.30,<1

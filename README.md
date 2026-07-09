@@ -24,6 +24,7 @@ The reusable package currently includes:
 - `ingestion.py`: WeatherAPI history ingestion.
 - `inference.py`: model/scaler loading and prediction.
 - `evaluation.py`: regression metric calculation.
+- `tracking.py`: opt-in local MLflow experiment tracking helpers.
 
 ## Dataset versioning and v2 migration
 
@@ -142,6 +143,25 @@ Apply the trained models to generate prediction outputs:
 ```
 
 This script is a backward-compatible wrapper for model inference, evaluation, plotting, and prediction CSV generation.
+
+To log that evaluation run to local MLflow tracking, add `--mlflow`:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\apply_models_to_api_data.py --mlflow
+```
+
+Runs are written to `./mlruns` by default and are ignored by Git. To inspect
+them locally:
+
+```powershell
+.\venv\Scripts\python.exe -m mlflow ui --backend-store-uri .\mlruns
+```
+
+The current training workflow still lives in `notebooks/Modeling.ipynb`. For
+manual training experiments, wrap only the approved training/evaluation cells
+with `wind_forecast.tracking.start_local_run(...)` and
+`wind_forecast.tracking.log_run_data(...)`; do not run the model-saving cells
+unless you intend to overwrite the existing files in `models/`.
 
 The scripts can be run from the project root. Internal paths are resolved automatically from each script location. API output files are date-stamped as `api_data_featured_YYYYMMDD.csv` and `api_data_predictions_YYYYMMDD.csv`.
 
