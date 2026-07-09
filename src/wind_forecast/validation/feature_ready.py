@@ -15,9 +15,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from wind_forecast.features import ROLLING_WINDOWS, WEATHER_LAGS, WIND_PRODUCTION_LAGS
 from wind_forecast.schemas import (
-    AVG_TEMPERATURE_COLUMN,
     AVG_WIND_DIRECTION_COLUMN,
     AVG_WIND_SPEED_COLUMN,
     DATE_COLUMN,
