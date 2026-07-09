@@ -1,2 +1,3 @@
 # Install after the runtime dependencies in requirements.txt.
 pytest>=8.0,<9
+ruff>=0.8,<1
