@@ -40,6 +40,8 @@ Optional arguments:
 --seed 42
 --n-estimators 100
 --mlflow
+--tracking-mode local
+--tracking-mode off
 ```
 
 ## Outputs
@@ -56,6 +58,10 @@ run_summary.json
 Project-local training outputs must be placed under `outputs/`. The
 `outputs/training/` tree is ignored by Git so local training artifacts are not
 committed accidentally.
+
+The output contract now also includes `dataset_manifest.json`,
+`model_manifest.json`, `environment.json`, `validation_sample.csv`, and
+`actual_vs_predicted.png`. These make a tracked run independently inspectable.
 
 ## Evaluation Contract
 
@@ -81,7 +87,7 @@ committed accidentally.
 
 - It does not reproduce the tuned notebook ANN artifacts.
 - It does not validate v2 model or scaler compatibility.
-- It does not implement a model registry or promotion workflow.
+- It does not make Registry aliases part of FastAPI serving.
 - It does not replace future fuller training, tuning, or monitoring work.
 
 ## Baseline Model Card
@@ -149,8 +155,63 @@ It is not appropriate for:
   contract.
 - Material source or feature-distribution changes require retraining,
   re-baselining, and scaler validation.
-- Local MLflow tracking exists, but model registry and promotion conventions are
-  not implemented.
+- Registry state is local SQLite state. It is auditable but not a remote shared
+  service and is not itself placed in release bundles.
+
+## Phase 4B MLflow Lifecycle
+
+The baseline training command uses `http://127.0.0.1:5000` by default. Start
+MLflow with a SQLite backend and proxied local artifacts:
+
+```powershell
+.\venv\Scripts\python.exe -m mlflow server `
+  --backend-store-uri sqlite:///var/mlflow/mlflow.db `
+  --artifacts-destination ./var/mlflow/artifacts `
+  --host 127.0.0.1 `
+  --port 5000
+```
+
+Every tracked run records the Git commit/dirty flag, dependency versions,
+dataset and feature hashes, temporal split, four metrics, evaluation outputs,
+dataset lineage, and a sklearn model with signature and input example. A run
+created from a dirty Git tree remains inspectable but cannot be registered as a
+candidate.
+
+Candidate registration is deliberately separate from training:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\register_candidate.py --run-id <RUN_ID>
+```
+
+It requires a finished clean run, finite metrics, the approved v1/original
+target contract, all manifests, and reload-equivalent predictions. It then
+creates a model version and moves only `candidate`.
+
+`champion` promotion never happens automatically. The operator supplies the
+expected candidate version, expected current champion (or `none`), and an
+approval note. The receipt records the previous champion and supports an
+optimistic rollback. No metric threshold is invented because the legacy ANN
+models do not have a comparable reproducible Registry run.
+
+## Phase 4B Artifact Bundles
+
+GitHub Releases are the selected first distribution mechanism. The builder
+creates a deterministic ZIP and SHA-256 sidecar containing the v1 processed
+training table, validated candidate MLflow package, baseline outputs, manifests,
+environment, plot, and validation sample. Raw v1 files already tracked in Git,
+legacy Keras/scaler serving files, MLflow local state, and all v2 artifacts are
+excluded.
+
+The release catalog deliberately marks `artifacts-v1.0.0` as blocked and leaves
+its pinned bundle SHA-256 empty until
+source, licence, attribution, and redistribution permission are confirmed.
+Builder tooling may be exercised locally, but a public-release or
+cross-machine reproducibility claim is not allowed before that gate and a clean
+clone round-trip pass.
+
+This checkpoint validates the implementation with synthetic/fake MLflow tests.
+It does not claim that a real local server/SQLite Registry smoke, public
+release, or clean-clone round-trip has already run.
 
 ## Baseline Data Card
 

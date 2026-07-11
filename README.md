@@ -29,7 +29,8 @@ workflow orchestration, or model-registry operations.
 - Ruff linting configured in `pyproject.toml`.
 - GitHub Actions CI for tests, linting, and Docker image builds.
 - Dockerfile for running the FastAPI app in a container.
-- Optional local MLflow tracking for evaluation runs.
+- MLflow runs, artifacts, dataset lineage, and a local SQLite-backed Model
+  Registry with explicit `candidate`/`champion` governance.
 
 ## Architecture
 
@@ -42,7 +43,9 @@ wind-energy-forecast/
 |   |-- ingestion.py          # WeatherAPI ingestion helpers
 |   |-- inference.py          # Saved-model loading and prediction workflow
 |   |-- training.py           # Lightweight baseline training helpers
-|   |-- tracking.py           # Local MLflow tracking helpers
+|   |-- tracking.py           # MLflow server tracking helpers
+|   |-- registry.py           # Candidate/champion governance
+|   |-- artifacts.py          # Deterministic release bundles
 |   |-- validation/           # Data validation modules
 |   `-- data_sources/         # v2 source-specific ingestion helpers
 |-- scripts/                  # Backward-compatible executable wrappers
@@ -117,6 +120,33 @@ Train a lightweight historical baseline:
 .\venv\Scripts\python.exe .\scripts\train_baseline.py --input data\processed\agg_data_ml.csv --output-dir outputs\training\baseline --overwrite
 ```
 
+Tracking is enabled by default for this command. Start the local SQLite-backed
+MLflow server first:
+
+```powershell
+.\venv\Scripts\python.exe -m mlflow server `
+  --backend-store-uri sqlite:///var/mlflow/mlflow.db `
+  --artifacts-destination ./var/mlflow/artifacts `
+  --host 127.0.0.1 `
+  --port 5000
+```
+
+Use `--tracking-mode off` only when an intentionally untracked run is needed.
+After a clean tracked run, validate and register it as the candidate:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\register_candidate.py --run-id <RUN_ID>
+```
+
+Promotion is always explicit and optimistic-concurrency checked:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\promote_model.py promote `
+  --expected-candidate-version <VERSION> `
+  --expected-champion-version none `
+  --approval-note "reviewed against the approved v1 contract"
+```
+
 Generate recent WeatherAPI feature data:
 
 ```powershell
@@ -129,16 +159,10 @@ Apply saved models to the latest generated API feature file:
 .\venv\Scripts\python.exe .\scripts\apply_models_to_api_data.py
 ```
 
-Log that evaluation run to local MLflow tracking:
+Log that legacy evaluation run to the same MLflow server (still opt-in):
 
 ```powershell
-.\venv\Scripts\python.exe .\scripts\apply_models_to_api_data.py --mlflow
-```
-
-Start the local MLflow UI:
-
-```powershell
-.\venv\Scripts\python.exe -m mlflow ui --backend-store-uri .\mlruns
+.\venv\Scripts\python.exe .\scripts\apply_models_to_api_data.py --tracking-mode local
 ```
 
 Start the FastAPI app locally:
@@ -194,7 +218,8 @@ Important compatibility choices:
   `Average_Wind_Direction`.
 - `wind_forecast.schemas` keeps compatibility with the original source headers
   and saved model/scaler feature order.
-- Generated processed CSV files and MLflow runs remain local and ignored by Git.
+- Generated processed CSV files, MLflow SQLite/artifact state, receipts, and
+  fetched release assets remain local and ignored by Git.
 - Local baseline-training outputs under `outputs/training/` remain ignored by
   Git.
 - V2 data-source work uses separate `data/raw/v2/` and `data/processed/v2/`
@@ -214,8 +239,11 @@ The standard CI jobs do not require real WeatherAPI credentials.
 
 - Full tuned model training is still notebook-based in
   `notebooks/Modeling.ipynb`; the CLI covers a lightweight baseline.
-- MLflow support is local tracking only; MLflow model registry is not
-  implemented.
+- The MLflow Registry is local and is not consumed by the FastAPI service;
+  serving continues to use the existing Keras/scaler paths.
+- The first public artifact release remains blocked until source, licence,
+  attribution, and redistribution permission are approved in
+  `artifacts/catalog.json`.
 - There is no cloud deployment.
 - Airflow orchestration has not been implemented.
 - PySpark processing has not been implemented.
@@ -224,4 +252,5 @@ The standard CI jobs do not require real WeatherAPI credentials.
 
 See `docs/README.md` for the documentation index,
 `docs/ML_ENGINEERING_ROADMAP.md` for the longer engineering roadmap, and
-`docs/PHASE_4.md` for the baseline training CLI, model card, and data card.
+`docs/PHASE_4.md` for the model lifecycle and `docs/REPRODUCIBILITY.md` for the
+cross-machine artifact workflow.

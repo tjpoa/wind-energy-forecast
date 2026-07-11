@@ -13,6 +13,7 @@ deployment.
 | Level | What it proves | Requires local generated artifacts |
 | --- | --- | --- |
 | Quick validation | Tests and Ruff pass in the local Python environment. | No |
+| MLflow lifecycle | Start the local server, run the baseline, register `candidate`, and inspect runs/artifacts/aliases. | Yes: v1 processed training table |
 | API readiness | FastAPI starts and reports health/model artifact status. | No for `/health`; yes for full `/model-info` readiness |
 | Prediction serving | Saved model artifacts can be loaded and called through `/predict`. | Yes |
 | Docker smoke | The API image builds and the process starts in a container. | No for startup; yes for full model serving |
@@ -179,11 +180,16 @@ Invoke-RestMethod -Method Get -Uri http://127.0.0.1:8000/model-info
 - Full prediction serving is possible when local feature and model artifacts are
   present.
 - The Docker image can run the API entry point.
+- With local training data, the baseline can create a traceable MLflow run and
+  a validated Registry candidate without changing the serving artifacts.
 
 ## What This Demo Does Not Prove
 
 - Production cloud deployment.
-- Model registry operations or model promotion.
+- Automatic or production model promotion; `champion` requires an explicit
+  approval command and the API does not load it.
+- Cross-machine reproducibility until a licensed release bundle is published
+  and verified from a clean clone.
 - Airflow orchestration.
 - PySpark processing.
 - Live WeatherAPI ingestion.

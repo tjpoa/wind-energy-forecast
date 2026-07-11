@@ -14,6 +14,7 @@ This folder keeps project documentation organized by purpose and roadmap phase.
 | Document | Purpose |
 | --- | --- |
 | [Demo Guide](DEMO.md) | Short local demo path for tests, API readiness, and Docker smoke checks. |
+| [Reproducibility Guide](REPRODUCIBILITY.md) | MLflow Registry workflow and immutable artifact-bundle recovery. |
 
 ## Phase Documents
 

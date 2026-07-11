@@ -40,7 +40,8 @@ each checkpoint was written. This file reflects the latest repository state.
 | Baseline training CLI | Implemented baseline | `wind_forecast.training`, `scripts/train_baseline.py`, `docs/PHASE_4.md` | Lightweight tree baseline only; tuned ANN/Optuna workflow remains notebook-based. |
 | Docker support | Implemented baseline | `Dockerfile`, `.dockerignore`, Docker CI build | No production hardening, image publishing, or runtime healthcheck yet. |
 | CI | Implemented baseline | `.github/workflows/ci.yml` | CI runs tests, Ruff, and Docker build; it does not yet publish coverage or run container smoke tests. |
-| MLflow tracking | Partial | `wind_forecast.tracking`, optional `--mlflow` evaluation logging | Local tracking only; model registry, aliases, and promotion workflow are not implemented. |
+| MLflow lifecycle | Implemented code; integration smoke pending | `wind_forecast.tracking`, `wind_forecast.registry`, baseline CLI and synthetic registry tests | SQLite-backed local server contract, candidate validation and manual champion promotion exist in code; a real MLflow server smoke was not run in this checkpoint and serving does not consume aliases. |
+| Artifact versioning | Local tooling tested; publication blocked | Deterministic atomic bundle builder/fetcher/verifier and `artifacts/catalog.json` | No public v1 data bundle until provenance/licence/redistribution approval and a catalog SHA-256; no cross-machine claim until a release round-trip is run. |
 | Documentation | Strong | `README.md`, `docs/README.md`, `docs/DEMO.md`, phase docs, roadmap | Model/data cards are baseline-level and not full registry artifacts. |
 
 ## Roadmap Status
@@ -51,7 +52,7 @@ each checkpoint was written. This file reflects the latest repository state.
 | 1 | Modular project structure and configuration | Completed. Reusable package modules and configuration helpers exist. |
 | 2 | Data validation and sanity checks | Substantially implemented. V1 and v2 validation work exists, with documented v2 contracts and acceptance checks. |
 | 3 | Automated testing and code quality | Implemented baseline. Pytest and Ruff are configured and covered by CI. |
-| 4 | MLflow experiment tracking and model registry | Partial. Local MLflow tracking and a lightweight baseline-training CLI exist; registry and promotion are not implemented. |
+| 4 | MLflow experiment tracking and model registry | Phase 4B code and synthetic tests implemented; real SQLite-backed MLflow smoke, public release, and clean-clone round-trip remain pending explicit authorization/environment readiness. |
 | 5 | Prediction API with FastAPI | Implemented for local/container inference over saved artifacts. |
 | 6 | Docker containerization | Implemented baseline Dockerfile and Docker build CI. |
 | 7 | GitHub Actions continuous integration | Implemented baseline CI for tests, linting, and Docker build. |
@@ -108,7 +109,9 @@ This repository demonstrates:
 - No production cloud deployment exists.
 - No Airflow orchestration exists.
 - No PySpark implementation exists.
-- No model registry or model-promotion workflow exists.
+- Registry state is local-only and is not yet part of API serving.
+- Public artifact distribution and a clean-clone round-trip remain gated by
+  provenance/licence approval and explicit network authorization.
 - No drift or live model-performance monitoring exists.
 - V2 REN + ERA5-Land data work does not validate current v1 scalers or models.
 - A fresh clone may need local generated artifacts before the full prediction
@@ -118,7 +121,7 @@ This repository demonstrates:
 
 1. Extend the baseline training CLI toward the tuned notebook workflow.
 2. Add test coverage reporting and a container health smoke test to CI.
-3. Define a local model registry or promotion convention before claiming model
-   lifecycle operations.
-4. Decide whether generated data and model artifacts should use DVC, GitHub
-   Releases, or another explicit artifact versioning mechanism.
+3. Resolve v1 redistribution provenance/licence and publish the first immutable
+   GitHub Release bundle.
+4. Prove the documented clean-clone fetch/retrain round-trip before claiming
+   cross-machine reproducibility.
