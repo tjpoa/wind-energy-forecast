@@ -9,6 +9,11 @@ __pycache__/
 .ruff_cache/
 .ipynb_checkpoints/
 mlruns/
+var/mlflow/
+dist/
+artifacts/releases/
+outputs/registry/
+outputs/reproduction/
 
 .env
 .env.*
