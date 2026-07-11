@@ -13,9 +13,24 @@ where = ["src"]
 include = ["wind_forecast*"]
 
 [tool.pytest.ini_options]
-addopts = ["--strict-config", "--strict-markers"]
+addopts = [
+    "--strict-config",
+    "--strict-markers",
+    "--cov=wind_forecast",
+    "--cov-branch",
+    "--cov-report=term-missing",
+    "--cov-report=xml",
+    "--cov-fail-under=30",
+]
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+
+[tool.coverage.xml]
+output = "coverage.xml"
 
 [tool.ruff]
 target-version = "py310"

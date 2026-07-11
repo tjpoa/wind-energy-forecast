@@ -3,20 +3,20 @@
 This guide shows a short local demo path for the wind-energy forecasting
 project. It is intended for portfolio reviews and technical interviews.
 
-The demo validates the package, tests, linting, API process, model-artifact
-discovery, and Docker image build. It does not call WeatherAPI, retrieve REN or
-ERA5-Land data, run notebooks, train models, fit scalers, or claim production
-deployment.
+The demo validates the package, tests with coverage, linting, API process,
+model-artifact discovery, Docker image build, and container health smoke check.
+It does not call WeatherAPI, retrieve REN or ERA5-Land data, run notebooks,
+train models, fit scalers, or claim production deployment.
 
 ## Demo Levels
 
 | Level | What it proves | Requires local generated artifacts |
 | --- | --- | --- |
-| Quick validation | Tests and Ruff pass in the local Python environment. | No |
+| Quick validation | Tests with coverage and Ruff pass in the local Python environment. | No |
 | MLflow lifecycle | Start the local server, run the baseline, register `candidate`, and inspect runs/artifacts/aliases. | Yes: v1 processed training table |
 | API readiness | FastAPI starts and reports health/model artifact status. | No for `/health`; yes for full `/model-info` readiness |
 | Prediction serving | Saved model artifacts can be loaded and called through `/predict`. | Yes |
-| Docker smoke | The API image builds and the process starts in a container. | No for startup; yes for full model serving |
+| Docker smoke | The API image builds, responds to `/health`, and reports container health. | No for startup; yes for full model serving |
 
 ## Prerequisites
 
@@ -64,7 +64,8 @@ Run the same core checks used by CI:
 
 Expected result:
 
-- Pytest completes with all tests passing.
+- Pytest completes with all tests passing and prints coverage.
+- `coverage.xml` is generated for CI artifact upload and ignored by Git.
 - Ruff reports no lint failures.
 - No live API credentials are needed.
 
@@ -142,14 +143,14 @@ docker build -t wind-energy-forecast-api:demo .
 Run the API without local artifact mounts:
 
 ```powershell
-docker run --rm -p 8000:8000 wind-energy-forecast-api:demo
+docker run --rm -d --name wind-energy-forecast-api-demo -p 8000:8000 wind-energy-forecast-api:demo
 ```
 
 This is enough to test `/health`. For `/model-info` and `/predict` with local
 artifacts, mount `data/` and `models/` read-only:
 
 ```powershell
-docker run --rm -p 8000:8000 `
+docker run --rm -d --name wind-energy-forecast-api-demo -p 8000:8000 `
   --mount "type=bind,source=${PWD}\data,target=/app/data,readonly" `
   --mount "type=bind,source=${PWD}\models,target=/app/models,readonly" `
   wind-energy-forecast-api:demo
@@ -160,6 +161,8 @@ Then call the same endpoints:
 ```powershell
 Invoke-RestMethod -Method Get -Uri http://127.0.0.1:8000/health
 Invoke-RestMethod -Method Get -Uri http://127.0.0.1:8000/model-info
+docker inspect --format '{{.State.Health.Status}}' wind-energy-forecast-api-demo
+docker rm --force wind-energy-forecast-api-demo
 ```
 
 ## Troubleshooting
@@ -171,6 +174,7 @@ Invoke-RestMethod -Method Get -Uri http://127.0.0.1:8000/model-info
 | `/predict` returns HTTP `503` | Required model, scaler, or feature-reference artifact is missing | Check `/model-info` and artifact paths. |
 | TensorFlow model loading is slow | Saved Keras model load happens on first prediction | Wait for the first request or use `/model-info` for lightweight readiness. |
 | Docker `/health` works but `/predict` fails | Container was started without mounted local artifacts | Run Docker with read-only `data/` and `models/` mounts. |
+| Docker health status is `starting` | Health checks have not completed yet | Wait a few seconds and inspect the container again. |
 
 ## What This Demo Proves
 
@@ -179,7 +183,8 @@ Invoke-RestMethod -Method Get -Uri http://127.0.0.1:8000/model-info
 - Saved artifacts can be inspected without loading TensorFlow models.
 - Full prediction serving is possible when local feature and model artifacts are
   present.
-- The Docker image can run the API entry point.
+- The Docker image can run the API entry point, respond to `/health`, and report
+  container health.
 - With local training data, the baseline can create a traceable MLflow run and
   a validated Registry candidate without changing the serving artifacts.
 

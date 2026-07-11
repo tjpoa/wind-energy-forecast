@@ -10,7 +10,7 @@ tracking around the existing forecasting workflow.
 
 The project should be read as a software/backend/data engineering portfolio
 project with AI/ML components. It does not currently claim cloud deployment,
-workflow orchestration, or model-registry operations.
+workflow orchestration, or registry-based production serving.
 
 ## What this project includes
 
@@ -27,8 +27,10 @@ workflow orchestration, or model-registry operations.
 - Pytest coverage for schemas, configuration, features, validation, tracking,
   and API behavior.
 - Ruff linting configured in `pyproject.toml`.
-- GitHub Actions CI for tests, linting, and Docker image builds.
-- Dockerfile for running the FastAPI app in a container.
+- GitHub Actions CI for tests, coverage, linting, Docker image builds, and
+  container smoke checks.
+- Dockerfile for running the FastAPI app in a non-root container with a health
+  check.
 - MLflow runs, artifacts, dataset lineage, and a local SQLite-backed Model
   Registry with explicit `candidate`/`champion` governance.
 
@@ -54,7 +56,7 @@ wind-energy-forecast/
 |-- data/                     # Raw inputs and ignored generated outputs
 |-- models/                   # Existing trained models and scalers
 |-- docs/                     # Documentation index, roadmap, guides, and phase notes
-|-- .github/workflows/ci.yml  # Test/lint CI and Docker build CI
+|-- .github/workflows/ci.yml  # Matrix test/lint and Docker health CI
 |-- Dockerfile                # FastAPI container image
 `-- pyproject.toml            # Package, pytest, and Ruff configuration
 ```
@@ -102,7 +104,7 @@ commit because it contains placeholders only.
 
 ## Common commands
 
-Run tests:
+Run tests with coverage:
 
 ```powershell
 .\venv\Scripts\python.exe -m pytest
@@ -175,13 +177,16 @@ Build and run the API Docker image:
 
 ```powershell
 docker build -t wind-energy-forecast-api:phase6a .
-docker run --rm -p 8000:8000 wind-energy-forecast-api:phase6a
+docker run --rm -d --name wind-energy-forecast-api-phase6a -p 8000:8000 wind-energy-forecast-api:phase6a
+Invoke-RestMethod -Method Get -Uri http://127.0.0.1:8000/health
+docker inspect --format '{{.State.Health.Status}}' wind-energy-forecast-api-phase6a
+docker rm --force wind-energy-forecast-api-phase6a
 ```
 
 Run the container with local data and model artifacts mounted read-only:
 
 ```powershell
-docker run --rm -p 8000:8000 `
+docker run --rm -d --name wind-energy-forecast-api-phase6a -p 8000:8000 `
   --mount "type=bind,source=${PWD}\data,target=/app/data,readonly" `
   --mount "type=bind,source=${PWD}\models,target=/app/models,readonly" `
   wind-energy-forecast-api:phase6a
@@ -229,9 +234,12 @@ Important compatibility choices:
 
 GitHub Actions currently runs:
 
-- `python -m pytest`
-- `python -m ruff check .`
+- `python -m pytest` with `pytest-cov` coverage reporting on Python 3.10 and
+  3.11
+- `python -m ruff check .` on Python 3.10 and 3.11
 - `docker build --file Dockerfile --tag wind-energy-forecast-api:ci .`
+- a container smoke test against `GET /health`
+- a Docker health status check for the running API container
 
 The standard CI jobs do not require real WeatherAPI credentials.
 

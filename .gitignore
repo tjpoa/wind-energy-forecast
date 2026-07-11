@@ -7,6 +7,10 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 .ipynb_checkpoints/
 mlruns/
 var/mlflow/

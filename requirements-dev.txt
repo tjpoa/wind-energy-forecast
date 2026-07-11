@@ -1,4 +1,5 @@
 # Install after the runtime dependencies in requirements.txt.
 pytest>=8.0,<9
+pytest-cov>=7.0,<8
 ruff>=0.8,<1
 httpx>=0.27,<1

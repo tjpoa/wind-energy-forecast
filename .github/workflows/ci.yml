@@ -9,17 +9,21 @@ permissions:
 
 jobs:
   test-and-lint:
-    name: Test and lint
+    name: Test and lint (Python ${{ matrix.python-version }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11"]
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: |
             requirements.txt
@@ -32,8 +36,15 @@ jobs:
           python -m pip install -r requirements-dev.txt
           python -m pip install -e .
 
-      - name: Run pytest
+      - name: Run pytest with coverage
         run: python -m pytest
+
+      - name: Upload coverage XML
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-python-${{ matrix.python-version }}
+          path: coverage.xml
+          if-no-files-found: error
 
       - name: Run ruff
         run: python -m ruff check .
@@ -48,3 +59,44 @@ jobs:
 
       - name: Build FastAPI Docker image
         run: docker build --file Dockerfile --tag wind-energy-forecast-api:ci .
+
+      - name: Run FastAPI Docker container
+        run: docker run --detach --name wind-energy-forecast-api-ci --publish 8000:8000 wind-energy-forecast-api:ci
+
+      - name: Smoke test /health
+        run: |
+          for attempt in {1..30}; do
+            response="$(curl --fail --silent http://127.0.0.1:8000/health || true)"
+            if [ "$response" = '{"status":"ok"}' ]; then
+              echo "$response"
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs wind-energy-forecast-api-ci
+          exit 1
+
+      - name: Check Docker health status
+        run: |
+          for attempt in {1..12}; do
+            status="$(docker inspect --format='{{.State.Health.Status}}' wind-energy-forecast-api-ci)"
+            echo "container health: ${status}"
+            if [ "$status" = "healthy" ]; then
+              exit 0
+            fi
+            if [ "$status" = "unhealthy" ]; then
+              docker logs wind-energy-forecast-api-ci
+              exit 1
+            fi
+            sleep 5
+          done
+          docker inspect wind-energy-forecast-api-ci
+          exit 1
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker logs wind-energy-forecast-api-ci
+
+      - name: Stop Docker container
+        if: always()
+        run: docker rm --force wind-energy-forecast-api-ci || true
