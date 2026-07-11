@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import json
+import platform
+import sys
 from dataclasses import dataclass
+from hashlib import sha256
+from importlib import metadata
 from pathlib import Path
 from typing import Any, Literal
 
 import joblib
 import numpy as np
 import pandas as pd
+from matplotlib.figure import Figure
 from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
 from sklearn.metrics import (
     mean_absolute_error,
@@ -19,6 +24,7 @@ from sklearn.metrics import (
 )
 
 from .paths import project_root
+from .manifests import sha256_file
 from .schemas import DATE_COLUMN, TARGET_COLUMN, rename_legacy_columns_to_english
 
 
@@ -29,6 +35,11 @@ OUTPUT_FILENAMES = {
     "metrics": "metrics.json",
     "predictions": "predictions.csv",
     "summary": "run_summary.json",
+    "plot": "actual_vs_predicted.png",
+    "dataset_manifest": "dataset_manifest.json",
+    "model_manifest": "model_manifest.json",
+    "environment": "environment.json",
+    "validation_sample": "validation_sample.csv",
 }
 
 
@@ -58,6 +69,11 @@ class BaselineTrainingResult:
     metrics_path: Path
     predictions_path: Path
     summary_path: Path
+    plot_path: Path
+    dataset_manifest_path: Path
+    model_manifest_path: Path
+    environment_path: Path
+    validation_sample_path: Path
     row_count: int
     feature_count: int
     train_row_count: int
@@ -67,6 +83,10 @@ class BaselineTrainingResult:
     test_start_date: str
     test_end_date: str
     metrics: dict[str, float]
+    input_sha256: str
+    feature_schema_sha256: str
+    feature_names: tuple[str, ...]
+    dataset_version: str
 
     def summary(self) -> dict[str, Any]:
         """Return a JSON-ready run summary."""
@@ -81,6 +101,11 @@ class BaselineTrainingResult:
             "metrics_path": _display_path(self.metrics_path),
             "predictions_path": _display_path(self.predictions_path),
             "summary_path": _display_path(self.summary_path),
+            "plot_path": _display_path(self.plot_path),
+            "dataset_manifest_path": _display_path(self.dataset_manifest_path),
+            "model_manifest_path": _display_path(self.model_manifest_path),
+            "environment_path": _display_path(self.environment_path),
+            "validation_sample_path": _display_path(self.validation_sample_path),
             "row_count": self.row_count,
             "feature_count": self.feature_count,
             "train_row_count": self.train_row_count,
@@ -90,6 +115,10 @@ class BaselineTrainingResult:
             "test_start_date": self.test_start_date,
             "test_end_date": self.test_end_date,
             "metrics": self.metrics,
+            "input_sha256": self.input_sha256,
+            "feature_schema_sha256": self.feature_schema_sha256,
+            "feature_names": list(self.feature_names),
+            "dataset_version": self.dataset_version,
         }
 
 
@@ -218,6 +247,7 @@ def run_baseline_training(
     test_fraction: float = 0.2,
     n_estimators: int = 100,
     overwrite: bool = False,
+    dataset_version: str = "v1",
 ) -> BaselineTrainingResult:
     """Train a baseline model, write reproducible outputs, and return metadata."""
     resolved_input = Path(input_path)
@@ -243,6 +273,9 @@ def run_baseline_training(
     )
     predictions = np.asarray(model.predict(split.x_test), dtype=float)
     metrics = calculate_regression_metrics(split.y_test, predictions)
+    input_sha256 = sha256_file(resolved_input)
+    feature_names = tuple(str(column) for column in features.columns)
+    feature_schema_sha256 = _feature_schema_sha256(feature_names)
 
     resolved_output.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, output_paths["model"])
@@ -256,6 +289,13 @@ def run_baseline_training(
     )
     predictions_frame.to_csv(output_paths["predictions"], index=False, lineterminator="\n")
 
+    validation_sample = split.x_test.head(5).copy()
+    validation_sample["Expected_Prediction"] = predictions[: len(validation_sample)]
+    validation_sample.to_csv(
+        output_paths["validation_sample"], index=False, lineterminator="\n"
+    )
+    _write_prediction_plot(predictions_frame, output_paths["plot"])
+
     result = BaselineTrainingResult(
         model_type=model_type,
         seed=seed,
@@ -267,6 +307,11 @@ def run_baseline_training(
         metrics_path=output_paths["metrics"],
         predictions_path=output_paths["predictions"],
         summary_path=output_paths["summary"],
+        plot_path=output_paths["plot"],
+        dataset_manifest_path=output_paths["dataset_manifest"],
+        model_manifest_path=output_paths["model_manifest"],
+        environment_path=output_paths["environment"],
+        validation_sample_path=output_paths["validation_sample"],
         row_count=len(table),
         feature_count=len(features.columns),
         train_row_count=len(split.x_train),
@@ -276,10 +321,51 @@ def run_baseline_training(
         test_start_date=_date_text(split.test_dates.iloc[0]),
         test_end_date=_date_text(split.test_dates.iloc[-1]),
         metrics=metrics,
+        input_sha256=input_sha256,
+        feature_schema_sha256=feature_schema_sha256,
+        feature_names=feature_names,
+        dataset_version=dataset_version,
     )
 
     _write_json(output_paths["metrics"], metrics)
     _write_json(output_paths["summary"], result.summary())
+    _write_json(
+        output_paths["dataset_manifest"],
+        {
+            "schema_version": "wind_forecast.training_dataset.v1",
+            "dataset_version": dataset_version,
+            "role": "baseline_training_input",
+            "path": _display_path(resolved_input),
+            "sha256": input_sha256,
+            "row_count": len(table),
+            "column_count": len(table.columns),
+            "coverage_start": _date_text(dates.iloc[0]),
+            "coverage_end": _date_text(dates.iloc[-1]),
+            "target": TARGET_COLUMN,
+            "feature_names": list(feature_names),
+            "feature_schema_sha256": feature_schema_sha256,
+            "redistribution_status": "unresolved",
+        },
+    )
+    _write_json(output_paths["environment"], _environment_manifest())
+    _write_json(
+        output_paths["model_manifest"],
+        {
+            "schema_version": "wind_forecast.model_manifest.v1",
+            "task": "daily_wind_production_regression",
+            "target_contract": "original",
+            "model_type": model_type,
+            "model_path": _display_path(output_paths["model"]),
+            "model_sha256": sha256_file(output_paths["model"]),
+            "dataset_version": dataset_version,
+            "dataset_sha256": input_sha256,
+            "feature_schema_sha256": feature_schema_sha256,
+            "seed": seed,
+            "test_fraction": test_fraction,
+            "n_estimators": n_estimators,
+            "metrics": metrics,
+        },
+    )
     return result
 
 
@@ -317,6 +403,44 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
         encoding="utf-8",
         newline="\n",
     )
+
+
+def _feature_schema_sha256(feature_names: tuple[str, ...]) -> str:
+    payload = json.dumps(list(feature_names), ensure_ascii=True, separators=(",", ":"))
+    return sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _environment_manifest() -> dict[str, Any]:
+    packages = {}
+    for package in ("joblib", "matplotlib", "mlflow", "numpy", "pandas", "scikit-learn"):
+        try:
+            packages[package] = metadata.version(package)
+        except metadata.PackageNotFoundError:
+            packages[package] = None
+    return {
+        "schema_version": "wind_forecast.environment.v1",
+        "python": platform.python_version(),
+        "python_implementation": platform.python_implementation(),
+        "platform": sys.platform,
+        "packages": packages,
+    }
+
+
+def _write_prediction_plot(predictions: pd.DataFrame, path: Path) -> None:
+    figure = Figure(figsize=(10, 5))
+    axis = figure.subplots()
+    axis.plot(predictions[DATE_COLUMN], predictions["Actual_Wind_Production"], label="Actual")
+    axis.plot(
+        predictions[DATE_COLUMN],
+        predictions["Predicted_Wind_Production"],
+        label="Predicted",
+    )
+    axis.set_xlabel("Date")
+    axis.set_ylabel("Wind production")
+    axis.legend()
+    axis.tick_params(axis="x", rotation=45)
+    figure.tight_layout()
+    figure.savefig(path, dpi=120, metadata={"Software": "wind-energy-forecast"})
 
 
 def _json_ready(value: Any) -> Any:

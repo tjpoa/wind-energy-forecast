@@ -67,6 +67,11 @@ def test_run_baseline_training_writes_expected_outputs(tmp_path: Path):
     assert result.metrics_path.exists()
     assert result.predictions_path.exists()
     assert result.summary_path.exists()
+    assert result.plot_path.exists()
+    assert result.dataset_manifest_path.exists()
+    assert result.model_manifest_path.exists()
+    assert result.environment_path.exists()
+    assert result.validation_sample_path.exists()
     assert result.train_row_count == 15
     assert result.test_row_count == 5
     assert set(result.metrics) == {"R2", "MAE", "RMSE", "MAPE (%)"}
@@ -77,6 +82,10 @@ def test_run_baseline_training_writes_expected_outputs(tmp_path: Path):
         "Predicted_Wind_Production",
     ]
     assert len(predictions) == 5
+    assert len(result.input_sha256) == 64
+    assert len(result.feature_schema_sha256) == 64
+    validation = pd.read_csv(result.validation_sample_path)
+    assert validation.columns.tolist() == ["Feature_A", "Feature_B", "Expected_Prediction"]
 
 
 def test_run_baseline_training_refuses_to_overwrite_known_outputs(tmp_path: Path):

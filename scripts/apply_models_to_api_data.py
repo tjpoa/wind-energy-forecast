@@ -24,11 +24,13 @@ from wind_forecast.inference import (
 from wind_forecast.schemas import DATE_COLUMN, TARGET_COLUMN
 from wind_forecast.tracking import (
     DEFAULT_EXPERIMENT_NAME,
-    DEFAULT_TRACKING_DIRNAME,
+    DEFAULT_REGISTERED_MODEL_NAME,
+    DEFAULT_TRACKING_URI,
     ArtifactReference,
+    TrackingConfig,
     flatten_metric_groups,
     log_run_data,
-    start_local_run,
+    start_tracking_run,
 )
 
 
@@ -47,13 +49,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--mlflow",
         action="store_true",
-        help="Log this evaluation run to a local MLflow tracking store.",
+        help="Compatibility alias for --tracking-mode local.",
     )
     parser.add_argument(
-        "--mlflow-tracking-dir",
-        type=Path,
-        default=PROJECT_ROOT / DEFAULT_TRACKING_DIRNAME,
-        help="Local MLflow tracking directory. Defaults to ./mlruns.",
+        "--tracking-mode",
+        choices=["local", "off"],
+        default="off",
+        help="Evaluation remains opt-in to preserve the interactive workflow.",
+    )
+    parser.add_argument(
+        "--mlflow-tracking-uri",
+        default=DEFAULT_TRACKING_URI,
+        help="MLflow tracking server URI.",
     )
     parser.add_argument(
         "--mlflow-experiment-name",
@@ -78,12 +85,19 @@ def select_latest_api_data_file(processed_data_path: Path) -> Path:
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
-    run_context = nullcontext()
     if args.mlflow:
-        run_context = start_local_run(
+        args.tracking_mode = "local"
+    config = TrackingConfig(
+        mode=args.tracking_mode,
+        tracking_uri=args.mlflow_tracking_uri,
+        experiment_name=args.mlflow_experiment_name,
+        registered_model_name=DEFAULT_REGISTERED_MODEL_NAME,
+    )
+    run_context = nullcontext()
+    if config.mode == "local":
+        run_context = start_tracking_run(
             "apply-models-to-api-data",
-            tracking_dir=args.mlflow_tracking_dir,
-            experiment_name=args.mlflow_experiment_name,
+            config=config,
             tags={
                 "workflow": "apply_models_to_api_data",
                 "phase": "4A",
@@ -213,7 +227,7 @@ def _run_workflow(args: argparse.Namespace) -> None:
     comparison_df_new.to_csv(output_comparison_filename, index=False)
     print(f"\nComparison DataFrame saved to: {output_comparison_filename}")
 
-    if args.mlflow:
+    if args.tracking_mode == "local":
         _log_mlflow_evaluation_run(
             latest_api_data_file=latest_api_data_file,
             output_comparison_filename=output_comparison_filename,
