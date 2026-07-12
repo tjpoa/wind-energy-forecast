@@ -47,6 +47,12 @@ class _Version:
         self.run_id = run_id
 
 
+class _FakeRestException(RuntimeError):
+    def __init__(self, error_code: str, message: str):
+        super().__init__(f"{error_code}: {message}")
+        self.error_code = error_code
+
+
 class _Client:
     def __init__(self, run=None, *, candidate=None, champion=None):
         self.run = run or _Run()
@@ -258,6 +264,134 @@ def test_promote_candidate_version_mismatch_is_non_mutating(tmp_path, monkeypatc
             mlflow_module=mlflow,
         )
     assert client.calls == []
+
+
+def test_promote_candidate_accepts_mlflow_314_missing_champion_alias(
+    tmp_path, monkeypatch
+):
+    mlflow = _fake_mlflow(tmp_path)
+    monkeypatch.setitem(sys.modules, "mlflow", mlflow)
+
+    class Mlflow314Client(_Client):
+        def get_model_version_by_alias(self, model_name, alias):
+            if alias == "champion":
+                raise _FakeRestException(
+                    "INVALID_PARAMETER_VALUE",
+                    "Registered model alias champion not found.",
+                )
+            return super().get_model_version_by_alias(model_name, alias)
+
+    client = Mlflow314Client(
+        candidate=_Version("7", tags={"validation_status": "passed"})
+    )
+
+    receipt = promote_candidate(
+        config=_config(),
+        expected_candidate_version="7",
+        expected_champion_version="none",
+        approval_note="manual review passed",
+        client=client,
+        mlflow_module=mlflow,
+    )
+
+    champion_call = (
+        "set_alias",
+        "wind-energy-forecast-original",
+        "champion",
+        "7",
+    )
+    delete_call = (
+        "delete_alias",
+        "wind-energy-forecast-original",
+        "candidate",
+    )
+    assert receipt.previous_champion_version is None
+    assert client.calls.index(champion_call) < client.calls.index(delete_call)
+
+
+def test_promote_candidate_reraises_unrelated_mlflow_parameter_error(tmp_path, monkeypatch):
+    mlflow = _fake_mlflow(tmp_path)
+    monkeypatch.setitem(sys.modules, "mlflow", mlflow)
+
+    class InvalidParameterClient(_Client):
+        def get_model_version_by_alias(self, model_name, alias):
+            if alias == "champion":
+                raise _FakeRestException(
+                    "INVALID_PARAMETER_VALUE", "Invalid registered model name."
+                )
+            return super().get_model_version_by_alias(model_name, alias)
+
+    client = InvalidParameterClient(
+        candidate=_Version("7", tags={"validation_status": "passed"})
+    )
+
+    with pytest.raises(_FakeRestException, match="Invalid registered model"):
+        promote_candidate(
+            config=_config(),
+            expected_candidate_version="7",
+            expected_champion_version="none",
+            approval_note="manual review passed",
+            client=client,
+            mlflow_module=mlflow,
+        )
+
+    assert client.calls == []
+
+
+def test_promote_candidate_reraises_extended_mlflow_alias_error(tmp_path, monkeypatch):
+    mlflow = _fake_mlflow(tmp_path)
+    monkeypatch.setitem(sys.modules, "mlflow", mlflow)
+
+    class ExtendedAliasErrorClient(_Client):
+        def get_model_version_by_alias(self, model_name, alias):
+            if alias == "champion":
+                raise _FakeRestException(
+                    "INVALID_PARAMETER_VALUE",
+                    "Registered model alias champion not found. Check the registry.",
+                )
+            return super().get_model_version_by_alias(model_name, alias)
+
+    client = ExtendedAliasErrorClient(
+        candidate=_Version("7", tags={"validation_status": "passed"})
+    )
+
+    with pytest.raises(_FakeRestException, match="Check the registry"):
+        promote_candidate(
+            config=_config(),
+            expected_candidate_version="7",
+            expected_champion_version="none",
+            approval_note="manual review passed",
+            client=client,
+            mlflow_module=mlflow,
+        )
+
+    assert client.calls == []
+
+
+def test_promote_candidate_accepts_legacy_missing_alias_error(tmp_path, monkeypatch):
+    mlflow = _fake_mlflow(tmp_path)
+    monkeypatch.setitem(sys.modules, "mlflow", mlflow)
+
+    class LegacyMissingAliasClient(_Client):
+        def get_model_version_by_alias(self, model_name, alias):
+            if alias == "champion":
+                raise _FakeRestException("RESOURCE_DOES_NOT_EXIST", "Backend alias lookup miss.")
+            return super().get_model_version_by_alias(model_name, alias)
+
+    client = LegacyMissingAliasClient(
+        candidate=_Version("7", tags={"validation_status": "passed"})
+    )
+
+    receipt = promote_candidate(
+        config=_config(),
+        expected_candidate_version="7",
+        expected_champion_version="none",
+        approval_note="manual review passed",
+        client=client,
+        mlflow_module=mlflow,
+    )
+
+    assert receipt.previous_champion_version is None
 
 
 def test_promotion_delete_failure_restores_previous_aliases(tmp_path, monkeypatch):

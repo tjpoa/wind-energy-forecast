@@ -364,9 +364,19 @@ def _optional_alias(client: Any, model_name: str, alias: str) -> Any | None:
     except LookupError:
         return None
     except Exception as exc:
-        if getattr(exc, "error_code", None) == "RESOURCE_DOES_NOT_EXIST":
+        if _is_missing_alias_error(exc, alias):
             return None
         raise
+
+
+def _is_missing_alias_error(exc: Exception, alias: str) -> bool:
+    """Recognize MLflow's backend-specific response for an absent alias."""
+    error_code = getattr(exc, "error_code", None)
+    if error_code == "RESOURCE_DOES_NOT_EXIST":
+        return True
+    return error_code == "INVALID_PARAMETER_VALUE" and str(exc) == (
+        f"INVALID_PARAMETER_VALUE: Registered model alias {alias} not found."
+    )
 
 
 def _json_object(path: Path, description: str) -> dict[str, Any]:
