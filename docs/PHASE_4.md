@@ -209,9 +209,15 @@ Builder tooling may be exercised locally, but a public-release or
 cross-machine reproducibility claim is not allowed before that gate and a clean
 clone round-trip pass.
 
-This checkpoint validates the implementation with synthetic/fake MLflow tests.
-It does not claim that a real local server/SQLite Registry smoke, public
-release, or clean-clone round-trip has already run.
+This checkpoint was additionally exercised against a real local MLflow 3.14
+server with a SQLite backend: a clean v1 baseline run completed, candidate
+validation and registration succeeded, two candidate bundles had matching
+SHA-256 values, bundle verification and deterministic retraining passed, and
+manual promotion followed by rollback succeeded. All resulting Registry and
+artifact state remained local. It does not claim that a public release or
+clean-clone/cross-machine round-trip has run; both remain blocked until the
+catalog has approved source, licence, attribution, redistribution permission,
+and a pinned bundle SHA-256.
 
 ## Baseline Data Card
 

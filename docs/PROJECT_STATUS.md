@@ -1,6 +1,6 @@
 # Project Status
 
-Last reviewed: 2026-07-10.
+Last reviewed: 2026-07-12.
 
 This document summarizes the current state of the wind-energy forecasting
 repository for portfolio and hiring-review purposes. It is a factual status
@@ -41,8 +41,8 @@ each checkpoint was written. This file reflects the latest repository state.
 | Baseline training CLI | Implemented baseline | `wind_forecast.training`, `scripts/train_baseline.py`, `docs/PHASE_4.md` | Lightweight tree baseline only; tuned ANN/Optuna workflow remains notebook-based. |
 | Docker support | Implemented baseline with runtime hardening | `Dockerfile`, `.dockerignore`, Docker CI build and smoke test | No image publishing, digest pinning, or production deployment workflow yet. |
 | CI | Implemented baseline with coverage and container smoke checks | `.github/workflows/ci.yml` | CI runs tests with coverage, Ruff, Docker build, `/health` smoke, and Docker health checks; it does not deploy artifacts. |
-| MLflow lifecycle | Implemented code; integration smoke pending | `wind_forecast.tracking`, `wind_forecast.registry`, baseline CLI and synthetic registry tests | SQLite-backed local server contract, candidate validation and manual champion promotion exist in code; a real MLflow server smoke was not run in this checkpoint and serving does not consume aliases. |
-| Artifact versioning | Local tooling tested; publication blocked | Deterministic atomic bundle builder/fetcher/verifier and `artifacts/catalog.json` | No public v1 data bundle until provenance/licence/redistribution approval and a catalog SHA-256; no cross-machine claim until a release round-trip is run. |
+| MLflow lifecycle | Implemented; local integration smoke completed | `wind_forecast.tracking`, `wind_forecast.registry`, baseline CLI, synthetic registry tests, and real local SQLite smoke | A clean v1 run, candidate registration, manual promotion, and rollback succeeded locally; Registry state remains local and serving does not consume aliases. |
+| Artifact versioning | Local bundle validation completed; publication blocked | Deterministic builder/fetcher/verifier, `artifacts/catalog.json`, two matching local bundle hashes, and local verify/retrain evidence | No public v1 data bundle until provenance/licence/redistribution approval and a catalog SHA-256; no cross-machine claim until a release round-trip runs. |
 | Documentation | Strong | `README.md`, `docs/README.md`, `docs/DEMO.md`, phase docs, roadmap | Model/data cards are baseline-level and not full registry artifacts. |
 
 ## Roadmap Status
@@ -53,7 +53,7 @@ each checkpoint was written. This file reflects the latest repository state.
 | 1 | Modular project structure and configuration | Completed. Reusable package modules and configuration helpers exist. |
 | 2 | Data validation and sanity checks | Substantially implemented. V1 and v2 validation work exists, with documented v2 contracts and acceptance checks. |
 | 3 | Automated testing and code quality | Implemented with a 30% coverage gate, Pytest, and Ruff in CI. |
-| 4 | MLflow experiment tracking and model registry | Phase 4B code and synthetic tests implemented; real SQLite-backed MLflow smoke, public release, and clean-clone round-trip remain pending explicit authorization/environment readiness. |
+| 4 | MLflow experiment tracking and model registry | Phase 4B code, synthetic tests, and the local SQLite-backed end-to-end smoke are complete; public release and clean-clone round-trip remain blocked by provenance/licence approval and explicit publication authorization. |
 | 5 | Prediction API with FastAPI | Implemented for local/container inference over saved artifacts. |
 | 6 | Docker containerization | Implemented non-root Dockerfile with a runtime health check and CI smoke test. |
 | 7 | GitHub Actions continuous integration | Implemented matrix CI for tests with coverage, linting, Docker build, and health checks. |
