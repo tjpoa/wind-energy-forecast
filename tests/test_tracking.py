@@ -8,6 +8,7 @@ from wind_forecast.tracking import (
     ArtifactReference,
     flatten_metric_groups,
     local_tracking_uri,
+    log_dataset_input,
     log_run_data,
     normalize_tracking_key,
     start_local_run,
@@ -55,6 +56,14 @@ def _fake_mlflow_module():
     def log_artifact(local_path, artifact_path=None):
         calls.append(("log_artifact", local_path, artifact_path))
 
+    def from_pandas(frame, **kwargs):
+        dataset = object()
+        calls.append(("from_pandas", frame, kwargs, dataset))
+        return dataset
+
+    def log_input(dataset, context):
+        calls.append(("log_input", dataset, context))
+
     module.set_tracking_uri = set_tracking_uri
     module.set_experiment = set_experiment
     module.start_run = start_run
@@ -62,6 +71,8 @@ def _fake_mlflow_module():
     module.log_metrics = log_metrics
     module.set_tags = set_tags
     module.log_artifact = log_artifact
+    module.data = types.SimpleNamespace(from_pandas=from_pandas)
+    module.log_input = log_input
     return module
 
 
@@ -134,3 +145,42 @@ def test_start_local_run_and_log_run_data_use_mocked_mlflow(
     assert ("log_metrics", {"MAPE_percent": 12.5}) in fake_mlflow.calls
     assert ("set_tags", {"kind": "evaluation"}) in fake_mlflow.calls
     assert ("log_artifact", str(artifact), "predictions") in fake_mlflow.calls
+
+
+@pytest.mark.parametrize(
+    ("digest", "expected_digest"),
+    [
+        ("a" * 64, "a" * 36),
+        (None, None),
+    ],
+)
+def test_log_dataset_input_limits_mlflow_lineage_digest(
+    digest: str | None,
+    expected_digest: str | None,
+    monkeypatch,
+):
+    fake_mlflow = _fake_mlflow_module()
+    monkeypatch.setitem(sys.modules, "mlflow", fake_mlflow)
+    frame = object()
+
+    dataset = log_dataset_input(
+        frame,
+        source="data/processed/agg_data_ml.csv",
+        name="wind-production-v1",
+        target="Wind_Production",
+        context="training",
+        digest=digest,
+    )
+
+    assert (
+        "from_pandas",
+        frame,
+        {
+            "source": "data/processed/agg_data_ml.csv",
+            "name": "wind-production-v1",
+            "targets": "Wind_Production",
+            "digest": expected_digest,
+        },
+        dataset,
+    ) in fake_mlflow.calls
+    assert ("log_input", dataset, "training") in fake_mlflow.calls

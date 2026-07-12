@@ -23,6 +23,7 @@ DEFAULT_DATASET_VERSION = "v1"
 DEFAULT_TRACKING_DIRNAME = "mlruns"  # legacy FileStore compatibility only
 
 _TRACKING_KEY_PATTERN = re.compile(r"[^A-Za-z0-9_.\-/ ]+")
+_MLFLOW_DATASET_DIGEST_MAX_LENGTH = 36
 
 
 class MLflowNotInstalledError(RuntimeError):
@@ -220,7 +221,7 @@ def log_dataset_input(
         source=source,
         name=name,
         targets=target,
-        digest=digest,
+        digest=_mlflow_dataset_digest(digest),
     )
     mlflow.log_input(dataset, context=context)
     return dataset
@@ -311,6 +312,11 @@ def _stringify_mapping(values: Mapping[str, Any] | None) -> dict[str, str]:
         for key, value in (values or {}).items()
         if value is not None
     }
+
+
+def _mlflow_dataset_digest(digest: str | None) -> str | None:
+    """Return the lineage fingerprint length accepted by MLflow backends."""
+    return None if digest is None else digest[:_MLFLOW_DATASET_DIGEST_MAX_LENGTH]
 
 
 def _numeric_metric_mapping(values: Mapping[str, Any] | None) -> dict[str, float]:
