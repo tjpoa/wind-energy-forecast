@@ -10,8 +10,10 @@ from typing import Literal
 
 import pandas as pd
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
+from .config import load_cors_config
 from .inference import (
     BEST_MODEL_LOG_NAME_FROM_NOTEBOOK,
     BEST_MODEL_ORIG_NAME_FROM_NOTEBOOK,
@@ -385,6 +387,14 @@ def create_app() -> FastAPI:
     api = FastAPI(
         title="Wind Energy Forecast API",
         version="0.1.0",
+    )
+    cors_config = load_cors_config()
+    api.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_config.allowed_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type"],
     )
 
     @api.get("/health", response_model=HealthResponse)

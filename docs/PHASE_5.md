@@ -11,8 +11,21 @@ Install runtime dependencies and the editable package, then start Uvicorn:
 ```powershell
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
 .\venv\Scripts\python.exe -m pip install -e .
-.\venv\Scripts\python.exe -m uvicorn wind_forecast.api:app --reload
+.\venv\Scripts\python.exe -m uvicorn --env-file .env wind_forecast.api:app --reload
 ```
+
+`WIND_FORECAST_CORS_ALLOW_ORIGINS` controls the exact browser origins that can
+call the local API. If it is unset, only Vite's default development origin,
+`http://localhost:5173`, is allowed. To configure multiple origins, use a
+comma-separated value in `.env`:
+
+```env
+WIND_FORECAST_CORS_ALLOW_ORIGINS=http://localhost:5173,http://localhost:4173
+```
+
+Origins must be complete `http` or `https` origins without wildcards, paths,
+query strings, fragments, or credentials. The API does not allow browser
+credentials and permits cross-origin `GET` and `POST` requests only.
 
 ## Run with Docker
 

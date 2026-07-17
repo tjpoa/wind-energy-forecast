@@ -97,6 +97,7 @@ WEATHER_API_KEY=your_api_key_here
 WEATHER_API_LOCATION=41.8345,-7.7889
 WEATHER_API_DAYS=44
 WEATHER_API_END_DATE=
+WIND_FORECAST_CORS_ALLOW_ORIGINS=http://localhost:5173
 ```
 
 Do not commit `.env` or real API keys. The included `.env.example` is safe to
@@ -170,8 +171,20 @@ Log that legacy evaluation run to the same MLflow server (still opt-in):
 Start the FastAPI app locally:
 
 ```powershell
-.\venv\Scripts\python.exe -m uvicorn wind_forecast.api:app --reload
+.\venv\Scripts\python.exe -m uvicorn --env-file .env wind_forecast.api:app --reload
 ```
+
+`WIND_FORECAST_CORS_ALLOW_ORIGINS` accepts exact browser origins separated by
+commas. If it is unset, only the Vite development origin
+`http://localhost:5173` is allowed. For example, to add another local frontend:
+
+```env
+WIND_FORECAST_CORS_ALLOW_ORIGINS=http://localhost:5173,http://localhost:4173
+```
+
+Do not use `*`, URL paths, query strings, fragments, or credentials. The API
+does not allow browser credentials; its CORS policy permits only `GET` and
+`POST` requests from configured origins.
 
 Build and run the API Docker image:
 

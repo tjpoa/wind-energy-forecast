@@ -15,6 +15,7 @@ from wind_forecast.api import (
     get_performance_service,
     get_prediction_service,
 )
+from wind_forecast.config import CORS_ALLOWED_ORIGINS_ENV
 from wind_forecast.performance import (
     InvalidPerformanceIntervalError,
     NoPerformanceObservationsError,
@@ -88,6 +89,43 @@ def test_health_endpoint_returns_ok():
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_cors_preflight_allows_default_vite_origin_without_credentials(monkeypatch):
+    monkeypatch.delenv(CORS_ALLOWED_ORIGINS_ENV, raising=False)
+    client = TestClient(create_app())
+
+    response = client.options(
+        "/predict",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+    assert "POST" in response.headers["access-control-allow-methods"]
+    assert "content-type" in response.headers["access-control-allow-headers"].lower()
+    assert "access-control-allow-credentials" not in response.headers
+
+
+def test_cors_preflight_rejects_unconfigured_origin(monkeypatch):
+    monkeypatch.delenv(CORS_ALLOWED_ORIGINS_ENV, raising=False)
+    client = TestClient(create_app())
+
+    response = client.options(
+        "/predict",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "access-control-allow-origin" not in response.headers
 
 
 def test_model_info_reports_artifact_and_feature_reference_status(tmp_path: Path):
