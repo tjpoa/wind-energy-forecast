@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .config import PerformanceArtifactsConfig, load_performance_artifacts_config
 from .schemas import DATE_COLUMN
 from .training import calculate_regression_metrics
 
@@ -35,6 +36,26 @@ class NoPerformanceObservationsError(LookupError):
 
 class PerformanceArtifactError(RuntimeError):
     """Raised when configured performance artifacts cannot be served safely."""
+
+
+class PerformanceArtifactMissingError(PerformanceArtifactError):
+    """Raised when a required performance artifact is unavailable."""
+
+
+class PerformanceArtifactEmptyError(PerformanceArtifactError):
+    """Raised when a present performance artifact contains no data."""
+
+
+class PerformanceArtifactSchemaError(PerformanceArtifactError):
+    """Raised when an artifact does not match its expected structure."""
+
+
+class PerformanceArtifactDateError(PerformanceArtifactError):
+    """Raised when an artifact contains invalid or duplicate dates."""
+
+
+class PerformanceArtifactValueError(PerformanceArtifactError):
+    """Raised when an artifact contains invalid numeric or metadata values."""
 
 
 class PerformanceArtifactsNotConfiguredError(PerformanceArtifactError):
@@ -71,12 +92,13 @@ class PerformanceMetrics:
 
 @dataclass(frozen=True)
 class PerformanceObservation:
-    """Actual, predicted, and signed error values for one date."""
+    """Actual, predicted, signed error, and absolute error for one date."""
 
     date: str
     actual: float
     predicted: float
     error: float
+    absolute_error: float
 
 
 @dataclass(frozen=True)
@@ -101,7 +123,7 @@ class PerformanceResultInfo:
     dataset_version: str | None
     evaluation_start_date: str
     evaluation_end_date: str
-    artifact_metrics: PerformanceMetrics
+    artifact_metrics: PerformanceMetrics | None
 
 
 @dataclass(frozen=True)
@@ -112,7 +134,7 @@ class PerformanceReport:
     observation_count: int
     metrics: PerformanceMetrics
     observations: tuple[PerformanceObservation, ...]
-    result: PerformanceResultInfo
+    result: PerformanceResultInfo | None
 
 
 @dataclass(frozen=True)
@@ -129,6 +151,14 @@ class PerformanceService:
             else PerformanceArtifactPaths.from_directory(artifact_dir)
         )
         return cls(paths=paths)
+
+    @classmethod
+    def from_config(
+        cls, config: PerformanceArtifactsConfig | None = None
+    ) -> "PerformanceService":
+        """Create a service from the explicitly configured artifact directory."""
+        selected_config = config or load_performance_artifacts_config()
+        return cls.from_directory(selected_config.artifact_dir)
 
     def get_performance(
         self,
@@ -147,8 +177,8 @@ class PerformanceService:
             )
 
         predictions = _read_predictions(self.paths.predictions)
-        artifact_metrics = _read_metrics(self.paths.metrics)
-        summary = _read_summary(self.paths.summary)
+        artifact_metrics = _read_optional_metrics(self.paths.metrics)
+        summary = _read_optional_summary(self.paths.summary)
         _validate_artifact_consistency(predictions, artifact_metrics, summary)
 
         available_start = predictions.iloc[0][DATE_COLUMN].date()
@@ -164,15 +194,7 @@ class PerformanceService:
             )
 
         filtered_metrics = _calculate_metrics(filtered)
-        observations = tuple(
-            PerformanceObservation(
-                date=row[DATE_COLUMN].strftime("%Y-%m-%d"),
-                actual=float(row[ACTUAL_COLUMN]),
-                predicted=float(row[PREDICTED_COLUMN]),
-                error=float(row[PREDICTED_COLUMN] - row[ACTUAL_COLUMN]),
-            )
-            for _, row in filtered.iterrows()
-        )
+        observations = tuple(_observation_from_row(row) for _, row in filtered.iterrows())
         returned_start = filtered.iloc[0][DATE_COLUMN].date()
         returned_end = filtered.iloc[-1][DATE_COLUMN].date()
 
@@ -188,14 +210,18 @@ class PerformanceService:
             observation_count=len(observations),
             metrics=filtered_metrics,
             observations=observations,
-            result=PerformanceResultInfo(
-                model_type=summary["model_type"],
-                seed=summary["seed"],
-                test_fraction=summary["test_fraction"],
-                dataset_version=summary.get("dataset_version"),
-                evaluation_start_date=summary["test_start_date"],
-                evaluation_end_date=summary["test_end_date"],
-                artifact_metrics=artifact_metrics,
+            result=(
+                None
+                if summary is None
+                else PerformanceResultInfo(
+                    model_type=summary["model_type"],
+                    seed=summary["seed"],
+                    test_fraction=summary["test_fraction"],
+                    dataset_version=summary.get("dataset_version"),
+                    evaluation_start_date=summary["test_start_date"],
+                    evaluation_end_date=summary["test_end_date"],
+                    artifact_metrics=artifact_metrics,
+                )
             ),
         )
 
@@ -210,12 +236,14 @@ def _read_predictions(path: Path) -> pd.DataFrame:
         pd.errors.EmptyDataError,
         pd.errors.ParserError,
     ) as exc:
-        raise PerformanceArtifactError("predictions.csv is malformed.") from exc
+        if isinstance(exc, pd.errors.EmptyDataError):
+            raise PerformanceArtifactEmptyError("predictions.csv is empty.") from exc
+        raise PerformanceArtifactSchemaError("predictions.csv is malformed.") from exc
 
     if frame.empty:
-        raise PerformanceArtifactError("predictions.csv is empty.")
+        raise PerformanceArtifactEmptyError("predictions.csv is empty.")
     if tuple(frame.columns) != PREDICTION_COLUMNS:
-        raise PerformanceArtifactError(
+        raise PerformanceArtifactSchemaError(
             "predictions.csv must contain exactly Date, "
             "Actual_Wind_Production, and Predicted_Wind_Production."
         )
@@ -224,39 +252,53 @@ def _read_predictions(path: Path) -> pd.DataFrame:
     date_shape_valid = date_text.str.fullmatch(r"\d{4}-\d{2}-\d{2}")
     parsed_dates = pd.to_datetime(date_text, format="%Y-%m-%d", errors="coerce")
     if not date_shape_valid.all() or parsed_dates.isna().any():
-        raise PerformanceArtifactError("predictions.csv contains invalid dates.")
+        raise PerformanceArtifactDateError("predictions.csv contains invalid dates.")
     if parsed_dates.duplicated().any():
-        raise PerformanceArtifactError("predictions.csv contains duplicate dates.")
-    if not parsed_dates.is_monotonic_increasing:
-        raise PerformanceArtifactError(
-            "predictions.csv dates must be strictly chronological."
-        )
+        raise PerformanceArtifactDateError("predictions.csv contains duplicate dates.")
 
     numeric_columns: dict[str, pd.Series] = {}
     for column in (ACTUAL_COLUMN, PREDICTED_COLUMN):
         if not frame[column].str.strip().equals(frame[column]):
-            raise PerformanceArtifactError(
+            raise PerformanceArtifactValueError(
                 f"predictions.csv contains invalid values in {column}."
             )
         values = pd.to_numeric(frame[column], errors="coerce")
         if values.isna().any() or not np.isfinite(values.to_numpy(dtype=float)).all():
-            raise PerformanceArtifactError(
+            raise PerformanceArtifactValueError(
                 f"predictions.csv contains invalid values in {column}."
             )
         numeric_columns[column] = values.astype(float)
 
-    return pd.DataFrame(
-        {
-            DATE_COLUMN: parsed_dates,
-            ACTUAL_COLUMN: numeric_columns[ACTUAL_COLUMN],
-            PREDICTED_COLUMN: numeric_columns[PREDICTED_COLUMN],
-        }
+    return (
+        pd.DataFrame(
+            {
+                DATE_COLUMN: parsed_dates,
+                ACTUAL_COLUMN: numeric_columns[ACTUAL_COLUMN],
+                PREDICTED_COLUMN: numeric_columns[PREDICTED_COLUMN],
+            }
+        )
+        .sort_values(DATE_COLUMN)
+        .reset_index(drop=True)
     )
 
 
 def _read_metrics(path: Path) -> PerformanceMetrics:
     payload = _read_json_object(path, "metrics.json")
     return _metrics_from_payload(payload, "metrics.json")
+
+
+def _read_optional_metrics(path: Path) -> PerformanceMetrics | None:
+    """Read persisted metrics only when the artifact was supplied."""
+    return None if not _artifact_exists(path, "metrics.json") else _read_metrics(path)
+
+
+def _read_optional_summary(path: Path) -> dict[str, Any] | None:
+    """Read metadata only when the optional summary artifact was supplied."""
+    return (
+        None
+        if not _artifact_exists(path, "run_summary.json")
+        else _read_summary(path)
+    )
 
 
 def _read_summary(path: Path) -> dict[str, Any]:
@@ -269,7 +311,7 @@ def _read_summary(path: Path) -> dict[str, Any]:
         "test_end_date",
     }
     if not required.issubset(payload):
-        raise PerformanceArtifactError(
+        raise PerformanceArtifactSchemaError(
             "run_summary.json is missing required performance metadata."
         )
 
@@ -279,10 +321,10 @@ def _read_summary(path: Path) -> dict[str, Any]:
         or not model_type
         or model_type != model_type.strip()
     ):
-        raise PerformanceArtifactError("run_summary.json model_type is invalid.")
+        raise PerformanceArtifactValueError("run_summary.json model_type is invalid.")
     seed = payload["seed"]
     if isinstance(seed, bool) or not isinstance(seed, int):
-        raise PerformanceArtifactError("run_summary.json seed is invalid.")
+        raise PerformanceArtifactValueError("run_summary.json seed is invalid.")
     test_fraction = payload["test_fraction"]
     if (
         isinstance(test_fraction, bool)
@@ -290,12 +332,12 @@ def _read_summary(path: Path) -> dict[str, Any]:
         or not math.isfinite(float(test_fraction))
         or not 0 < float(test_fraction) < 1
     ):
-        raise PerformanceArtifactError("run_summary.json test_fraction is invalid.")
+        raise PerformanceArtifactValueError("run_summary.json test_fraction is invalid.")
 
     test_start = _parse_iso_date(payload["test_start_date"], "test_start_date")
     test_end = _parse_iso_date(payload["test_end_date"], "test_end_date")
     if test_start > test_end:
-        raise PerformanceArtifactError("run_summary.json test coverage is inverted.")
+        raise PerformanceArtifactDateError("run_summary.json test coverage is inverted.")
 
     dataset_version = payload.get("dataset_version")
     if dataset_version is not None and (
@@ -303,7 +345,9 @@ def _read_summary(path: Path) -> dict[str, Any]:
         or not dataset_version
         or dataset_version != dataset_version.strip()
     ):
-        raise PerformanceArtifactError("run_summary.json dataset_version is invalid.")
+        raise PerformanceArtifactValueError(
+            "run_summary.json dataset_version is invalid."
+        )
 
     normalized = dict(payload)
     normalized["model_type"] = model_type
@@ -316,17 +360,23 @@ def _read_summary(path: Path) -> dict[str, Any]:
 
 def _validate_artifact_consistency(
     predictions: pd.DataFrame,
-    artifact_metrics: PerformanceMetrics,
-    summary: dict[str, Any],
+    artifact_metrics: PerformanceMetrics | None,
+    summary: dict[str, Any] | None,
 ) -> None:
+    calculated_metrics = _calculate_metrics(predictions)
+    if summary is None:
+        if artifact_metrics is not None:
+            _require_matching_artifact_metrics(artifact_metrics, calculated_metrics)
+        return
+
     prediction_start = predictions.iloc[0][DATE_COLUMN].date().isoformat()
     prediction_end = predictions.iloc[-1][DATE_COLUMN].date().isoformat()
     if summary["test_start_date"] != prediction_start:
-        raise PerformanceArtifactError(
+        raise PerformanceArtifactDateError(
             "run_summary.json test_start_date differs from predictions.csv."
         )
     if summary["test_end_date"] != prediction_end:
-        raise PerformanceArtifactError(
+        raise PerformanceArtifactDateError(
             "run_summary.json test_end_date differs from predictions.csv."
         )
 
@@ -337,7 +387,7 @@ def _validate_artifact_consistency(
             or not isinstance(test_row_count, int)
             or test_row_count != len(predictions)
         ):
-            raise PerformanceArtifactError(
+            raise PerformanceArtifactSchemaError(
                 "run_summary.json test_row_count differs from predictions.csv."
             )
 
@@ -346,14 +396,21 @@ def _validate_artifact_consistency(
             summary["metrics"], "run_summary.json metrics"
         )
         _require_matching_metrics(
-            artifact_metrics,
             summary_metrics,
-            "run_summary.json metrics differ from metrics.json.",
+            calculated_metrics,
+            "run_summary.json metrics differ from metrics recalculated from "
+            "predictions.csv.",
         )
 
-    calculated_metrics = _calculate_metrics(predictions)
+    if artifact_metrics is not None:
+        _require_matching_artifact_metrics(artifact_metrics, calculated_metrics)
+
+
+def _require_matching_artifact_metrics(
+    artifact_metrics: PerformanceMetrics, calculated_metrics: PerformanceMetrics
+) -> None:
     if calculated_metrics.r2 is None:
-        raise PerformanceArtifactError(
+        raise PerformanceArtifactSchemaError(
             "predictions.csv has too few rows to validate full-run R2."
         )
     _require_matching_metrics(
@@ -384,9 +441,9 @@ def _read_json_object(path: Path, artifact_name: str) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise PerformanceArtifactError(f"{artifact_name} is malformed.") from exc
+        raise PerformanceArtifactSchemaError(f"{artifact_name} is malformed.") from exc
     if not isinstance(payload, dict) or not payload:
-        raise PerformanceArtifactError(
+        raise PerformanceArtifactSchemaError(
             f"{artifact_name} must be a non-empty JSON object."
         )
     return payload
@@ -395,20 +452,30 @@ def _read_json_object(path: Path, artifact_name: str) -> dict[str, Any]:
 def _ensure_nonempty_file(path: Path, artifact_name: str) -> None:
     try:
         if not path.is_file():
-            raise PerformanceArtifactError(
+            raise PerformanceArtifactMissingError(
                 f"Required performance artifact is missing: {artifact_name}."
             )
         if path.stat().st_size == 0:
-            raise PerformanceArtifactError(f"{artifact_name} is empty.")
+            raise PerformanceArtifactEmptyError(f"{artifact_name} is empty.")
     except OSError as exc:
-        raise PerformanceArtifactError(
+        raise PerformanceArtifactMissingError(
             f"Required performance artifact is unavailable: {artifact_name}."
+        ) from exc
+
+
+def _artifact_exists(path: Path, artifact_name: str) -> bool:
+    """Return whether an optional artifact exists without exposing its path."""
+    try:
+        return path.exists()
+    except OSError as exc:
+        raise PerformanceArtifactMissingError(
+            f"Performance artifact is unavailable: {artifact_name}."
         ) from exc
 
 
 def _metrics_from_payload(payload: Any, artifact_name: str) -> PerformanceMetrics:
     if not isinstance(payload, dict) or set(payload) != set(METRIC_NAMES):
-        raise PerformanceArtifactError(
+        raise PerformanceArtifactSchemaError(
             f"{artifact_name} must contain exactly R2, MAE, RMSE, and MAPE (%)."
         )
     return PerformanceMetrics(
@@ -425,12 +492,12 @@ def _finite_float(
     artifact_name: str = "calculated metrics",
 ) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float):
-        raise PerformanceArtifactError(
+        raise PerformanceArtifactValueError(
             f"{artifact_name} contains a non-numeric {field_name}."
         )
     result = float(value)
     if not math.isfinite(result):
-        raise PerformanceArtifactError(
+        raise PerformanceArtifactValueError(
             f"{artifact_name} contains a non-finite {field_name}."
         )
     return result
@@ -458,22 +525,35 @@ def _require_matching_metrics(
         )
         for left, right in pairs
     ):
-        raise PerformanceArtifactError(message)
+        raise PerformanceArtifactSchemaError(message)
+
+
+def _observation_from_row(row: pd.Series) -> PerformanceObservation:
+    actual = float(row[ACTUAL_COLUMN])
+    predicted = float(row[PREDICTED_COLUMN])
+    error = predicted - actual
+    return PerformanceObservation(
+        date=row[DATE_COLUMN].strftime("%Y-%m-%d"),
+        actual=actual,
+        predicted=predicted,
+        error=error,
+        absolute_error=abs(error),
+    )
 
 
 def _parse_iso_date(value: Any, field_name: str) -> date:
     if not isinstance(value, str):
-        raise PerformanceArtifactError(
+        raise PerformanceArtifactDateError(
             f"run_summary.json {field_name} is invalid."
         )
     try:
         parsed = date.fromisoformat(value)
     except ValueError as exc:
-        raise PerformanceArtifactError(
+        raise PerformanceArtifactDateError(
             f"run_summary.json {field_name} is invalid."
         ) from exc
     if parsed.isoformat() != value:
-        raise PerformanceArtifactError(
+        raise PerformanceArtifactDateError(
             f"run_summary.json {field_name} must use YYYY-MM-DD."
         )
     return parsed
@@ -487,9 +567,14 @@ __all__ = [
     "ACTUAL_COLUMN",
     "InvalidPerformanceIntervalError",
     "NoPerformanceObservationsError",
+    "PerformanceArtifactDateError",
+    "PerformanceArtifactEmptyError",
     "PerformanceArtifactError",
+    "PerformanceArtifactMissingError",
     "PerformanceArtifactPaths",
+    "PerformanceArtifactSchemaError",
     "PerformanceArtifactsNotConfiguredError",
+    "PerformanceArtifactValueError",
     "PerformanceInterval",
     "PerformanceMetrics",
     "PerformanceObservation",
