@@ -9,6 +9,9 @@ from pathlib import Path
 from .paths import project_root
 
 
+PERFORMANCE_ARTIFACT_DIR_ENV = "WIND_FORECAST_PERFORMANCE_ARTIFACT_DIR"
+
+
 @dataclass(frozen=True)
 class WeatherAPIConfig:
     """WeatherAPI settings loaded from environment variables."""
@@ -17,6 +20,13 @@ class WeatherAPIConfig:
     location: str
     days: int
     end_date: str | None
+
+
+@dataclass(frozen=True)
+class PerformanceArtifactsConfig:
+    """Location of one explicitly selected performance-artifact set."""
+
+    artifact_dir: Path | None
 
 
 def load_weather_api_config(
@@ -53,3 +63,20 @@ def load_weather_api_config(
         days=days,
         end_date=os.getenv("WEATHER_API_END_DATE") or None,
     )
+
+
+def load_performance_artifacts_config() -> PerformanceArtifactsConfig:
+    """Load the explicitly configured performance-artifact directory.
+
+    Relative paths are resolved from the repository root. The directory is not
+    required to exist at configuration-load time; the performance domain
+    service owns artifact-readiness validation.
+    """
+    raw_path = os.getenv(PERFORMANCE_ARTIFACT_DIR_ENV)
+    if raw_path is None or not raw_path.strip():
+        return PerformanceArtifactsConfig(artifact_dir=None)
+
+    configured_path = Path(raw_path.strip())
+    if not configured_path.is_absolute():
+        configured_path = project_root() / configured_path
+    return PerformanceArtifactsConfig(artifact_dir=configured_path.resolve())
