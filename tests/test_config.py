@@ -1,6 +1,11 @@
 import pytest
 
-from wind_forecast.config import load_weather_api_config
+from wind_forecast.config import (
+    CORS_ALLOWED_ORIGINS_ENV,
+    DEFAULT_CORS_ALLOWED_ORIGINS,
+    load_cors_config,
+    load_weather_api_config,
+)
 
 
 WEATHER_ENV_VARS = [
@@ -51,3 +56,46 @@ def test_load_weather_api_config_rejects_invalid_days(monkeypatch, days):
 
     with pytest.raises(ValueError, match="WEATHER_API_DAYS"):
         load_weather_api_config()
+
+
+def test_load_cors_config_uses_vite_default_when_variable_is_absent(monkeypatch):
+    monkeypatch.delenv(CORS_ALLOWED_ORIGINS_ENV, raising=False)
+
+    config = load_cors_config()
+
+    assert config.allowed_origins == DEFAULT_CORS_ALLOWED_ORIGINS
+
+
+def test_load_cors_config_reads_comma_separated_origins(monkeypatch):
+    monkeypatch.setenv(
+        CORS_ALLOWED_ORIGINS_ENV,
+        "http://localhost:5173, https://dashboard.example.test",
+    )
+
+    config = load_cors_config()
+
+    assert config.allowed_origins == (
+        "http://localhost:5173",
+        "https://dashboard.example.test",
+    )
+
+
+@pytest.mark.parametrize(
+    "origins",
+    [
+        "",
+        "http://localhost:5173,",
+        "*",
+        "ftp://localhost:5173",
+        "http://user:password@localhost:5173",
+        "http://localhost:not-a-port",
+        "http://localhost:5173/",
+        "http://localhost:5173?preview=true",
+        "http://localhost:5173#section",
+    ],
+)
+def test_load_cors_config_rejects_invalid_origins(monkeypatch, origins):
+    monkeypatch.setenv(CORS_ALLOWED_ORIGINS_ENV, origins)
+
+    with pytest.raises(ValueError, match=CORS_ALLOWED_ORIGINS_ENV):
+        load_cors_config()
