@@ -23,6 +23,14 @@ from .inference import (
     prepare_data_for_prediction,
 )
 from .paths import models_dir, processed_data_dir, project_root
+from .performance import (
+    InvalidPerformanceIntervalError,
+    NoPerformanceObservationsError,
+    PerformanceArtifactError,
+    PerformanceMetrics,
+    PerformanceReport,
+    PerformanceService,
+)
 from .schemas import DATE_COLUMN, TARGET_COLUMN
 
 
@@ -102,6 +110,58 @@ class PredictionResponse(BaseModel):
     model_name: str
     feature_count: int
     predictions: list[PredictionItem]
+
+
+class PerformanceIntervalResponse(BaseModel):
+    """Requested, available, and returned performance date bounds."""
+
+    requested_start_date: str | None
+    requested_end_date: str | None
+    available_start_date: str
+    available_end_date: str
+    returned_start_date: str
+    returned_end_date: str
+
+
+class PerformanceMetricsResponse(BaseModel):
+    """Regression metrics calculated for the returned observations."""
+
+    r2: float | None
+    mae: float
+    rmse: float
+    mape_percent: float
+
+
+class PerformanceResultInfoResponse(BaseModel):
+    """Basic non-sensitive provenance for the evaluated results."""
+
+    model_type: str
+    seed: int
+    test_fraction: float
+    dataset_version: str | None
+    evaluation_start_date: str
+    evaluation_end_date: str
+    artifact_metrics: PerformanceMetricsResponse | None
+
+
+class PerformanceObservationResponse(BaseModel):
+    """Actual and predicted production for one historical date."""
+
+    date: str
+    actual: float
+    predicted: float
+    error: float
+    absolute_error: float
+
+
+class PerformanceResponse(BaseModel):
+    """Historical performance returned by the performance endpoint."""
+
+    interval: PerformanceIntervalResponse
+    observation_count: int
+    metrics: PerformanceMetricsResponse
+    result: PerformanceResultInfoResponse | None
+    observations: list[PerformanceObservationResponse]
 
 
 @dataclass(frozen=True)
@@ -258,6 +318,68 @@ def get_prediction_service() -> PredictionService:
     )
 
 
+@lru_cache(maxsize=1)
+def get_performance_service() -> PerformanceService:
+    """Return the cached performance service configured for this process."""
+    return PerformanceService.from_config()
+
+
+def _performance_metrics_response(
+    metrics: PerformanceMetrics,
+) -> PerformanceMetricsResponse:
+    """Map domain metrics to the stable HTTP response contract."""
+    return PerformanceMetricsResponse(
+        r2=metrics.r2,
+        mae=metrics.mae,
+        rmse=metrics.rmse,
+        mape_percent=metrics.mape_percent,
+    )
+
+
+def _performance_response(report: PerformanceReport) -> PerformanceResponse:
+    """Map a domain performance report without exposing artifact internals."""
+    result = report.result
+    return PerformanceResponse(
+        interval=PerformanceIntervalResponse(
+            requested_start_date=report.interval.requested_start_date,
+            requested_end_date=report.interval.requested_end_date,
+            available_start_date=report.interval.available_start_date,
+            available_end_date=report.interval.available_end_date,
+            returned_start_date=report.interval.returned_start_date,
+            returned_end_date=report.interval.returned_end_date,
+        ),
+        observation_count=report.observation_count,
+        metrics=_performance_metrics_response(report.metrics),
+        result=(
+            None
+            if result is None
+            else PerformanceResultInfoResponse(
+                model_type=result.model_type,
+                seed=result.seed,
+                test_fraction=result.test_fraction,
+                dataset_version=result.dataset_version,
+                evaluation_start_date=result.evaluation_start_date,
+                evaluation_end_date=result.evaluation_end_date,
+                artifact_metrics=(
+                    None
+                    if result.artifact_metrics is None
+                    else _performance_metrics_response(result.artifact_metrics)
+                ),
+            )
+        ),
+        observations=[
+            PerformanceObservationResponse(
+                date=observation.date,
+                actual=observation.actual,
+                predicted=observation.predicted,
+                error=observation.error,
+                absolute_error=observation.absolute_error,
+            )
+            for observation in report.observations
+        ],
+    )
+
+
 def create_app() -> FastAPI:
     """Create the FastAPI application."""
     api = FastAPI(
@@ -285,6 +407,26 @@ def create_app() -> FastAPI:
         except InvalidPredictionInputError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except ArtifactNotReadyError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @api.get("/api/v1/performance", response_model=PerformanceResponse)
+    def performance(
+        start_date: Date | None = None,
+        end_date: Date | None = None,
+        service: PerformanceService = Depends(get_performance_service),
+    ) -> PerformanceResponse:
+        """Return read-only historical prediction performance."""
+        try:
+            report = service.get_performance(
+                start_date=start_date,
+                end_date=end_date,
+            )
+            return _performance_response(report)
+        except InvalidPerformanceIntervalError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except NoPerformanceObservationsError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PerformanceArtifactError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     return api

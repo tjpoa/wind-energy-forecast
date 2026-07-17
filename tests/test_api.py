@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -11,7 +12,18 @@ from wind_forecast.api import (
     PredictionResponse,
     PredictionService,
     create_app,
+    get_performance_service,
     get_prediction_service,
+)
+from wind_forecast.performance import (
+    InvalidPerformanceIntervalError,
+    NoPerformanceObservationsError,
+    PerformanceArtifactMissingError,
+    PerformanceInterval,
+    PerformanceMetrics,
+    PerformanceObservation,
+    PerformanceReport,
+    PerformanceResultInfo,
 )
 from wind_forecast.schemas import DATE_COLUMN, TARGET_COLUMN
 
@@ -20,6 +32,53 @@ def _client_with_service(service) -> TestClient:
     app = create_app()
     app.dependency_overrides[get_prediction_service] = lambda: service
     return TestClient(app)
+
+
+def _client_with_performance_service(service) -> TestClient:
+    app = create_app()
+    app.dependency_overrides[get_performance_service] = lambda: service
+    return TestClient(app)
+
+
+def _performance_report() -> PerformanceReport:
+    metrics = PerformanceMetrics(r2=0.91, mae=12.3, rmse=18.4, mape_percent=5.6)
+    return PerformanceReport(
+        interval=PerformanceInterval(
+            requested_start_date=None,
+            requested_end_date=None,
+            available_start_date="2026-01-01",
+            available_end_date="2026-01-02",
+            returned_start_date="2026-01-01",
+            returned_end_date="2026-01-02",
+        ),
+        observation_count=2,
+        metrics=metrics,
+        observations=(
+            PerformanceObservation(
+                date="2026-01-01",
+                actual=100.0,
+                predicted=90.0,
+                error=-10.0,
+                absolute_error=10.0,
+            ),
+            PerformanceObservation(
+                date="2026-01-02",
+                actual=120.0,
+                predicted=130.0,
+                error=10.0,
+                absolute_error=10.0,
+            ),
+        ),
+        result=PerformanceResultInfo(
+            model_type="baseline",
+            seed=42,
+            test_fraction=0.2,
+            dataset_version="v1",
+            evaluation_start_date="2026-01-01",
+            evaluation_end_date="2026-01-02",
+            artifact_metrics=metrics,
+        ),
+    )
 
 
 def test_health_endpoint_returns_ok():
@@ -164,3 +223,102 @@ def test_model_info_endpoint_uses_injected_service():
     assert response.status_code == 200
     assert response.json()["feature_count"] == 56
     assert response.json()["models"][0]["target_type"] == "log"
+
+
+def test_performance_endpoint_returns_typed_json_from_injected_service():
+    class FakePerformanceService:
+        def get_performance(self, *, start_date, end_date):
+            assert start_date is None
+            assert end_date is None
+            return _performance_report()
+
+    response = _client_with_performance_service(FakePerformanceService()).get(
+        "/api/v1/performance"
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json() == {
+        "interval": {
+            "requested_start_date": None,
+            "requested_end_date": None,
+            "available_start_date": "2026-01-01",
+            "available_end_date": "2026-01-02",
+            "returned_start_date": "2026-01-01",
+            "returned_end_date": "2026-01-02",
+        },
+        "observation_count": 2,
+        "metrics": {"r2": 0.91, "mae": 12.3, "rmse": 18.4, "mape_percent": 5.6},
+        "result": {
+            "model_type": "baseline",
+            "seed": 42,
+            "test_fraction": 0.2,
+            "dataset_version": "v1",
+            "evaluation_start_date": "2026-01-01",
+            "evaluation_end_date": "2026-01-02",
+            "artifact_metrics": {
+                "r2": 0.91,
+                "mae": 12.3,
+                "rmse": 18.4,
+                "mape_percent": 5.6,
+            },
+        },
+        "observations": [
+            {
+                "date": "2026-01-01",
+                "actual": 100.0,
+                "predicted": 90.0,
+                "error": -10.0,
+                "absolute_error": 10.0,
+            },
+            {
+                "date": "2026-01-02",
+                "actual": 120.0,
+                "predicted": 130.0,
+                "error": 10.0,
+                "absolute_error": 10.0,
+            },
+        ],
+    }
+
+
+def test_performance_endpoint_passes_date_filters_to_injected_service():
+    class FakePerformanceService:
+        def get_performance(self, *, start_date, end_date):
+            assert start_date == date(2026, 1, 1)
+            assert end_date == date(2026, 1, 2)
+            return _performance_report()
+
+    response = _client_with_performance_service(FakePerformanceService()).get(
+        "/api/v1/performance?start_date=2026-01-01&end_date=2026-01-02"
+    )
+
+    assert response.status_code == 200
+
+
+def test_performance_endpoint_maps_domain_errors_to_http_responses():
+    class ErrorPerformanceService:
+        def __init__(self, error):
+            self.error = error
+
+        def get_performance(self, *, start_date, end_date):
+            raise self.error
+
+    cases = (
+        (InvalidPerformanceIntervalError("inverted interval"), 400),
+        (NoPerformanceObservationsError("no observations"), 404),
+        (PerformanceArtifactMissingError("missing artifact"), 503),
+    )
+    for error, status_code in cases:
+        response = _client_with_performance_service(ErrorPerformanceService(error)).get(
+            "/api/v1/performance"
+        )
+        assert response.status_code == status_code
+
+
+def test_performance_endpoint_rejects_invalid_date_format():
+    response = TestClient(create_app()).get(
+        "/api/v1/performance?start_date=01-01-2026"
+    )
+
+    assert response.status_code == 422
