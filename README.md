@@ -121,9 +121,10 @@ npm run dev
 defaults to `http://localhost:8000` in the example file. Variables prefixed
 with `VITE_` are bundled into browser code and must never contain secrets.
 
-The development server is available at `http://localhost:5173`. The current
-dashboard is a static scaffold: it displays layout placeholders and the
-configured API URL, but it does not call the API or render forecast data yet.
+The development server is available at `http://localhost:5173`. The dashboard
+loads historical model performance from `GET /api/v1/performance`, presents
+the returned metrics and recent observations, and reports loading, empty, and
+error states. Forecast filters and charts remain placeholders for later work.
 
 Run the frontend checks from `frontend/`:
 
@@ -300,8 +301,8 @@ The standard CI jobs do not require real WeatherAPI credentials.
 - PySpark processing has not been implemented.
 - The FastAPI service is a local/container serving interface, not a deployed
   production service.
-- The frontend currently contains only static dashboard placeholders; filters,
-  metrics, charts, and API integration are not implemented yet.
+- The frontend currently integrates only historical performance data; forecast
+  filters, prediction views, and charts are not implemented yet.
 
 See `docs/README.md` for the documentation index,
 `docs/ML_ENGINEERING_ROADMAP.md` for the longer engineering roadmap, and

@@ -2,6 +2,7 @@ import type { ApiStatusProps } from "../types/api";
 
 const statusLabels = {
   "not-connected": "Not connected",
+  connecting: "Connecting",
   connected: "Connected",
   unavailable: "Unavailable",
 } as const;
