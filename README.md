@@ -24,6 +24,7 @@ workflow orchestration, or registry-based production serving.
 - Backward-compatible batch scripts for API data processing and saved-model
   inference.
 - FastAPI service for health checks, model artifact inspection, and prediction.
+- Minimal React and TypeScript dashboard scaffold for future forecast views.
 - Pytest coverage for schemas, configuration, features, validation, tracking,
   and API behavior.
 - Ruff linting configured in `pyproject.toml`.
@@ -55,6 +56,7 @@ wind-energy-forecast/
 |-- notebooks/                # Exploratory data prep, EDA, and training
 |-- data/                     # Raw inputs and ignored generated outputs
 |-- models/                   # Existing trained models and scalers
+|-- frontend/                 # React and TypeScript dashboard scaffold
 |-- docs/                     # Documentation index, roadmap, guides, and phase notes
 |-- .github/workflows/ci.yml  # Matrix test/lint and Docker health CI
 |-- Dockerfile                # FastAPI container image
@@ -102,6 +104,34 @@ WIND_FORECAST_CORS_ALLOW_ORIGINS=http://localhost:5173
 
 Do not commit `.env` or real API keys. The included `.env.example` is safe to
 commit because it contains placeholders only.
+
+### Frontend setup
+
+The frontend requires Node.js 22.12 or newer. Install its dependencies and
+create a local environment file from the safe example:
+
+```powershell
+Set-Location .\frontend
+npm install
+Copy-Item .env.example .env.local
+npm run dev
+```
+
+`VITE_API_BASE_URL` identifies the API endpoint exposed to the browser and
+defaults to `http://localhost:8000` in the example file. Variables prefixed
+with `VITE_` are bundled into browser code and must never contain secrets.
+
+The development server is available at `http://localhost:5173`. The current
+dashboard is a static scaffold: it displays layout placeholders and the
+configured API URL, but it does not call the API or render forecast data yet.
+
+Run the frontend checks from `frontend/`:
+
+```powershell
+npm run test
+npm run lint
+npm run build
+```
 
 ## Common commands
 
@@ -270,6 +300,8 @@ The standard CI jobs do not require real WeatherAPI credentials.
 - PySpark processing has not been implemented.
 - The FastAPI service is a local/container serving interface, not a deployed
   production service.
+- The frontend currently contains only static dashboard placeholders; filters,
+  metrics, charts, and API integration are not implemented yet.
 
 See `docs/README.md` for the documentation index,
 `docs/ML_ENGINEERING_ROADMAP.md` for the longer engineering roadmap, and
