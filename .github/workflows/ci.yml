@@ -49,6 +49,36 @@ jobs:
       - name: Run ruff
         run: python -m ruff check .
 
+  frontend-quality:
+    name: Frontend test, lint, and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run frontend tests
+        run: npm run test
+
+      - name: Run frontend linting
+        run: npm run lint
+
+      - name: Build frontend
+        run: npm run build
+
   docker-build:
     name: Docker build
     runs-on: ubuntu-latest
@@ -100,3 +130,25 @@ jobs:
       - name: Stop Docker container
         if: always()
         run: docker rm --force wind-energy-forecast-api-ci || true
+
+  frontend-docker-build:
+    name: Frontend Docker build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build frontend Docker image
+        run: docker build --file frontend/Dockerfile --tag wind-energy-forecast-frontend:ci frontend
+
+  compose-validation:
+    name: Docker Compose validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate Docker Compose configuration
+        run: docker compose config --quiet

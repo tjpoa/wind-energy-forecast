@@ -347,8 +347,18 @@ GitHub Actions currently runs:
 - `docker build --file Dockerfile --tag wind-energy-forecast-api:ci .`
 - a container smoke test against `GET /health`
 - a Docker health status check for the running API container
+- `npm ci`, `npm run test`, `npm run lint`, and `npm run build` for the
+  frontend on Node.js 22 LTS, with the npm cache keyed from
+  `frontend/package-lock.json`
+- `docker build --file frontend/Dockerfile --tag wind-energy-forecast-frontend:ci frontend`
+- `docker compose config --quiet` to validate the Compose configuration
+  without starting services
 
-The standard CI jobs do not require real WeatherAPI credentials.
+The standard CI jobs do not require real WeatherAPI credentials, local models,
+local datasets, generated performance artifacts, or secrets. Compose validation
+checks parsing, interpolation, and the service model; it does not start the
+stack or verify runtime bind-mount contents. CI builds images for validation but
+does not publish or deploy them.
 
 ## Current limitations
 

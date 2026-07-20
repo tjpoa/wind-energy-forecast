@@ -39,8 +39,8 @@ each checkpoint was written. This file reflects the latest repository state.
 | Code quality | Implemented baseline | Ruff configuration in `pyproject.toml` | Ruff rule set is intentionally minimal. |
 | Prediction API | Implemented for local/container use | `wind_forecast.api`, `docs/PHASE_5.md`, API tests | The API is not deployed and depends on local mounted artifacts for full serving. |
 | Baseline training CLI | Implemented baseline | `wind_forecast.training`, `scripts/train_baseline.py`, `docs/PHASE_4.md` | Lightweight tree baseline only; tuned ANN/Optuna workflow remains notebook-based. |
-| Docker support | Implemented baseline with runtime hardening | `Dockerfile`, `.dockerignore`, Docker CI build and smoke test | No image publishing, digest pinning, or production deployment workflow yet. |
-| CI | Implemented baseline with coverage and container smoke checks | `.github/workflows/ci.yml` | CI runs tests with coverage, Ruff, Docker build, `/health` smoke, and Docker health checks; it does not deploy artifacts. |
+| Docker support | Implemented baseline with runtime hardening | Backend and frontend Dockerfiles, Compose stack, CI image builds, and backend smoke test | No image publishing, digest pinning, or production deployment workflow yet. |
+| CI | Implemented for backend and frontend validation | `.github/workflows/ci.yml` | CI covers Python tests and Ruff, frontend tests/lint/build, both Docker image builds, Compose validation, and backend health checks; it does not deploy artifacts. |
 | MLflow lifecycle | Implemented; local integration smoke completed | `wind_forecast.tracking`, `wind_forecast.registry`, baseline CLI, synthetic registry tests, and real local SQLite smoke | A clean v1 run, candidate registration, manual promotion, and rollback succeeded locally; Registry state remains local and serving does not consume aliases. |
 | Artifact versioning | Local bundle validation completed; publication blocked | Deterministic builder/fetcher/verifier, `artifacts/catalog.json`, two matching local bundle hashes, and local verify/retrain evidence | No public v1 data bundle until provenance/licence/redistribution approval and a catalog SHA-256; no cross-machine claim until a release round-trip runs. |
 | Documentation | Strong | `README.md`, `docs/README.md`, `docs/DEMO.md`, phase docs, roadmap | Model/data cards are baseline-level and not full registry artifacts. |
@@ -56,7 +56,7 @@ each checkpoint was written. This file reflects the latest repository state.
 | 4 | MLflow experiment tracking and model registry | Phase 4B code, synthetic tests, and the local SQLite-backed end-to-end smoke are complete; public release and clean-clone round-trip remain blocked by provenance/licence approval and explicit publication authorization. |
 | 5 | Prediction API with FastAPI | Implemented for local/container inference over saved artifacts. |
 | 6 | Docker containerization | Implemented non-root Dockerfile with a runtime health check and CI smoke test. |
-| 7 | GitHub Actions continuous integration | Implemented matrix CI for tests with coverage, linting, Docker build, and health checks. |
+| 7 | GitHub Actions continuous integration | Implemented matrix backend CI plus frontend tests, linting, build, container build, Compose validation, and backend health checks. |
 | 8 | Idempotency, safe reruns, and observability | Not implemented as a roadmap phase. Some v2 builders already use explicit overwrite and checksum patterns. |
 | 9 | Data drift and model-performance monitoring | Not implemented. |
 | 10 | Batch orchestration with Apache Airflow | Not implemented. |
@@ -81,7 +81,22 @@ docker build --file Dockerfile --tag wind-energy-forecast-api:ci .
 docker run --detach --name wind-energy-forecast-api-ci --publish 8000:8000 wind-energy-forecast-api:ci
 curl --fail --silent http://127.0.0.1:8000/health
 docker inspect --format='{{.State.Health.Status}}' wind-energy-forecast-api-ci
+cd frontend
+npm ci
+npm run test
+npm run lint
+npm run build
+cd ..
+docker build --file frontend/Dockerfile --tag wind-energy-forecast-frontend:ci frontend
+docker compose config --quiet
 ```
+
+The frontend quality job uses Node.js 22 LTS and caches npm downloads using
+`frontend/package-lock.json`. These checks require no WeatherAPI credentials,
+local models, datasets, generated performance artifacts, or secrets. Compose
+validation is structural and does not start services or inspect bind-mount
+contents; the workflow builds images for validation but does not publish or
+deploy them.
 
 Docker can also be checked locally with:
 
