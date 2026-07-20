@@ -1,6 +1,7 @@
 # National Wind Energy Production Forecast
 
-Software engineering project for Portuguese wind-energy production forecasting.
+Local full-stack ML demonstration for Portuguese wind-energy production
+forecasting.
 
 This repository started as an academic Applied Artificial Intelligence project
 and has been progressively refactored into a more maintainable Python
@@ -8,9 +9,12 @@ application: reusable package code, data validation, feature engineering,
 automated tests, API serving, container support, CI, and local experiment
 tracking around the existing forecasting workflow.
 
-The project should be read as a software/backend/data engineering portfolio
-project with AI/ML components. It does not currently claim cloud deployment,
-workflow orchestration, or registry-based production serving.
+The project should be read as a software, full-stack, data, and ML engineering
+portfolio project. Its React dashboard and FastAPI service run locally or with
+Docker Compose against explicitly selected local artifacts. It does not
+currently claim cloud deployment, production operation, real-time data,
+enterprise scalability, complete monitoring, workflow orchestration, or
+registry-based serving.
 
 ## What this project includes
 
@@ -23,7 +27,8 @@ workflow orchestration, or registry-based production serving.
 - Reproducible baseline training CLI for a lightweight historical holdout run.
 - Backward-compatible batch scripts for API data processing and saved-model
   inference.
-- FastAPI service for health checks, model artifact inspection, and prediction.
+- FastAPI service for health checks, historical evaluation results, model
+  artifact inspection, and prediction.
 - Responsive React and TypeScript dashboard for historical forecast performance.
 - Pytest coverage for schemas, configuration, features, validation, tracking,
   and API behavior.
@@ -36,6 +41,25 @@ workflow orchestration, or registry-based production serving.
   Registry with explicit `candidate`/`champion` governance.
 
 ## Architecture
+
+The dashboard demonstration follows this read-only path:
+
+```text
+React + TypeScript dashboard
+        |
+        | GET /api/v1/performance?start_date=...&end_date=...
+        v
+FastAPI application
+        |
+        | validates and reads one explicitly selected local result set
+        v
+predictions.csv + optional metrics.json and run_summary.json
+```
+
+The API also exposes `/model-info` and `/predict` against the saved Keras
+models, scalers, and feature-reference table. Those model-serving endpoints are
+separate from the historical-performance flow: the current dashboard does not
+call them and does not generate future forecasts.
 
 ```text
 wind-energy-forecast/
@@ -68,6 +92,17 @@ The current tuned ANN/Optuna training workflow still lives in notebooks. A
 lightweight baseline training CLI is available for reproducible historical
 holdout runs, and scripts remain stable entry points for data processing,
 training, and inference.
+
+## Technologies demonstrated
+
+| Layer | Technologies and purpose |
+| --- | --- |
+| Frontend | React, TypeScript, Vite, and Recharts for the responsive historical-performance dashboard. |
+| Backend | Python, FastAPI, and Pydantic for typed HTTP contracts and local serving. |
+| ML and data | pandas and scikit-learn for the reproducible baseline; TensorFlow/Keras for the existing saved ANN models. |
+| Testing | Pytest for backend behavior and Vitest with Testing Library for frontend behavior. |
+| Runtime | Docker Compose, a non-root API image, and Nginx for the compiled frontend. |
+| Engineering workflow | GitHub Actions for validation and local MLflow tracking/Registry tooling for experiment and model lifecycle work. |
 
 ## Local setup
 
@@ -129,6 +164,9 @@ actual-versus-predicted and signed-error charts, and the ten most recent
 observations as an accessible table. Loading, empty, API error and invalid-date
 states are reported explicitly, and each new request cancels the previous one.
 
+The API also returns MAPE for the selected interval, but the current dashboard
+does not display it.
+
 The production values exposed by the historical artifact are daily sums of
 15-minute MW readings. The dashboard uses that description for production,
 MAE, RMSE and error instead of labelling the values as MWh.
@@ -140,6 +178,47 @@ npm run test
 npm run lint
 npm run build
 ```
+
+### Local dashboard run
+
+The dashboard requires a valid local performance-artifact directory. The
+required file is `predictions.csv`, with these columns:
+
+```text
+Date
+Actual_Wind_Production
+Predicted_Wind_Production
+```
+
+`metrics.json` and `run_summary.json` are optional. When the local
+`data/processed/agg_data_ml.csv` feature table is available, generate a real
+baseline evaluation set without MLflow tracking:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\train_baseline.py `
+  --input data\processed\agg_data_ml.csv `
+  --output-dir outputs\training\baseline `
+  --tracking-mode off
+```
+
+The command refuses to replace existing outputs unless `--overwrite` is
+explicitly supplied. Start the API from the repository root after selecting
+the result directory:
+
+```powershell
+$env:WIND_FORECAST_PERFORMANCE_ARTIFACT_DIR=".\outputs\training\baseline"
+.\venv\Scripts\python.exe -m uvicorn wind_forecast.api:app --reload
+```
+
+In another PowerShell session, start the already-installed frontend:
+
+```powershell
+Set-Location .\frontend
+npm run dev
+```
+
+Open `http://localhost:5173`. The browser calls the API at
+`http://localhost:8000` by default.
 
 ### Docker Compose dashboard stack
 
@@ -180,13 +259,20 @@ The default performance directory must contain `predictions.csv`; optional
 A fresh clone can start the services and pass `/health` without those generated
 performance artifacts, but `/api/v1/performance` returns HTTP `503` and the
 dashboard reports the API as unavailable until a valid local artifact set is
-selected. For example, this checkout's smoke artifacts can be selected in
-PowerShell before starting the stack:
+selected. The default is `./outputs/training/baseline`; make that selection
+explicit in PowerShell before starting the stack:
 
 ```powershell
-$env:WIND_FORECAST_PERFORMANCE_ARTIFACT_HOST_DIR=".\outputs\training\baseline_smoke"
+$env:WIND_FORECAST_PERFORMANCE_ARTIFACT_HOST_DIR=".\outputs\training\baseline"
 docker compose up --build
 ```
+
+Use only an artifact directory produced from data you are authorized to use.
+The release catalog currently blocks a public v1 bundle while provenance,
+licence, attribution, and redistribution permission remain unresolved. A fresh
+clone must therefore generate the artifacts from an authorized local feature
+table or receive a compatible artifact directory separately. The project does
+not package synthetic observations as real demonstration data.
 
 Inspect or stop the stack from another terminal:
 
@@ -307,13 +393,27 @@ Regenerate historical training features through the notebook workflow:
 
 ## API overview
 
-The FastAPI app serves the existing saved model artifacts. It does not fetch
-WeatherAPI data, generate datasets, train models, fit scalers, or replace the
-batch scripts.
+The FastAPI app exposes historical evaluation results and serves the existing
+saved model artifacts. It does not fetch WeatherAPI data, generate datasets,
+train models, fit scalers, or replace the batch scripts.
 
-- `GET /health`: process health check.
-- `GET /model-info`: model, scaler, and feature-reference artifact readiness.
-- `POST /predict`: prediction endpoint for feature-ready records.
+- `GET /health`: process health check used by local and container smoke tests.
+- `GET /api/v1/performance`: read-only historical evaluation data used by the
+  dashboard. Optional ISO `start_date` and `end_date` query parameters are
+  inclusive.
+- `GET /model-info`: model, scaler, and feature-reference artifact readiness;
+  not used by the dashboard.
+- `POST /predict`: prediction endpoint for feature-ready records; not used by
+  the dashboard.
+
+The performance response contains `interval`, `observation_count`, `metrics`,
+optional `result` provenance, and `observations`. Metrics are recalculated for
+the returned interval and include nullable `r2`, `mae`, `rmse`, and
+`mape_percent`. Each observation contains its date, actual value, predicted
+value, signed error, and absolute error. The API returns HTTP `400` for an
+inverted interval, `404` when a valid interval contains no observations, `422`
+for invalid date syntax, and `503` when the selected artifacts are not
+configured, missing, or invalid. Local filesystem paths are not returned.
 
 See `docs/PHASE_5.md` for request examples and Docker notes.
 
@@ -370,6 +470,8 @@ does not publish or deploy them.
   attribution, and redistribution permission are approved in
   `artifacts/catalog.json`.
 - There is no cloud deployment.
+- There is no production environment or enterprise-scalability claim.
+- There is no real-time data path or complete monitoring system.
 - Airflow orchestration has not been implemented.
 - PySpark processing has not been implemented.
 - The FastAPI service is a local/container serving interface, not a deployed
@@ -377,7 +479,20 @@ does not publish or deploy them.
 - The frontend integrates historical performance data only; it does not issue
   future prediction requests or provide live monitoring.
 
-See `docs/README.md` for the documentation index,
+## Next steps
+
+1. Resolve v1 provenance, licence, attribution, and redistribution approval,
+   then publish a checksum-pinned immutable artifact bundle.
+2. Validate the documented artifact fetch and retraining flow from a clean
+   clone before claiming cross-machine reproducibility.
+3. Extend the baseline training CLI toward the tuned notebook workflow while
+   preserving the existing contracts.
+4. Add interactive prediction only after a reviewed UI/API contract, then
+   progress through drift monitoring, orchestration, and cloud deployment
+   design as explicit future phases.
+
+See `docs/DEMO.md` for the full-stack demonstration,
+`docs/README.md` for the documentation index,
 `docs/ML_ENGINEERING_ROADMAP.md` for the longer engineering roadmap, and
 `docs/PHASE_4.md` for the model lifecycle and `docs/REPRODUCIBILITY.md` for the
 cross-machine artifact workflow.
