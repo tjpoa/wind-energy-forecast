@@ -24,7 +24,7 @@ workflow orchestration, or registry-based production serving.
 - Backward-compatible batch scripts for API data processing and saved-model
   inference.
 - FastAPI service for health checks, model artifact inspection, and prediction.
-- Minimal React and TypeScript dashboard scaffold for future forecast views.
+- Responsive React and TypeScript dashboard for historical forecast performance.
 - Pytest coverage for schemas, configuration, features, validation, tracking,
   and API behavior.
 - Ruff linting configured in `pyproject.toml`.
@@ -56,7 +56,7 @@ wind-energy-forecast/
 |-- notebooks/                # Exploratory data prep, EDA, and training
 |-- data/                     # Raw inputs and ignored generated outputs
 |-- models/                   # Existing trained models and scalers
-|-- frontend/                 # React and TypeScript dashboard scaffold
+|-- frontend/                 # React and TypeScript performance dashboard
 |-- docs/                     # Documentation index, roadmap, guides, and phase notes
 |-- .github/workflows/ci.yml  # Matrix test/lint and Docker health CI
 |-- Dockerfile                # FastAPI container image
@@ -122,9 +122,15 @@ defaults to `http://localhost:8000` in the example file. Variables prefixed
 with `VITE_` are bundled into browser code and must never contain secrets.
 
 The development server is available at `http://localhost:5173`. The dashboard
-loads historical model performance from `GET /api/v1/performance`, presents
-the returned metrics and recent observations, and reports loading, empty, and
-error states. Forecast filters and charts remain placeholders for later work.
+loads historical model performance from `GET /api/v1/performance`. It provides
+inclusive start/end date filters, MAE, RMSE, R² and observation-count cards,
+actual-versus-predicted and signed-error charts, and the ten most recent
+observations as an accessible table. Loading, empty, API error and invalid-date
+states are reported explicitly, and each new request cancels the previous one.
+
+The production values exposed by the historical artifact are daily sums of
+15-minute MW readings. The dashboard uses that description for production,
+MAE, RMSE and error instead of labelling the values as MWh.
 
 Run the frontend checks from `frontend/`:
 
@@ -301,8 +307,8 @@ The standard CI jobs do not require real WeatherAPI credentials.
 - PySpark processing has not been implemented.
 - The FastAPI service is a local/container serving interface, not a deployed
   production service.
-- The frontend currently integrates only historical performance data; forecast
-  filters, prediction views, and charts are not implemented yet.
+- The frontend integrates historical performance data only; it does not issue
+  future prediction requests or provide live monitoring.
 
 See `docs/README.md` for the documentation index,
 `docs/ML_ENGINEERING_ROADMAP.md` for the longer engineering roadmap, and

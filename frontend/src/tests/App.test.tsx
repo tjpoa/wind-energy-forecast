@@ -1,5 +1,12 @@
 import { StrictMode } from "react";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App";
@@ -79,12 +86,12 @@ describe("App", () => {
     expect(
       screen.getByRole("heading", { level: 2, name: "Filters" }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { level: 2, name: "Forecast chart" }),
-    ).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(
       "Loading performance data",
     );
+    expect(
+      screen.getByRole("button", { name: "Updating…" }),
+    ).toBeDisabled();
     expect(
       screen.getByRole("heading", { level: 2, name: "Connecting" }),
     ).toBeInTheDocument();
@@ -106,11 +113,47 @@ describe("App", () => {
     expect(maeCard).not.toBeNull();
     expect(within(maeCard!).getByText("12.3")).toBeInTheDocument();
     expect(
+      screen.getByRole("heading", { level: 3, name: "Observations" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 3, name: "R²" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "MAPE" })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("img", {
+        name: "Time series chart comparing actual and predicted wind production",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: /Bar chart of signed forecast errors/ }),
+    ).toBeInTheDocument();
+    expect(
       screen.getByRole("row", { name: /2026-01-02 120 130 10 10/ }),
     ).toBeInTheDocument();
     expect(screen.getByText(/observations returned from/)).toHaveTextContent(
       "2 observations returned",
     );
+  });
+
+  it("shows an explicit fallback when R² is unavailable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          ...validPayload,
+          metrics: { ...validPayload.metrics, r2: null },
+        }),
+      ),
+    );
+
+    render(<App />);
+
+    const r2Card = (await screen.findByRole("heading", {
+      level: 3,
+      name: "R²",
+    })).parentElement;
+    expect(r2Card).not.toBeNull();
+    expect(within(r2Card!).getByText("Not available")).toBeInTheDocument();
   });
 
   it("renders an empty state for a valid response without observations", async () => {
@@ -149,6 +192,22 @@ describe("App", () => {
     );
     expect(
       screen.getByRole("heading", { level: 2, name: "Unavailable" }),
+    ).toBeInTheDocument();
+  });
+
+  it("treats HTTP 404 as a connected empty state", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse({ detail: "not found" }, 404)),
+    );
+
+    render(<App />);
+
+    expect(
+      await screen.findByText("No performance observations are available."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Connected" }),
     ).toBeInTheDocument();
   });
 
@@ -197,6 +256,74 @@ describe("App", () => {
     expect(within(table).queryByText("2026-01-01")).not.toBeInTheDocument();
     expect(within(table).getByText("2026-01-03")).toBeInTheDocument();
     expect(within(table).getByText("2026-01-12")).toBeInTheDocument();
+  });
+
+  it("submits date filters and disables updates while loading", async () => {
+    const updateResponse = deferred<Response>();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(validPayload))
+      .mockImplementationOnce(() => updateResponse.promise);
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    await screen.findByRole("heading", { level: 2, name: "Connected" });
+    const startInput = screen.getByLabelText("Start date");
+    const endInput = screen.getByLabelText("End date");
+    expect(startInput).toHaveValue("2026-01-01");
+    expect(endInput).toHaveValue("2026-01-02");
+
+    fireEvent.change(startInput, { target: { value: "2026-01-02" } });
+    fireEvent.click(screen.getByRole("button", { name: "Update dashboard" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "http://api.test/api/v1/performance?start_date=2026-01-02&end_date=2026-01-02",
+    );
+    expect(screen.getByRole("button", { name: "Updating…" })).toBeDisabled();
+
+    await act(async () => {
+      updateResponse.resolve(jsonResponse(validPayload));
+    });
+    expect(
+      await screen.findByRole("button", { name: "Update dashboard" }),
+    ).toBeEnabled();
+  });
+
+  it("supports a unilateral filter and blocks invalid or out-of-bounds ranges", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(validPayload));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    await screen.findByRole("heading", { level: 2, name: "Connected" });
+    const startInput = screen.getByLabelText("Start date");
+    const endInput = screen.getByLabelText("End date");
+    const updateButton = screen.getByRole("button", { name: "Update dashboard" });
+
+    fireEvent.change(startInput, { target: { value: "2026-01-02" } });
+    fireEvent.change(endInput, { target: { value: "2026-01-01" } });
+    fireEvent.click(updateButton);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Start date cannot be later than end date.",
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    fireEvent.change(startInput, { target: { value: "2025-12-31" } });
+    fireEvent.change(endInput, { target: { value: "" } });
+    fireEvent.click(updateButton);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Start date must be within the available range",
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    fireEvent.change(startInput, { target: { value: "2026-01-02" } });
+    fireEvent.click(updateButton);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "http://api.test/api/v1/performance?start_date=2026-01-02",
+    );
   });
 
   it("ignores a late response from the StrictMode cleanup request", async () => {
