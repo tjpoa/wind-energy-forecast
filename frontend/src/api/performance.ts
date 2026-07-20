@@ -10,9 +10,16 @@ const PERFORMANCE_ENDPOINT = "/api/v1/performance";
 
 export type PerformanceApiErrorKind =
   | "configuration"
+  | "validation"
   | "network"
   | "http"
   | "invalid-response";
+
+export interface PerformanceRequestOptions {
+  readonly startDate?: string;
+  readonly endDate?: string;
+  readonly signal?: AbortSignal;
+}
 
 export class PerformanceApiError extends Error {
   readonly kind: PerformanceApiErrorKind;
@@ -135,9 +142,63 @@ function isAbortError(error: unknown, signal?: AbortSignal): boolean {
   );
 }
 
+function normalizeOptionalDate(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
+}
+
+export function isValidIsoDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
+    return false;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (year < 1) {
+    return false;
+  }
+  const date = new Date(0);
+  date.setUTCHours(0, 0, 0, 0);
+  date.setUTCFullYear(year, month - 1, day);
+
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+export function validatePerformanceDateRange(
+  startDate?: string,
+  endDate?: string,
+): string | null {
+  const normalizedStartDate = normalizeOptionalDate(startDate);
+  const normalizedEndDate = normalizeOptionalDate(endDate);
+
+  if (normalizedStartDate && !isValidIsoDate(normalizedStartDate)) {
+    return "Start date must be a valid date in YYYY-MM-DD format.";
+  }
+
+  if (normalizedEndDate && !isValidIsoDate(normalizedEndDate)) {
+    return "End date must be a valid date in YYYY-MM-DD format.";
+  }
+
+  if (
+    normalizedStartDate &&
+    normalizedEndDate &&
+    normalizedStartDate > normalizedEndDate
+  ) {
+    return "Start date cannot be later than end date.";
+  }
+
+  return null;
+}
+
 export async function getPerformance(
   baseUrl: string | null,
-  signal?: AbortSignal,
+  options: PerformanceRequestOptions = {},
 ): Promise<PerformanceResponse> {
   const normalizedBaseUrl = baseUrl?.trim().replace(/\/+$/, "");
 
@@ -148,15 +209,31 @@ export async function getPerformance(
     );
   }
 
+  const startDate = normalizeOptionalDate(options.startDate);
+  const endDate = normalizeOptionalDate(options.endDate);
+  const validationMessage = validatePerformanceDateRange(startDate, endDate);
+  if (validationMessage) {
+    throw new PerformanceApiError(validationMessage, "validation");
+  }
+
+  const searchParams = new URLSearchParams();
+  if (startDate) {
+    searchParams.set("start_date", startDate);
+  }
+  if (endDate) {
+    searchParams.set("end_date", endDate);
+  }
+  const query = searchParams.size > 0 ? `?${searchParams.toString()}` : "";
+
   let response: Response;
   try {
-    response = await fetch(`${normalizedBaseUrl}${PERFORMANCE_ENDPOINT}`, {
+    response = await fetch(`${normalizedBaseUrl}${PERFORMANCE_ENDPOINT}${query}`, {
       method: "GET",
       headers: { Accept: "application/json" },
-      signal,
+      signal: options.signal,
     });
   } catch (error) {
-    if (isAbortError(error, signal)) {
+    if (isAbortError(error, options.signal)) {
       throw error;
     }
 
@@ -180,7 +257,7 @@ export async function getPerformance(
   try {
     payload = await response.json();
   } catch (error) {
-    if (isAbortError(error, signal)) {
+    if (isAbortError(error, options.signal)) {
       throw error;
     }
 

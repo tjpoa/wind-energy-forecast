@@ -1,8 +1,14 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { apiConfig } from "../api/config";
 import { getPerformance, PerformanceApiError } from "../api/performance";
 import { ApiStatus } from "../components/ApiStatus";
+import { DateRangeFilter } from "../components/DateRangeFilter";
+import {
+  ErrorChart,
+  ProductionChart,
+} from "../components/PerformanceCharts";
+import { PerformanceMetrics } from "../components/PerformanceMetrics";
 import type { PerformanceResponse } from "../types/api";
 
 type PerformancePageState =
@@ -17,32 +23,6 @@ const numberFormatter = new Intl.NumberFormat("en-GB", {
 
 function formatNumber(value: number): string {
   return numberFormatter.format(value);
-}
-
-function MetricCard({ label, value }: { label: string; value: string }) {
-  return (
-    <article className="metric-card">
-      <h3>{label}</h3>
-      <p>{value}</p>
-    </article>
-  );
-}
-
-function PerformanceMetrics({ data }: { data: PerformanceResponse }) {
-  return (
-    <div className="metrics-grid metrics-grid--performance">
-      <MetricCard
-        label="R²"
-        value={data.metrics.r2 === null ? "Not available" : formatNumber(data.metrics.r2)}
-      />
-      <MetricCard label="MAE" value={formatNumber(data.metrics.mae)} />
-      <MetricCard label="RMSE" value={formatNumber(data.metrics.rmse)} />
-      <MetricCard
-        label="MAPE"
-        value={`${formatNumber(data.metrics.mape_percent)}%`}
-      />
-    </div>
-  );
 }
 
 function PerformanceTable({ data }: { data: PerformanceResponse }) {
@@ -60,6 +40,10 @@ function PerformanceTable({ data }: { data: PerformanceResponse }) {
           {data.interval.returned_end_date}
         </time>
         .
+      </p>
+      <p className="scale-note">
+        Production and error values are daily sums of 15-minute MW readings.
+        They are not energy values in MWh.
       </p>
       <div className="performance-table-wrapper">
         <table className="performance-table">
@@ -98,38 +82,69 @@ function PerformanceTable({ data }: { data: PerformanceResponse }) {
 export function DashboardPage() {
   const [performanceState, setPerformanceState] =
     useState<PerformancePageState>({ status: "loading" });
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [availableStartDate, setAvailableStartDate] = useState<string | null>(
+    null,
+  );
+  const [availableEndDate, setAvailableEndDate] = useState<string | null>(null);
+  const activeRequest = useRef<AbortController | null>(null);
+  const requestSequence = useRef(0);
+
+  const loadPerformance = useCallback(
+    (filters: { readonly startDate?: string; readonly endDate?: string } = {}) => {
+      activeRequest.current?.abort();
+      const controller = new AbortController();
+      const requestId = ++requestSequence.current;
+      activeRequest.current = controller;
+      setPerformanceState({ status: "loading" });
+
+      void getPerformance(apiConfig.baseUrl, {
+        ...filters,
+        signal: controller.signal,
+      })
+        .then((data) => {
+          if (controller.signal.aborted || requestId !== requestSequence.current) {
+            return;
+          }
+
+          setAvailableStartDate(data.interval.available_start_date);
+          setAvailableEndDate(data.interval.available_end_date);
+          setStartDate((current) => current || data.interval.available_start_date);
+          setEndDate((current) => current || data.interval.available_end_date);
+          setPerformanceState(
+            data.observation_count === 0
+              ? { status: "empty" }
+              : { status: "success", data },
+          );
+        })
+        .catch((error: unknown) => {
+          if (controller.signal.aborted || requestId !== requestSequence.current) {
+            return;
+          }
+
+          if (error instanceof PerformanceApiError && error.status === 404) {
+            setPerformanceState({ status: "empty" });
+            return;
+          }
+
+          setPerformanceState({
+            status: "error",
+            message:
+              error instanceof PerformanceApiError
+                ? error.message
+                : "Performance data could not be loaded.",
+          });
+        });
+    },
+    [],
+  );
 
   useEffect(() => {
-    const controller = new AbortController();
+    loadPerformance();
 
-    void getPerformance(apiConfig.baseUrl, controller.signal)
-      .then((data) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-
-        setPerformanceState(
-          data.observation_count === 0
-            ? { status: "empty" }
-            : { status: "success", data },
-        );
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-
-        setPerformanceState({
-          status: "error",
-          message:
-            error instanceof PerformanceApiError
-              ? error.message
-              : "Performance data could not be loaded.",
-        });
-      });
-
-    return () => controller.abort();
-  }, []);
+    return () => activeRequest.current?.abort();
+  }, [loadPerformance]);
 
   const connectionState =
     performanceState.status === "loading"
@@ -157,9 +172,16 @@ export function DashboardPage() {
           <p className="eyebrow">Controls</p>
           <h2 id="filters-title">Filters</h2>
         </div>
-        <div className="placeholder placeholder--compact">
-          <p>Forecast filters will be available here.</p>
-        </div>
+        <DateRangeFilter
+          startDate={startDate}
+          endDate={endDate}
+          availableStartDate={availableStartDate}
+          availableEndDate={availableEndDate}
+          isLoading={performanceState.status === "loading"}
+          onStartDateChange={setStartDate}
+          onEndDateChange={setEndDate}
+          onUpdate={() => loadPerformance({ startDate, endDate })}
+        />
       </section>
 
       <section className="dashboard-section" aria-labelledby="metrics-title">
@@ -188,6 +210,23 @@ export function DashboardPage() {
       </section>
 
       {performanceState.status === "success" && (
+        <section className="dashboard-section" aria-labelledby="charts-title">
+          <div className="section-heading">
+            <p className="eyebrow">Forecast</p>
+            <h2 id="charts-title">Performance over time</h2>
+          </div>
+          <p className="scale-note">
+            All production and error values use the daily sum of 15-minute MW
+            readings. This scale does not represent MWh.
+          </p>
+          <div className="charts-grid">
+            <ProductionChart observations={performanceState.data.observations} />
+            <ErrorChart observations={performanceState.data.observations} />
+          </div>
+        </section>
+      )}
+
+      {performanceState.status === "success" && (
         <section
           className="dashboard-section"
           aria-labelledby="performance-table-title"
@@ -199,16 +238,6 @@ export function DashboardPage() {
           <PerformanceTable data={performanceState.data} />
         </section>
       )}
-
-      <section className="dashboard-section" aria-labelledby="chart-title">
-        <div className="section-heading">
-          <p className="eyebrow">Forecast</p>
-          <h2 id="chart-title">Forecast chart</h2>
-        </div>
-        <div className="placeholder chart-placeholder">
-          <p>The forecast visualization will be added in a future task.</p>
-        </div>
-      </section>
     </main>
   );
 }

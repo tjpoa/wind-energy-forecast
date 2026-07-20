@@ -83,6 +83,66 @@ describe("getPerformance", () => {
     );
   });
 
+  it("serializes one or both optional date filters", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(validPayload));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getPerformance("http://localhost:8000", {
+      startDate: "2026-01-01",
+    });
+    await getPerformance("http://localhost:8000", {
+      startDate: "2026-01-01",
+      endDate: "2026-01-02",
+    });
+    await getPerformance("http://localhost:8000", {
+      endDate: "2026-01-02",
+    });
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://localhost:8000/api/v1/performance?start_date=2026-01-01",
+      "http://localhost:8000/api/v1/performance?start_date=2026-01-01&end_date=2026-01-02",
+      "http://localhost:8000/api/v1/performance?end_date=2026-01-02",
+    ]);
+  });
+
+  it.each([
+    ["0000-01-01", undefined, "Start date must be a valid date"],
+    ["2026-02-30", undefined, "Start date must be a valid date"],
+    [undefined, "2025-13-01", "End date must be a valid date"],
+    ["01-01-2026", undefined, "Start date must be a valid date"],
+    ["2026-01-02", "2026-01-01", "Start date cannot be later"],
+  ])(
+    "rejects invalid date ranges before fetch",
+    async (startDate, endDate, message) => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      await expect(
+        getPerformance("http://localhost:8000", { startDate, endDate }),
+      ).rejects.toMatchObject({
+        kind: "validation",
+        status: null,
+        message: expect.stringContaining(message),
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("passes the supplied abort signal to fetch", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(validPayload));
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+
+    await getPerformance("http://localhost:8000", {
+      signal: controller.signal,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:8000/api/v1/performance",
+      expect.objectContaining({ signal: controller.signal }),
+    );
+  });
+
   it("accepts optional result metadata and artifact metrics", async () => {
     const payloadWithResult = {
       ...validPayload,
