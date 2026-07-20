@@ -56,10 +56,11 @@ wind-energy-forecast/
 |-- notebooks/                # Exploratory data prep, EDA, and training
 |-- data/                     # Raw inputs and ignored generated outputs
 |-- models/                   # Existing trained models and scalers
-|-- frontend/                 # React and TypeScript performance dashboard
+|-- frontend/                 # React dashboard and its container image
 |-- docs/                     # Documentation index, roadmap, guides, and phase notes
 |-- .github/workflows/ci.yml  # Matrix test/lint and Docker health CI
 |-- Dockerfile                # FastAPI container image
+|-- docker-compose.yml        # Local backend and frontend stack
 `-- pyproject.toml            # Package, pytest, and Ruff configuration
 ```
 
@@ -138,6 +139,62 @@ Run the frontend checks from `frontend/`:
 npm run test
 npm run lint
 npm run build
+```
+
+### Docker Compose dashboard stack
+
+Run the backend and frontend together from the repository root:
+
+```powershell
+docker compose up --build
+```
+
+Use `http://localhost:5173` to open the dashboard. Do not substitute
+`127.0.0.1`: the backend CORS policy intentionally allows the exact documented
+frontend origin. The API remains available at `http://localhost:8000`.
+
+| Service | Published port | Purpose |
+| --- | --- | --- |
+| `frontend` | `5173` | Nginx serves the compiled React dashboard. |
+| `backend` | `8000` | FastAPI serves `/health` and the dashboard API. |
+
+The stack uses these environment variables:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `VITE_API_BASE_URL` | `http://localhost:8000` | Public API URL compiled into the browser bundle. |
+| `WIND_FORECAST_CORS_ALLOW_ORIGINS` | `http://localhost:5173` | Exact frontend origin accepted by FastAPI. |
+| `WIND_FORECAST_PERFORMANCE_ARTIFACT_HOST_DIR` | `./outputs/training/baseline` | Host directory mounted at `/app/performance`. |
+| `WIND_FORECAST_PERFORMANCE_ARTIFACT_DIR` | `/app/performance` | Fixed read-only artifact path inside the backend container. |
+
+Variables prefixed with `VITE_` are public build-time configuration, never a
+place for secrets. Rebuild the frontend image after changing
+`VITE_API_BASE_URL`.
+
+The Compose stack does not copy datasets, models, performance artifacts, local
+environment files, or secrets into either image. It mounts `data/`, `models/`,
+and the selected performance-artifact directory into the backend read-only.
+The default performance directory must contain `predictions.csv`; optional
+`metrics.json` and `run_summary.json` provide persisted metrics and provenance.
+
+A fresh clone can start the services and pass `/health` without those generated
+performance artifacts, but `/api/v1/performance` returns HTTP `503` and the
+dashboard reports the API as unavailable until a valid local artifact set is
+selected. For example, this checkout's smoke artifacts can be selected in
+PowerShell before starting the stack:
+
+```powershell
+$env:WIND_FORECAST_PERFORMANCE_ARTIFACT_HOST_DIR=".\outputs\training\baseline_smoke"
+docker compose up --build
+```
+
+Inspect or stop the stack from another terminal:
+
+```powershell
+docker compose ps
+Invoke-RestMethod -Method Get -Uri http://localhost:8000/health
+Invoke-WebRequest -UseBasicParsing -Uri http://localhost:5173
+docker compose down
 ```
 
 ## Common commands

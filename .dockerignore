@@ -15,6 +15,7 @@ __pycache__/
 .ipynb_checkpoints/
 
 notebooks/
+frontend/
 data/
 models/
 outputs/

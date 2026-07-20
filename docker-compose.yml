@@ -1,0 +1,41 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      WIND_FORECAST_CORS_ALLOW_ORIGINS: "${WIND_FORECAST_CORS_ALLOW_ORIGINS:-http://localhost:5173}"
+      WIND_FORECAST_PERFORMANCE_ARTIFACT_DIR: /app/performance
+    volumes:
+      - type: bind
+        source: ./data
+        target: /app/data
+        read_only: true
+      - type: bind
+        source: ./models
+        target: /app/models
+        read_only: true
+      - type: bind
+        source: "${WIND_FORECAST_PERFORMANCE_ARTIFACT_HOST_DIR:-./outputs/training/baseline}"
+        target: /app/performance
+        read_only: true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: "${VITE_API_BASE_URL:-http://localhost:8000}"
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "5173:80"
