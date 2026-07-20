@@ -25,6 +25,7 @@ This folder keeps project documentation organized by purpose and roadmap phase.
 | 2 | [PHASE_2.md](PHASE_2.md) | Data-source assessment, v2 data contracts, REN/ERA5-Land backfill records, and acceptance checks. |
 | 4 | [PHASE_4.md](PHASE_4.md) | Baseline training CLI, model card, data card, and local experiment-tracking context. |
 | 5 | [PHASE_5.md](PHASE_5.md) | FastAPI prediction API documentation. |
+| 9 | [PHASE_9.md](PHASE_9.md) | Accepted temporal and operational contract for delayed historical batch monitoring. |
 
 Phases without a file do not yet have dedicated documentation in this
 repository. Older audit records may describe the exact file paths that existed
