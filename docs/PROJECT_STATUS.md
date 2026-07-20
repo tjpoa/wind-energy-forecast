@@ -63,7 +63,7 @@ each checkpoint was written. This file reflects the latest repository state.
 | 6 | Docker containerization | Implemented non-root Dockerfile with a runtime health check and CI smoke test. |
 | 7 | GitHub Actions continuous integration | Implemented matrix backend CI plus frontend tests, linting, build, container build, Compose validation, and backend health checks. |
 | 8 | Idempotency, safe reruns, and observability | Not implemented as a roadmap phase. Some v2 builders already use explicit overwrite and checksum patterns. |
-| 9 | Data drift and model-performance monitoring | Not implemented. |
+| 9 | Data drift and model-performance monitoring | Stage 0 contract accepted; monitoring implementation not started. |
 | 10 | Batch orchestration with Apache Airflow | Not implemented. |
 | 11 | PySpark data-processing implementation | Not implemented. |
 | 12 | Azure and Databricks deployment design | Not implemented. |
