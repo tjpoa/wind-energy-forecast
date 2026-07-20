@@ -1,6 +1,6 @@
 # Project Status
 
-Last reviewed: 2026-07-12.
+Last reviewed: 2026-07-20.
 
 This document summarizes the current state of the wind-energy forecasting
 repository for portfolio and hiring-review purposes. It is a factual status
@@ -16,11 +16,14 @@ The repository now demonstrates reusable Python packaging, data validation,
 feature engineering, saved-model inference, a tested FastAPI service, Docker
 container support, GitHub Actions CI, and local MLflow tracking around the
 existing forecasting workflow, including a local MLflow Registry and
-reproducibility bundle tooling.
+reproducibility bundle tooling. A responsive React and TypeScript dashboard now
+consumes a typed historical-performance endpoint, completing a local
+frontend-to-API-to-evaluation-artifact demonstration.
 
 The project should not be presented as a deployed production system. Cloud
-deployment, orchestration, registry-based serving, PySpark processing, and
-full monitoring are future roadmap items.
+deployment, production operation, real-time data, enterprise scalability,
+complete monitoring, orchestration, registry-based serving, and PySpark
+processing are not current capabilities.
 
 Historical phase documents preserve the stop-gate wording that was true when
 each checkpoint was written. This file reflects the latest repository state.
@@ -38,6 +41,8 @@ each checkpoint was written. This file reflects the latest repository state.
 | Automated tests | Implemented | `tests/`, pytest and pytest-cov configuration | Coverage has a conservative baseline gate; source-ingestion and v2 modules still need deeper tests. |
 | Code quality | Implemented baseline | Ruff configuration in `pyproject.toml` | Ruff rule set is intentionally minimal. |
 | Prediction API | Implemented for local/container use | `wind_forecast.api`, `docs/PHASE_5.md`, API tests | The API is not deployed and depends on local mounted artifacts for full serving. |
+| Historical performance API | Implemented and consumed by the dashboard | `GET /api/v1/performance`, `wind_forecast.performance`, backend contract tests | It reads explicitly selected local evaluation artifacts; it is not live monitoring. |
+| React dashboard | Implemented for local/container demonstration | `frontend/`, frontend tests, `docs/DEMO.md` | It visualizes historical holdout performance only and does not call `/predict`. |
 | Baseline training CLI | Implemented baseline | `wind_forecast.training`, `scripts/train_baseline.py`, `docs/PHASE_4.md` | Lightweight tree baseline only; tuned ANN/Optuna workflow remains notebook-based. |
 | Docker support | Implemented baseline with runtime hardening | Backend and frontend Dockerfiles, Compose stack, CI image builds, and backend smoke test | No image publishing, digest pinning, or production deployment workflow yet. |
 | CI | Implemented for backend and frontend validation | `.github/workflows/ci.yml` | CI covers Python tests and Ruff, frontend tests/lint/build, both Docker image builds, Compose validation, and backend health checks; it does not deploy artifacts. |
@@ -54,7 +59,7 @@ each checkpoint was written. This file reflects the latest repository state.
 | 2 | Data validation and sanity checks | Substantially implemented. V1 and v2 validation work exists, with documented v2 contracts and acceptance checks. |
 | 3 | Automated testing and code quality | Implemented with a 30% coverage gate, Pytest, and Ruff in CI. |
 | 4 | MLflow experiment tracking and model registry | Phase 4B code, synthetic tests, and the local SQLite-backed end-to-end smoke are complete; public release and clean-clone round-trip remain blocked by provenance/licence approval and explicit publication authorization. |
-| 5 | Prediction API with FastAPI | Implemented for local/container inference over saved artifacts. |
+| 5 | Prediction API with FastAPI | Implemented for local/container inference over saved artifacts, with an additional historical-performance endpoint for the dashboard. |
 | 6 | Docker containerization | Implemented non-root Dockerfile with a runtime health check and CI smoke test. |
 | 7 | GitHub Actions continuous integration | Implemented matrix backend CI plus frontend tests, linting, build, container build, Compose validation, and backend health checks. |
 | 8 | Idempotency, safe reruns, and observability | Not implemented as a roadmap phase. Some v2 builders already use explicit overwrite and checksum patterns. |
@@ -117,6 +122,10 @@ This repository demonstrates:
 - Defensive validation for raw, processed, and feature-ready datasets.
 - Time-series feature engineering with lags, rolling windows, and cyclic terms.
 - Saved-model serving through a typed FastAPI interface.
+- A full-stack React-to-FastAPI demonstration over read-only historical
+  evaluation artifacts.
+- Tested date filtering, performance metrics, actual-versus-predicted charts,
+  signed-error visualization, and explicit frontend failure states.
 - Automated testing with mocked or synthetic data instead of live API calls.
 - CI, Docker, and local experiment-tracking foundations.
 - Clear documentation of assumptions, risks, source decisions, and non-goals.
@@ -126,9 +135,13 @@ This repository demonstrates:
 - The full tuned modelling workflow remains in `notebooks/Modeling.ipynb`;
   the CLI covers only a lightweight baseline.
 - No production cloud deployment exists.
+- No production environment, real-time data path, enterprise-scalability
+  guarantee, or complete monitoring system exists.
 - No Airflow orchestration exists.
 - No PySpark implementation exists.
 - Registry state is local-only and is not yet part of API serving.
+- The dashboard displays historical evaluation results only; it does not call
+  `/predict`, generate future forecasts, or provide live model monitoring.
 - Public artifact distribution and a clean-clone round-trip remain gated by
   provenance/licence approval and explicit network authorization.
 - No drift or live model-performance monitoring exists.
@@ -138,9 +151,13 @@ This repository demonstrates:
 
 ## Recommended Next Steps
 
-1. Extend the baseline training CLI toward the tuned notebook workflow.
-2. Raise the coverage threshold as source-ingestion and v2 module tests mature.
-3. Resolve v1 redistribution provenance/licence and publish the first immutable
-   GitHub Release bundle.
-4. Prove the documented clean-clone fetch/retrain round-trip before claiming
-   cross-machine reproducibility.
+1. Resolve v1 provenance, licence, attribution, and redistribution approval,
+   then publish the first checksum-pinned immutable artifact bundle.
+2. Prove the documented fetch, verification, and retraining round-trip from a
+   clean clone before claiming cross-machine reproducibility.
+3. Extend the baseline training CLI toward the tuned notebook workflow while
+   preserving the current contracts.
+4. Raise test coverage as source-ingestion and v2 modules mature.
+5. Define and review an interactive-prediction UI/API contract before extending
+   the dashboard, then address monitoring, orchestration, and cloud deployment
+   design as separate roadmap phases.
