@@ -26,7 +26,7 @@ This folder keeps project documentation organized by purpose and roadmap phase.
 | 4 | [PHASE_4.md](PHASE_4.md) | Baseline training CLI, model card, data card, and local experiment-tracking context. |
 | 5 | [PHASE_5.md](PHASE_5.md) | FastAPI prediction API documentation. |
 | 8 | [PHASE_8.md](PHASE_8.md) | Transactional, idempotent v2 dataset updates, revision policy, observability, and recovery. |
-| 9 | [PHASE_9.md](PHASE_9.md) | Accepted temporal and operational contract for delayed historical batch monitoring. |
+| 9 | [PHASE_9.md](PHASE_9.md) | Delayed historical batch contract, immutable evidence, calibrated drift/performance reports, and local alerts. |
 
 Other phases without a file do not yet have dedicated documentation in this
 repository. Older audit records may describe the exact file paths that existed

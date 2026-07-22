@@ -121,11 +121,18 @@ it never repairs or overwrites a current partition silently.
 ## Observability and recovery
 
 Run identifiers combine a UTC timestamp and random suffix. Real runs emit JSON
-Lines to stdout and `events.jsonl`; the final manifest uses schema
-`wind_forecast.v2_incremental_run.v1` and records normalized arguments, Git
-commit, code/contract versions, plans, watermarks, source changes, affected
-intervals, validation state, warnings, failures, and safeguards. Common secret
-patterns are redacted from persisted errors.
+Lines to stdout and `events.jsonl`; new runs use manifest schema
+`wind_forecast.v2_incremental_run.v2` and retain read compatibility with v1.
+The v2 manifest adds a checksum-pinned `quality.json` sidecar for successful,
+no-op, and failed batch attempts, including execution requests rejected during
+planning. It records checksum-pinned inputs, freshness against the D+5/D+7
+12:00 Europe/Lisbon deadlines, source/feature coverage, schema fingerprints,
+observed null/non-finite/duplicate counts, and the DST-aware REN and ERA5-Land
+interval contract. `--monitoring-policy` selects the versioned policy; the
+default is `config/monitoring_policy_v1.json`. The manifest also records
+normalized arguments, Git commit, code/contract versions, plans, watermarks,
+changes, warnings, failures, and safeguards. Common secret patterns are
+redacted from persisted errors.
 
 An exclusive lock records host, PID, run ID, and creation time. A live owner is
 rejected before run output is written. A stale same-host PID is recovered; its

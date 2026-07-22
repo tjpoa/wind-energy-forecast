@@ -39,6 +39,9 @@ registry-based serving.
   check.
 - MLflow runs, artifacts, dataset lineage, and a local SQLite-backed Model
   Registry with explicit `candidate`/`champion` governance.
+- Delayed historical-batch monitoring with immutable quality evidence,
+  calibrated 30/90-day drift, as-issued performance, and persistent local
+  alerts.
 
 ## Architecture
 
@@ -330,6 +333,28 @@ Promotion is always explicit and optimistic-concurrency checked:
   --approval-note "reviewed against the approved v1 contract"
 ```
 
+Calibrate the Phase 9 reference and thresholds from the accepted v2 dataset and
+unpromoted model bundle (no training or network calls):
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\calibrate_monitoring.py `
+  --model-bundle outputs\training\v2_reference_mlflow
+```
+
+Generate one immutable quality/drift/performance report for an explicit Phase 8
+batch. Use `--dry-run` first; `--fail-on-active-alert` is an optional exit-code
+bridge for future orchestration. The versioned policy supports explicit
+warning/critical overrides, and the Python interface exposes verified active
+alerts plus their causally ordered immutable history.
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\run_monitoring_report.py `
+  --source-run-manifest data\processed\v2\incremental_update\runs\<RUN_ID>\manifest.json `
+  --calibration-dir data\processed\v2\monitoring\reporting\calibrations\<CALIBRATION_ID> `
+  --through-date YYYY-MM-DD `
+  --dry-run
+```
+
 Generate recent WeatherAPI feature data:
 
 ```powershell
@@ -471,7 +496,8 @@ does not publish or deploy them.
   `artifacts/catalog.json`.
 - There is no cloud deployment.
 - There is no production environment or enterprise-scalability claim.
-- There is no real-time data path or complete monitoring system.
+- Monitoring is retrospective and local; there is no real-time data path,
+  scheduler, or external alert delivery.
 - Airflow orchestration has not been implemented.
 - PySpark processing has not been implemented.
 - The FastAPI service is a local/container serving interface, not a deployed
@@ -488,8 +514,8 @@ does not publish or deploy them.
 3. Extend the baseline training CLI toward the tuned notebook workflow while
    preserving the existing contracts.
 4. Add interactive prediction only after a reviewed UI/API contract, then
-   progress through drift monitoring, orchestration, and cloud deployment
-   design as explicit future phases.
+   progress through orchestration and cloud deployment design as explicit
+   future phases.
 
 See `docs/DEMO.md` for the full-stack demonstration,
 `docs/README.md` for the documentation index,

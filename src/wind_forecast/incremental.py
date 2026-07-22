@@ -27,6 +27,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
+from wind_forecast.batch_quality import build_batch_quality_evidence
 from wind_forecast.integration import (
     COVERAGE_COLUMNS,
     DATE_LOCAL_COLUMN,
@@ -41,6 +42,7 @@ from wind_forecast.integration import (
     sha256_file,
     validate_integrated_outputs,
 )
+from wind_forecast.monitoring_statistics import MonitoringPolicy
 from wind_forecast.paths import (
     v2_processed_daily_merged_dir,
     v2_processed_ml_features_dir,
@@ -60,7 +62,7 @@ from wind_forecast.v2_features import (
 )
 
 
-RUN_SCHEMA_VERSION = "wind_forecast.v2_incremental_run.v1"
+RUN_SCHEMA_VERSION = "wind_forecast.v2_incremental_run.v2"
 STATE_SCHEMA_VERSION = "wind_forecast.v2_incremental_state.v1"
 PARTITION_CONTRACT_VERSION = "wind_forecast.v2_incremental_partition.v1"
 DEFAULT_BOOTSTRAP_START = date(2010, 1, 1)
@@ -105,6 +107,7 @@ class UpdateConfig:
         / "incremental_update"
     )
     raw_store_root: Path = Path("data/raw/v2/incremental_update")
+    monitoring_policy_path: Path = Path("config/monitoring_policy_v1.json")
     revision_lookback_days: int = 90
     recheck_min_age_hours: int = 24
     recheck_ren_dates: tuple[str, ...] = ()
@@ -137,6 +140,9 @@ class UpdateConfig:
         object.__setattr__(self, "baseline_feature_root", Path(self.baseline_feature_root))
         object.__setattr__(self, "store_root", Path(self.store_root))
         object.__setattr__(self, "raw_store_root", Path(self.raw_store_root))
+        object.__setattr__(
+            self, "monitoring_policy_path", Path(self.monitoring_policy_path)
+        )
         object.__setattr__(self, "recheck_ren_dates", ren_dates)
         object.__setattr__(self, "recheck_era5_months", era_months)
         object.__setattr__(self, "now_utc", now.astimezone(timezone.utc))
@@ -335,6 +341,29 @@ def plan_v2_update(config: UpdateConfig) -> UpdatePlan:
     )
 
 
+def _rejected_update_plan(config: UpdateConfig) -> UpdatePlan:
+    """Return minimal deterministic context when execution planning is rejected."""
+    ren_through, era5_through = _eligible_source_dates(config)
+    return UpdatePlan(
+        status="rejected",
+        through_date=config.through_date.isoformat(),
+        eligible_through={
+            "ren": ren_through.isoformat(),
+            "era5_land": era5_through.isoformat(),
+        },
+        bootstrap_required=False,
+        ren_missing_dates=(),
+        ren_unavailable_dates=(),
+        ren_recheck_dates=(),
+        era5_missing_months=(),
+        era5_recheck_months=(),
+        pending_availability_dates={"ren": (), "era5_land": ()},
+        potentially_affected_dates=(),
+        potentially_affected_feature_dates=(),
+        network_requests_planned={"ren": 0, "era5_land": 0},
+    )
+
+
 def run_v2_update(
     config: UpdateConfig,
     *,
@@ -342,8 +371,8 @@ def run_v2_update(
     failure_hook: FailureHook | None = None,
 ) -> UpdateResult:
     """Execute one atomic incremental update, or return its dry-run plan."""
-    plan = plan_v2_update(config)
     if config.dry_run:
+        plan = plan_v2_update(config)
         return UpdateResult(status="planned", run_id=None, plan=plan)
 
     run_id = _new_run_id(config.now_utc)
@@ -358,15 +387,20 @@ def run_v2_update(
     source_changes: list[dict[str, Any]] = []
     affected_dates: set[str] = set()
     feature_dates: set[str] = set()
+    quality_state: dict[str, Any] | None = None
+    quality_policy: MonitoringPolicy | None = None
+    plan: UpdatePlan | None = None
     try:
+        paths["run"].mkdir(parents=True, exist_ok=False)
+        paths["staging"].mkdir(parents=True, exist_ok=False)
+        _emit_event(events, paths["events"], run_id, "run", "start", "ok")
+        quality_policy = MonitoringPolicy.load(config.monitoring_policy_path)
+        plan = plan_v2_update(config)
         # Verify the pointer again while holding the lock so planning cannot race
         # another publisher.  Keeping this inside the try guarantees lock cleanup
         # even when the current state is corrupt.
         previous_state = _load_current_state(config.store_root, verify=True)
         current_pointer_verified = True
-        paths["run"].mkdir(parents=True, exist_ok=False)
-        paths["staging"].mkdir(parents=True, exist_ok=False)
-        _emit_event(events, paths["events"], run_id, "run", "start", "ok")
         refresh = RefreshResult()
         if source_refresher is not None and any(plan.network_requests_planned.values()):
             refresh_started = monotonic_time.perf_counter()
@@ -389,6 +423,7 @@ def run_v2_update(
             state = _bootstrap_state(config, baseline, run_id)
         else:
             state = json.loads(json.dumps(previous_state))
+        quality_state = state
         before_watermarks = dict(state.get("watermarks") or {})
 
         validation_started = monotonic_time.perf_counter()
@@ -399,6 +434,7 @@ def run_v2_update(
             refresh=refresh,
         )
         state["sources"] = candidate_sources
+        quality_state = state
         _emit_event(
             events,
             paths["events"],
@@ -477,6 +513,15 @@ def run_v2_update(
             status = "no_op"
             watermarks = before_watermarks
             generation = int(previous_state.get("generation", 0)) if previous_state else 0
+            quality_evidence = _persist_batch_quality(
+                paths["quality"],
+                config=config,
+                plan=plan,
+                run_id=run_id,
+                state=previous_state,
+                status=status,
+                policy=quality_policy,
+            )
             manifest = _manifest_payload(
                 config=config,
                 plan=plan,
@@ -491,6 +536,7 @@ def run_v2_update(
                 events=events,
                 source_refresh_performed=refresh_performed,
                 current_pointer_verified=current_pointer_verified,
+                quality_evidence=quality_evidence,
             )
             manifest_checksum = _write_json(paths["manifest"], manifest)
             _emit_event(
@@ -522,6 +568,7 @@ def run_v2_update(
         state["release_id"] = run_id
         state["updated_at_utc"] = _utc_text(datetime.now(timezone.utc))
         state["watermarks"] = _compute_watermarks(config, state, baseline)
+        quality_state = state
         _call_hook(failure_hook, "before_publish")
         if release_written:
             paths["release"].parent.mkdir(parents=True, exist_ok=True)
@@ -545,6 +592,15 @@ def run_v2_update(
             "succeeded",
             duration_ms=_elapsed_ms(run_started_monotonic),
         )
+        quality_evidence = _persist_batch_quality(
+            paths["quality"],
+            config=config,
+            plan=plan,
+            run_id=run_id,
+            state=state,
+            status="succeeded",
+            policy=quality_policy,
+        )
         manifest = _manifest_payload(
             config=config,
             plan=plan,
@@ -559,6 +615,7 @@ def run_v2_update(
             events=events,
             source_refresh_performed=refresh_performed,
             current_pointer_verified=current_pointer_verified,
+            quality_evidence=quality_evidence,
         )
         manifest_checksum = _write_json(paths["manifest"], manifest)
         pointer = dict(state)
@@ -579,6 +636,7 @@ def run_v2_update(
             watermarks=dict(state["watermarks"]),
         )
     except Exception as exc:
+        evidence_plan = plan or _rejected_update_plan(config)
         published = _published_run_is_current(config.store_root, run_id)
         safe_error = _sanitize_error(exc)
         _emit_event(
@@ -592,9 +650,34 @@ def run_v2_update(
             duration_ms=_elapsed_ms(run_started_monotonic),
         )
         if paths["run"].is_dir() and not published:
+            try:
+                quality_evidence = _persist_batch_quality(
+                    paths["quality"],
+                    config=config,
+                    plan=evidence_plan,
+                    run_id=run_id,
+                    state=quality_state or previous_state,
+                    status="failed",
+                    policy=quality_policy,
+                    policy_error=safe_error if quality_policy is None else None,
+                    error=safe_error,
+                )
+            except Exception as quality_exc:
+                quality_error = _sanitize_error(quality_exc)
+                quality_evidence = _persist_batch_quality(
+                    paths["quality"],
+                    config=config,
+                    plan=evidence_plan,
+                    run_id=run_id,
+                    state=None,
+                    status="failed",
+                    policy=quality_policy,
+                    policy_error=safe_error if quality_policy is None else None,
+                    error=f"{safe_error}; quality scan failed: {quality_error}",
+                )
             failed_manifest = _manifest_payload(
                 config=config,
-                plan=plan,
+                plan=evidence_plan,
                 run_id=run_id,
                 started_at=started,
                 status="failed",
@@ -607,6 +690,7 @@ def run_v2_update(
                 failures=[safe_error],
                 source_refresh_performed=refresh_performed,
                 current_pointer_verified=current_pointer_verified,
+                quality_evidence=quality_evidence,
             )
             _write_json(paths["manifest"], failed_manifest)
         if not published:
@@ -1336,7 +1420,8 @@ def _scan_ren_sources(
                 row = coverage.iloc[0]
                 if str(row["ren_status"]) != "complete" or daily.empty:
                     raise IncrementalUpdateError(
-                        f"REN partition {key} is present but invalid: {row['message']}"
+                        f"REN partition {normalized} for {key} is present but invalid: "
+                        f"{row['message']}"
                     )
                 semantic = _semantic_csv_sha256(
                     normalized,
@@ -2096,6 +2181,7 @@ def _manifest_payload(
     failures: Sequence[str] = (),
     source_refresh_performed: bool = False,
     current_pointer_verified: bool = True,
+    quality_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": RUN_SCHEMA_VERSION,
@@ -2109,6 +2195,12 @@ def _manifest_payload(
             "recheck_min_age_hours": config.recheck_min_age_hours,
             "recheck_ren_dates": list(config.recheck_ren_dates),
             "recheck_era5_months": list(config.recheck_era5_months),
+            "monitoring_policy_path": str(config.monitoring_policy_path),
+            "monitoring_policy_sha256": (
+                sha256_file(config.monitoring_policy_path)
+                if config.monitoring_policy_path.is_file()
+                else None
+            ),
         },
         "git_commit": _git_commit(),
         "versions": {
@@ -2150,6 +2242,7 @@ def _manifest_payload(
             "duplicates": True if status != "failed" else None,
             "nulls_and_finiteness": True if status != "failed" else None,
         },
+        "quality_evidence": _json_ready(quality_evidence),
         "warnings": [],
         "failures": list(failures),
         "events": _json_ready(events),
@@ -2240,9 +2333,61 @@ def _run_paths(store_root: Path, run_id: str) -> dict[str, Path]:
         "run": run,
         "events": run / "events.jsonl",
         "manifest": run / "manifest.json",
+        "quality": run / "quality.json",
         "staging": staging,
         "staging_release": staging / "release",
         "release": store_root / "releases" / run_id,
+    }
+
+
+def _persist_batch_quality(
+    path: Path,
+    *,
+    config: UpdateConfig,
+    plan: UpdatePlan,
+    run_id: str,
+    state: Mapping[str, Any] | None,
+    status: str,
+    policy: MonitoringPolicy | None,
+    policy_error: str | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    objective_days = policy.source_objective_days if policy else 5
+    late_days = policy.source_late_days if policy else 7
+    hard_tolerance = policy.hard_quality_tolerance if policy else 0
+    policy_evidence = {
+        "schema_version": policy.schema_version if policy else None,
+        "path": str(config.monitoring_policy_path.resolve()),
+        "sha256": (
+            sha256_file(config.monitoring_policy_path)
+            if config.monitoring_policy_path.is_file()
+            else None
+        ),
+        "status": "valid" if policy else "invalid",
+        "error": policy_error,
+        "source_objective_days": objective_days,
+        "source_late_days": late_days,
+        "hard_quality_tolerance": hard_tolerance,
+    }
+    payload = build_batch_quality_evidence(
+        run_id=run_id,
+        through_date=config.through_date.isoformat(),
+        evaluated_at_utc=config.now_utc,
+        plan=plan.summary(),
+        state=state,
+        status=status,
+        source_objective_days=objective_days,
+        source_late_days=late_days,
+        hard_quality_tolerance=hard_tolerance,
+        policy_evidence=policy_evidence,
+        error=error,
+    )
+    checksum = _write_json(path, payload)
+    return {
+        "schema_version": payload["schema_version"],
+        "path": str(path.resolve()),
+        "sha256": checksum,
+        "verdict": payload["verdict"],
     }
 
 

@@ -95,6 +95,12 @@ def parse_args() -> argparse.Namespace:
         default=Path("data/raw/v2/incremental_update"),
     )
     parser.add_argument(
+        "--monitoring-policy",
+        type=Path,
+        default=Path("config/monitoring_policy_v1.json"),
+        help="Versioned Phase 9 quality/freshness policy used by batch sidecars.",
+    )
+    parser.add_argument(
         "--no-source-refresh",
         action="store_true",
         help="Use only already-present local raw partitions; mainly for controlled recovery.",
@@ -146,6 +152,7 @@ def main() -> None:
         baseline_feature_root=args.baseline_feature_root,
         store_root=args.store_root,
         raw_store_root=args.raw_store_root,
+        monitoring_policy_path=args.monitoring_policy,
         revision_lookback_days=args.revision_lookback_days,
         recheck_min_age_hours=args.recheck_min_age_hours,
         recheck_ren_dates=tuple(args.recheck_ren_date),
