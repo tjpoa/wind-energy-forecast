@@ -665,6 +665,21 @@ def materialize_current_features(
     return features, coverage
 
 
+def load_verified_current_state(store_root: str | Path) -> dict[str, Any]:
+    """Load the published v2 state after verifying its complete checksum chain.
+
+    This is the supported read-only bridge for downstream consumers.  Callers
+    receive a detached JSON-compatible copy so they cannot mutate internal
+    state accidentally.
+    """
+    state = _load_current_state(Path(store_root), verify=True)
+    if state is None:
+        raise FileNotFoundError(
+            f"No current incremental state exists under {store_root}."
+        )
+    return json.loads(json.dumps(state))
+
+
 def _inspect_baseline(config: UpdateConfig) -> dict[str, Any]:
     integrated = config.baseline_integrated_root
     features = config.baseline_feature_root
@@ -2584,6 +2599,7 @@ __all__ = [
     "UpdateResult",
     "materialize_current_features",
     "materialize_current_integrated",
+    "load_verified_current_state",
     "plan_v2_update",
     "run_v2_update",
 ]

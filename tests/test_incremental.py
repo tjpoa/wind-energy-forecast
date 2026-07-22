@@ -20,6 +20,7 @@ from wind_forecast.incremental import (
     UpdateConfig,
     materialize_current_features,
     materialize_current_integrated,
+    load_verified_current_state,
     plan_v2_update,
     run_v2_update,
 )
@@ -804,3 +805,14 @@ def test_manifest_checksum_matches_current_pointer(environment: UpdateConfig) ->
     assert all(isinstance(event["duration_ms"], (int, float)) for event in events)
     assert events[-1]["stage"] == "run"
     assert events[-1]["result"] == "succeeded"
+
+
+def test_public_current_state_loader_returns_verified_detached_copy(
+    environment: UpdateConfig,
+) -> None:
+    result = run_v2_update(environment)
+    first = load_verified_current_state(environment.store_root)
+    assert first["release_id"] == result.run_id
+    first["generation"] = -1
+    second = load_verified_current_state(environment.store_root)
+    assert second["generation"] == result.generation
