@@ -1,6 +1,6 @@
 # Project Status
 
-Last reviewed: 2026-07-20.
+Last reviewed: 2026-07-22.
 
 This document summarizes the current state of the wind-energy forecasting
 repository for portfolio and hiring-review purposes. It is a factual status
@@ -44,10 +44,10 @@ each checkpoint was written. This file reflects the latest repository state.
 | Prediction API | Implemented for local/container use | `wind_forecast.api`, `docs/PHASE_5.md`, API tests | The API is not deployed and depends on local mounted artifacts for full serving. |
 | Historical performance API | Implemented and consumed by the dashboard | `GET /api/v1/performance`, `wind_forecast.performance`, backend contract tests | It reads explicitly selected local evaluation artifacts; it is not live monitoring. |
 | React dashboard | Implemented for local/container demonstration | `frontend/`, frontend tests, `docs/DEMO.md` | It visualizes historical holdout performance only and does not call `/predict`. |
-| Baseline training CLI | Implemented baseline | `wind_forecast.training`, `scripts/train_baseline.py`, `docs/PHASE_4.md` | Lightweight tree baseline only; tuned ANN/Optuna workflow remains notebook-based. |
+| Training CLIs | V1 baseline preserved; first v2 reference accepted locally | `wind_forecast.training`, `wind_forecast.v2_training`, dedicated scripts, and `docs/PHASE_4.md` | The v2 result is a historical hindcast and is not promoted or served; tuned ANN/Optuna remains notebook-based. |
 | Docker support | Implemented baseline with runtime hardening | Backend and frontend Dockerfiles, Compose stack, CI image builds, and backend smoke test | No image publishing, digest pinning, or production deployment workflow yet. |
 | CI | Implemented for backend and frontend validation | `.github/workflows/ci.yml` | CI covers Python tests and Ruff, frontend tests/lint/build, both Docker image builds, Compose validation, and backend health checks; it does not deploy artifacts. |
-| MLflow lifecycle | Implemented; local integration smoke completed | `wind_forecast.tracking`, `wind_forecast.registry`, baseline CLI, synthetic registry tests, and real local SQLite smoke | A clean v1 run, candidate registration, manual promotion, and rollback succeeded locally; Registry state remains local and serving does not consume aliases. |
+| MLflow lifecycle | Implemented; v1 and v2 local integration smokes completed | Tracking/Registry modules, both training CLIs, tests, and real local SQLite runs | V1 candidate lifecycle and the unpromoted v2 reference run succeeded locally; Registry state remains local and serving does not consume aliases. |
 | Artifact versioning | Local bundle validation completed; publication blocked | Deterministic builder/fetcher/verifier, `artifacts/catalog.json`, two matching local bundle hashes, and local verify/retrain evidence | No public v1 data bundle until provenance/licence/redistribution approval and a catalog SHA-256; no cross-machine claim until a release round-trip runs. |
 | Documentation | Strong | `README.md`, `docs/README.md`, `docs/DEMO.md`, phase docs, roadmap | Model/data cards are baseline-level and not full registry artifacts. |
 
@@ -59,7 +59,7 @@ each checkpoint was written. This file reflects the latest repository state.
 | 1 | Modular project structure and configuration | Completed. Reusable package modules and configuration helpers exist. |
 | 2 | Data validation and sanity checks | Substantially implemented. V1 and v2 validation work exists, with documented v2 contracts and acceptance checks. |
 | 3 | Automated testing and code quality | Implemented with a 30% coverage gate, Pytest, and Ruff in CI. |
-| 4 | MLflow experiment tracking and model registry | Phase 4B code, synthetic tests, and the local SQLite-backed end-to-end smoke are complete; public release and clean-clone round-trip remain blocked by provenance/licence approval and explicit publication authorization. |
+| 4 | MLflow experiment tracking and model registry | Phase 4B v1 lifecycle is complete locally. The v2 reference pipeline, manifests, tests, real MLflow run, and logged-model reload validation are also complete; the v2 model remains deliberately unpromoted. |
 | 5 | Prediction API with FastAPI | Implemented for local/container inference over saved artifacts, with an additional historical-performance endpoint for the dashboard. |
 | 6 | Docker containerization | Implemented non-root Dockerfile with a runtime health check and CI smoke test. |
 | 7 | GitHub Actions continuous integration | Implemented matrix backend CI plus frontend tests, linting, build, container build, Compose validation, and backend health checks. |
@@ -122,6 +122,8 @@ This repository demonstrates:
 - Data-contract design across legacy v1 data and isolated v2 data-source work.
 - Defensive validation for raw, processed, and feature-ready datasets.
 - Time-series feature engineering with lags, rolling windows, and cyclic terms.
+- A reproducible v2 hindcast reference model selected chronologically against
+  one-day persistence, with an explicit non-promotion gate.
 - Saved-model serving through a typed FastAPI interface.
 - A full-stack React-to-FastAPI demonstration over read-only historical
   evaluation artifacts.
@@ -134,7 +136,9 @@ This repository demonstrates:
 ## Known Limitations
 
 - The full tuned modelling workflow remains in `notebooks/Modeling.ipynb`;
-  the CLI covers only a lightweight baseline.
+  the CLIs cover deterministic tree baselines rather than that tuned workflow.
+- The accepted v2 RandomForest result is a historical hindcast using
+  contemporaneous ERA5-Land weather, not an operational day-ahead forecast.
 - No production cloud deployment exists.
 - No production environment, real-time data path, enterprise-scalability
   guarantee, or complete monitoring system exists.
@@ -146,7 +150,8 @@ This repository demonstrates:
 - Public artifact distribution and a clean-clone round-trip remain gated by
   provenance/licence approval and explicit network authorization.
 - No drift or live model-performance monitoring exists.
-- V2 REN + ERA5-Land data work does not validate current v1 scalers or models.
+- The v2 reference is independent of v1 scalers/models, but is not promoted or
+  connected to serving.
 - The Phase 8 live provider refresh path requires approved credentials/network
   access and has only synthetic, offline test coverage in this repository.
 - A fresh clone may need local generated artifacts before the full prediction
