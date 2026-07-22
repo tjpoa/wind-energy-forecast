@@ -255,3 +255,59 @@ When presenting the project, describe this as a reproducible Data/ML
 Engineering baseline around a historical forecasting workflow. Avoid describing
 it as a deployed production forecasting system or as a completed model lifecycle
 platform.
+
+## Stage 2 — First v2 Reference Model
+
+The dedicated v2 workflow is isolated from `train_baseline.py`, all v1 models,
+scalers, and serving paths. It uses the accepted
+`feature_ready_ren_era5_land_v2` table with SHA-256
+`d0d073748c5d963cba30212e6b0ab666ec2000197b8f61a5c439b4aaf786b2a6`.
+The contract is a historical daily **hindcast**: contemporaneous ERA5-Land
+weather is allowed for the target date, so the result is not an operational
+day-ahead forecast.
+
+Run the fully validated and locally tracked workflow with:
+
+```powershell
+$env:PYTHONUTF8="1"
+.\venv\Scripts\python.exe .\scripts\train_v2_reference.py `
+  --output-dir outputs\training\v2_reference
+```
+
+This uses the local SQLite-backed MLflow server documented above at
+`http://127.0.0.1:5000`; start that server before running the command.
+
+The fixed chronological contract is train `2010-01-15`–`2022-12-31`
+(4,209 rows), validation `2023-01-01`–`2024-12-31` (663 rows), and sealed test
+`2025-01-01`–`2026-06-27` (450 rows). ExtraTrees and RandomForest use 100 trees,
+seed 42, and `n_jobs=-1`; validation MAE selects the candidate, with ExtraTrees
+as the exact-tie winner. The selected estimator is refitted on train plus
+validation and evaluated once against `Wind_Production_Lag1` persistence.
+
+The local acceptance run selected RandomForest. Its test MAE was
+`25,541.036826667`, compared with persistence MAE `69,577.153111111`, for MAE
+skill `0.632910579`; RMSE was `33,448.655794793`, R² `0.886607984`, signed bias
+`-7,684.841942222`, and MAPE `22.137047390%`. The strict MAE gate passed and the
+result is `selected_not_promoted`. No scaler is required or created. Two
+independent tracking-off executions produced byte-identical model, prediction,
+metric, plot, manifest, environment, audit, sample, and summary artifacts.
+
+Before training, the CLI runs the accepted feature-ready validator, including
+checksum verification and date-based recomputation of every lag and rolling
+feature from the integrated base. It records split isolation, feature order,
+dataset/model/split hashes, full estimator parameters, environment, Git state,
+reload evidence, metrics, predictions, and the reference decision.
+
+MLflow logging creates one run in `wind-energy-forecast-v2-reference`, logs
+dataset lineage and the sklearn model with signature, reloads that logged model,
+and tags the result as not promoted. It never calls the Registry. The real local
+MLflow 3.14 run `ddb478bde0404fbf8e48f496326c3d41` finished successfully against
+the SQLite-backed server. Its logged model URI was
+`models:/m-4eef011bd42c4f9e9f4d8fedaa19361f`; five reloaded predictions matched the
+saved sample with maximum absolute difference `1.7462298274040222e-10`. The
+`PYTHONUTF8` setting prevents MLflow's run-link emoji from failing on a Windows
+CP1252 console. Use `--tracking-mode off` only for an explicitly untracked local
+reproduction.
+
+This stage does not replace `/predict`, modify v1 artifacts, register a model,
+or promote a model automatically.
