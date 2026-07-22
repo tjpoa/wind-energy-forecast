@@ -9,7 +9,7 @@
 | Decision date | `2026-07-20` |
 | Contract version | `historical_batch_monitoring_v1` |
 | Operating mode | Historical batch monitoring with delayed REN and ERA5-Land data |
-| Current implementation status | Not started |
+| Current implementation status | Stage 1 immutable prediction-evidence ledger implemented |
 
 ## Purpose And Scope
 
@@ -22,10 +22,10 @@ ERA5-Land v2 contracts. Its output is a retrospective estimate, or hindcast,
 for a completed local calendar day. It is not an ex-ante forecast and must not
 be presented as real-time, same-day, D+1, or multi-day forecasting.
 
-This Stage 0 decision is documentation only. It does not implement monitoring,
-orchestration, ingestion schedules, alerting, prediction persistence, drift
-statistics, or performance reports. It does not modify data, feature tables,
-models, scalers, baselines, APIs, notebooks, or generated artifacts.
+Stage 0 was a documentation-only decision. Stage 1 now implements the approved
+prediction, actual, and metric evidence ledger. Orchestration, provider calls,
+alerting, drift statistics, aggregate reports, APIs, notebooks, and model
+promotion remain outside this phase.
 
 ## Decision Summary
 
@@ -232,10 +232,73 @@ Any future implementation must preserve at least:
   recalculated estimates, and an explicit exclusion reason when state is
   `excluded`.
 
-Current builders and their explicit overwrite options do not satisfy this
-append-only operational contract. A later implementation must introduce
-versioned run or revision storage without changing the safety of existing
-manual scripts.
+The Stage 1 ledger satisfies this append-only evidence contract without
+changing the existing dataset builders or their safety behavior.
+
+## Stage 1 Implementation — Prediction Evidence Ledger
+
+`wind_forecast.monitoring` implements `historical_batch_monitoring_v1` as a
+local filesystem ledger. It verifies the Phase 8 `current.json` checksum chain,
+the accepted v2 reference manifests, exact feature order, model checksum,
+`selected_not_promoted` decision, hindcast task, and absence of a scaler before
+issuing an estimate.
+
+The public interfaces are:
+
+- `plan_historical_monitoring`, a strictly read-only plan;
+- `run_historical_monitoring`, an exclusive-lock, append-only execution;
+- `load_prediction_evidence`, which verifies the complete evidence chain;
+- `replay_prediction`, which reloads the immutable model/input and checks
+  numerical equivalence with `rtol=1e-12` and `atol=1e-9`;
+- `load_verified_current_state` in `wind_forecast.incremental`, the supported
+  downstream bridge to the Phase 8 state.
+
+The default ledger root is `data/processed/v2/monitoring/`. Immutable records
+live under `activations/`, `model_snapshots/`, `input_snapshots/`,
+`predictions/`, `actuals/`, `metrics/`, and `runs/`. Only the derived
+`state/current.json` pointer advances atomically. IDs are SHA-256 hashes of
+canonical JSON with an explicit record type, and existing content-addressed
+paths accept only byte-identical retries.
+
+The first run requires an immutable activation date. Dates before activation
+are considered only through an explicit, bounded backfill. Eligible dates are
+never issued before `D+5 12:00 Europe/Lisbon`; later first issuance is marked
+`catch_up`, while backfills and causal recalculations are explicitly marked.
+No ex-ante or multi-day mode is accepted.
+
+The persisted input is target-free and retains ordered names/values, feature
+partition identity, transformation version/code evidence, and the exact
+REN/ERA5-Land revisions used by every calendar, direct, lag, or rolling
+feature. A semantic source revision can therefore create a separate restated
+view while preserving the original as-issued prediction. A physical rewrite
+with the same semantic revision does not recalculate it.
+
+Revision occurrence is retained independently from semantic identity. A
+sequence `A -> B -> A` therefore creates a third actual/metric revision and a
+new restatement that supersedes the `B` view; it never reuses the first `A`
+record or leaves the current pointer on stale `B` evidence.
+
+The prediction is written before the actual is consulted. REN actual revisions
+and metric revisions are immutable and linked with `supersedes_id`; errors are
+created only when both records exist. A retry can reconcile a prediction left
+by a crash before the actual/pointer stage without issuing a duplicate.
+
+Run locally without provider calls:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\run_historical_monitoring.py `
+  --through-date YYYY-MM-DD `
+  --activation-date YYYY-MM-DD `
+  --source-store-root data\processed\v2\incremental_update `
+  --model-bundle outputs\training\v2_reference_mlflow `
+  --dry-run
+```
+
+Remove `--dry-run` only after reviewing the plan. Subsequent runs omit
+`--activation-date` or repeat the same value. `--backfill-start` and
+`--backfill-end` must always be supplied together and must precede activation.
+`--model-bundle` is always explicit; the example names the locally verified
+accepted output and the CLI never guesses or promotes a model directory.
 
 ## Monitoring Scope And Activation Gates
 
@@ -277,7 +340,7 @@ performance claims.
 | Target leakage in a post-factum batch | Persist target-free model inputs and estimate before the actual join |
 | Historical gaps stall processing | Per-date eligibility and explicit gap states |
 | DST or timezone errors change daily membership | `Europe/Lisbon` day boundaries and the accepted 92/96/100 and 23/24/25 rules |
-| Documentation is mistaken for an implemented capability | Project status and this record continue to state that monitoring is not implemented |
+| Ledger is mistaken for complete monitoring | Project status and this record distinguish evidence persistence from drift, reporting, alerts, and orchestration |
 
 Rollback of this documentation decision means marking this contract
 `Superseded` in a later reviewed decision. It does not mean editing historical
@@ -295,7 +358,10 @@ data or silently returning to an ambiguous operating mode.
 - [x] Minimum immutable record identity, target-free inputs, transformation lineage, and leakage control are explicit.
 - [x] Monitoring layers and their activation gates are explicit.
 - [x] D+1 and multi-day operation remain `NO-GO` without forecast weather.
-- [x] No code, data, model, scaler, pipeline, notebook, or generated artifact change is approved here.
+- [x] Stage 0 itself approved no code, data, model, scaler, pipeline, notebook, or generated artifact change.
+- [x] Stage 1 persists target-free predictions before actuals and metrics.
+- [x] Activation/backfill, D+5, idempotency, revision, restatement, corruption, and replay behavior have synthetic offline tests.
+- [x] APIs, Registry, drift, aggregate reporting, alerts, orchestration, training, and provider calls remain out of scope.
 
 ## External Primary References
 
@@ -304,8 +370,8 @@ data or silently returning to an ambiguous operating mode.
 
 ## Stop Gate
 
-Phase 9 Stage 0 is accepted as a temporal and operational architecture
-contract. Monitoring implementation has not started. Phase 9 implementation,
-Phase 10 orchestration, forecast-weather selection, D+1 forecasting, target
-migration, dataset regeneration, scaler fitting, model training, and baseline
-promotion require separate approved work.
+Phase 9 Stage 1 stops at the local append-only evidence ledger. Drift
+statistics, aggregate performance reports, alerting, Phase 10 orchestration,
+forecast-weather selection, D+1 forecasting, target migration, dataset
+regeneration, scaler fitting, model training, API changes, and baseline or
+Registry promotion require separate approved work.
