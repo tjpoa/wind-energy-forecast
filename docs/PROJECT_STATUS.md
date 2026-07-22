@@ -38,6 +38,7 @@ each checkpoint was written. This file reflects the latest repository state.
 | Feature engineering | Implemented | `wind_forecast.features`, `wind_forecast.v2_features` | V2 features are built locally but v2 scalers and models are not promoted. |
 | Data validation | Implemented and active | `wind_forecast.validation`, `scripts/validate_feature_ready_v2_dataset.py`, Phase 2 docs | Validation is strong for current contracts, but future data-source changes still require explicit decisions. |
 | V2 data-source work | Substantial local progress | REN and ERA5-Land source modules, Phase 2 acceptance docs | V2 data does not replace v1; v2 model/scaler validity is not claimed. |
+| V2 incremental updates | Implemented and synthetically validated | `wind_forecast.incremental`, `scripts/update_v2_dataset.py`, Phase 8 docs and tests | Live REN/CDS refresh was not exercised by the repository test suite. |
 | Automated tests | Implemented | `tests/`, pytest and pytest-cov configuration | Coverage has a conservative baseline gate; source-ingestion and v2 modules still need deeper tests. |
 | Code quality | Implemented baseline | Ruff configuration in `pyproject.toml` | Ruff rule set is intentionally minimal. |
 | Prediction API | Implemented for local/container use | `wind_forecast.api`, `docs/PHASE_5.md`, API tests | The API is not deployed and depends on local mounted artifacts for full serving. |
@@ -62,7 +63,7 @@ each checkpoint was written. This file reflects the latest repository state.
 | 5 | Prediction API with FastAPI | Implemented for local/container inference over saved artifacts, with an additional historical-performance endpoint for the dashboard. |
 | 6 | Docker containerization | Implemented non-root Dockerfile with a runtime health check and CI smoke test. |
 | 7 | GitHub Actions continuous integration | Implemented matrix backend CI plus frontend tests, linting, build, container build, Compose validation, and backend health checks. |
-| 8 | Idempotency, safe reruns, and observability | Not implemented as a roadmap phase. Some v2 builders already use explicit overwrite and checksum patterns. |
+| 8 | Idempotency, safe reruns, and observability | Implemented for the accepted v2 dataset with dry-run planning, immutable revisions, atomic publication, structured run evidence, and failure recovery tests. |
 | 9 | Data drift and model-performance monitoring | Stage 0 contract accepted; monitoring implementation not started. |
 | 10 | Batch orchestration with Apache Airflow | Not implemented. |
 | 11 | PySpark data-processing implementation | Not implemented. |
@@ -146,6 +147,8 @@ This repository demonstrates:
   provenance/licence approval and explicit network authorization.
 - No drift or live model-performance monitoring exists.
 - V2 REN + ERA5-Land data work does not validate current v1 scalers or models.
+- The Phase 8 live provider refresh path requires approved credentials/network
+  access and has only synthetic, offline test coverage in this repository.
 - A fresh clone may need local generated artifacts before the full prediction
   workflow can be demonstrated end to end.
 
