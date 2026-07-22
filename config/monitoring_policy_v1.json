@@ -1,0 +1,25 @@
+{
+  "alert_persistence_distinct_dates": 3,
+  "critical_quantile": 0.99,
+  "hard_quality_tolerance": 0,
+  "mape_epsilon_quantile": 0.01,
+  "minimum_samples": {
+    "30": 15,
+    "90": 45
+  },
+  "overrides": {},
+  "r2_minimum_samples": {
+    "30": 20,
+    "90": 60
+  },
+  "reference_end": "2024-12-31",
+  "reference_start": "2010-01-15",
+  "schema_version": "wind_forecast.monitoring_policy.v1",
+  "source_late_days": 7,
+  "source_objective_days": 5,
+  "warning_quantile": 0.95,
+  "windows_days": [
+    30,
+    90
+  ]
+}

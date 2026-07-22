@@ -425,6 +425,16 @@ def replay_prediction(store_root: str | Path, prediction_id: str) -> dict[str, A
     }
 
 
+def validate_monitoring_model_bundle(root: str | Path) -> dict[str, Any]:
+    """Validate and describe the accepted, unpromoted v2 monitoring bundle."""
+    return _validate_model_bundle(Path(root))
+
+
+def load_verified_monitoring_state(store_root: str | Path) -> dict[str, Any] | None:
+    """Load the derived ledger pointer after verifying all referenced evidence."""
+    return _load_current(Path(store_root), verify=True)
+
+
 def _validate_model_bundle(root: Path) -> dict[str, Any]:
     missing = [name for name in _MODEL_FILES if not (root / name).is_file()]
     if missing:
@@ -1445,7 +1455,9 @@ __all__ = [
     "MonitoringPlan",
     "MonitoringResult",
     "load_prediction_evidence",
+    "load_verified_monitoring_state",
     "plan_historical_monitoring",
     "replay_prediction",
     "run_historical_monitoring",
+    "validate_monitoring_model_bundle",
 ]

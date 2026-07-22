@@ -9,7 +9,7 @@
 | Decision date | `2026-07-20` |
 | Contract version | `historical_batch_monitoring_v1` |
 | Operating mode | Historical batch monitoring with delayed REN and ERA5-Land data |
-| Current implementation status | Stage 1 immutable prediction-evidence ledger implemented |
+| Current implementation status | Stage 2 immutable quality, drift, performance, report, and local-alert layer implemented |
 
 ## Purpose And Scope
 
@@ -22,10 +22,11 @@ ERA5-Land v2 contracts. Its output is a retrospective estimate, or hindcast,
 for a completed local calendar day. It is not an ex-ante forecast and must not
 be presented as real-time, same-day, D+1, or multi-day forecasting.
 
-Stage 0 was a documentation-only decision. Stage 1 now implements the approved
-prediction, actual, and metric evidence ledger. Orchestration, provider calls,
-alerting, drift statistics, aggregate reports, APIs, notebooks, and model
-promotion remain outside this phase.
+Stage 0 was a documentation-only decision and Stage 1 implemented the approved
+prediction, actual, and metric evidence ledger. Stage 2 adds offline quality,
+drift, performance, immutable reporting, and local alert evidence.
+Orchestration, provider calls, external alert delivery, APIs, notebooks,
+retraining, and model promotion remain outside this phase.
 
 ## Decision Summary
 
@@ -300,6 +301,69 @@ Remove `--dry-run` only after reviewing the plan. Subsequent runs omit
 `--model-bundle` is always explicit; the example names the locally verified
 accepted output and the CLI never guesses or promotes a model directory.
 
+## Stage 2 Implementation — Drift And Performance Reports
+
+`wind_forecast.monitoring_reporting` builds a content-addressed reference from
+the exact train-plus-validation population used to fit the accepted v2 model
+(`2010-01-15` through `2024-12-31`). It verifies dataset, model, feature-order,
+transformation, and artifact checksums before calculating reference
+predictions. Those predictions describe prediction drift only and are never
+written to the Stage 1 prediction ledger or treated as performance evidence.
+
+The tracked policy `config/monitoring_policy_v1.json` fixes 30- and 90-day
+civil-calendar windows, sample gates, D+5/D+7 freshness rules, 95th/99th
+calibration quantiles, protected MAPE, and three-distinct-date persistence for
+statistical alerts. It also carries the hard-quality tolerance and optional
+fully-qualified warning/critical threshold overrides, which are resolved into
+the immutable calibration rather than read dynamically by reports. Calibration
+uses historical pseudo-windows, both global and exact month/day seasonal
+references, normalized Wasserstein distance, and the KS statistic. Performance
+thresholds use only the sealed v2 test predictions. Wind direction is evaluated
+through its sine/cosine pairs so the 0°/360° boundary cannot create a scalar
+discontinuity.
+
+Create the immutable reference and calibration without training or network
+access:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\calibrate_monitoring.py `
+  --model-bundle outputs\training\v2_reference_mlflow
+```
+
+Then generate a report for one explicit Phase 8 batch manifest:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\run_monitoring_report.py `
+  --source-run-manifest data\processed\v2\incremental_update\runs\<RUN_ID>\manifest.json `
+  --monitoring-store-root data\processed\v2\monitoring `
+  --calibration-dir data\processed\v2\monitoring\reporting\calibrations\<CALIBRATION_ID> `
+  --through-date YYYY-MM-DD `
+  --dry-run
+```
+
+Reports are immutable JSON plus Markdown. Primary performance always uses the
+`as_issued` view; restatements remain diagnostic. MAE, RMSE, signed bias,
+protected MAPE, and sample-gated R² are reported. Hard contract violations and
+D+7 source lateness open local alerts immediately; drift/performance breaches
+require three distinct reporting dates. Same-date reruns do not increment the
+counter. Alert delivery is a local append-only event record; external delivery
+belongs to a later orchestration decision. Public loaders verify active alerts
+and return their causally ordered immutable history; a report date older than
+the derived alert state is rejected.
+
+The local acceptance calibration completed against the accepted v2 artifacts
+with reference ID
+`3a1f8a357136bf89dfa1248906486bf726fbfd7bc7dbe4af2f41f347808794c7`
+and calibration ID
+`ff56dd507607a95aea81f76ab6ce694f1fd8eb51a97175f834bdb83c16b2fe58`.
+It evaluated 691 valid 30-day and 690 valid 90-day feature backtest windows.
+All 56 model inputs are covered by 50 alert entities because the ten
+wind-direction sine/cosine components are evaluated as five circular pairs and
+the raw degree column is represented by the current-direction pair. The
+protected-MAPE epsilon resolved to `18573.143` on the unchanged legacy target
+scale. The model checksum remained
+`9d2bf8ed179b6720c3736de0fa674492909e96bffb87e6bb0ce3868e193e3041`.
+
 ## Monitoring Scope And Activation Gates
 
 Monitoring is activated in layers:
@@ -307,15 +371,14 @@ Monitoring is activated in layers:
 1. Source freshness, completeness, validation status, late dates, and explicit
    exclusions may start once the scheduled ingestion and persistence path is
    implemented.
-2. Feature drift may start only after a v2 reference dataset, reference period,
-   exact feature schema, and drift thresholds are separately approved.
-3. Model-performance monitoring may start only after a v2 scaler, model,
-   temporal training cutoff, evaluation baseline, and immutable estimate path
-   are approved and validated.
+2. Feature drift is active only with the verified, immutable v2 monitoring
+   reference and calibrated threshold artifact.
+3. Model-performance monitoring is active only with the accepted unpromoted v2
+   model, temporal cutoff, sealed-test baseline, and immutable Stage 1 evidence.
 
-The current v1 scalers, models, and metrics are not valid for v2. Stage 0 does
-not promote any existing artifact and does not authorize prediction or
-performance claims.
+The current v1 scalers, models, and metrics are not valid for v2. Stage 2 does
+not promote an artifact, alter predictions, or authorize ex-ante forecasting
+claims.
 
 ## Rejected Alternatives
 
@@ -361,7 +424,12 @@ data or silently returning to an ambiguous operating mode.
 - [x] Stage 0 itself approved no code, data, model, scaler, pipeline, notebook, or generated artifact change.
 - [x] Stage 1 persists target-free predictions before actuals and metrics.
 - [x] Activation/backfill, D+5, idempotency, revision, restatement, corruption, and replay behavior have synthetic offline tests.
-- [x] APIs, Registry, drift, aggregate reporting, alerts, orchestration, training, and provider calls remain out of scope.
+- [x] Feature, prediction, and target drift use calibrated 30/90-day global and seasonal comparisons.
+- [x] Performance reports MAE, RMSE, bias, sample-gated R², and protected MAPE from immutable as-issued evidence.
+- [x] Phase 8 quality sidecars cover succeeded, no-op, and failed batch attempts.
+- [x] Reports and local alert transitions are append-only; statistical alerts require persistence.
+- [x] Controlled tests cover no-drift/drift, circular direction, quality failures, metrics, persistence, dry-run, and corruption boundaries.
+- [x] APIs, Registry, orchestration, retraining, provider calls, and external alert delivery remain out of scope.
 
 ## External Primary References
 
@@ -370,8 +438,8 @@ data or silently returning to an ambiguous operating mode.
 
 ## Stop Gate
 
-Phase 9 Stage 1 stops at the local append-only evidence ledger. Drift
-statistics, aggregate performance reports, alerting, Phase 10 orchestration,
+Phase 9 stops at local append-only evidence, calibrated drift/performance
+reports, and local alert state. Phase 10 orchestration, external notifications,
 forecast-weather selection, D+1 forecasting, target migration, dataset
-regeneration, scaler fitting, model training, API changes, and baseline or
-Registry promotion require separate approved work.
+regeneration, scaler fitting, model training, API/dashboard changes, and
+baseline or Registry promotion require separate approved work.

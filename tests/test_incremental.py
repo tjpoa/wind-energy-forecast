@@ -259,6 +259,16 @@ def test_two_runs_are_idempotent_and_current_readers_verify_data(environment: Up
     assert len(features) == 6
     assert len(feature_coverage) == 20
     assert not coverage["date_local"].duplicated().any()
+    for result in (first, second):
+        manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+        quality_ref = manifest["quality_evidence"]
+        quality_path = Path(quality_ref["path"])
+        assert manifest["schema_version"] == "wind_forecast.v2_incremental_run.v2"
+        assert quality_path.is_file()
+        assert sha256_file(quality_path) == quality_ref["sha256"]
+        quality = json.loads(quality_path.read_text(encoding="utf-8"))
+        assert quality["schema_version"] == "wind_forecast.batch_quality.v1"
+        assert quality["batch_status"] == result.status
 
 
 def test_ren_revision_rebuilds_only_date_and_forward_feature_window(
@@ -498,6 +508,17 @@ def test_failure_before_publish_preserves_pointer_and_retry_converges(
         run_v2_update(config, source_refresher=refresh, failure_hook=fail)
     assert (environment.store_root / "state" / "current.json").read_bytes() == pointer_before
     assert list((environment.store_root / "quarantine").iterdir())
+    failed_manifest_path = next(
+        path
+        for path in (environment.store_root / "runs").glob("*/manifest.json")
+        if json.loads(path.read_text(encoding="utf-8"))["status"] == "failed"
+    )
+    failed_manifest = json.loads(failed_manifest_path.read_text(encoding="utf-8"))
+    failed_quality = json.loads(
+        Path(failed_manifest["quality_evidence"]["path"]).read_text(encoding="utf-8")
+    )
+    assert failed_quality["batch_status"] == "failed"
+    assert failed_quality["verdict"] == "FAIL"
 
     recovered = run_v2_update(config, source_refresher=refresh)
     assert recovered.status == "succeeded"
@@ -655,6 +676,17 @@ def test_invalid_duplicate_era_partition_fails_closed(environment: UpdateConfig)
         plan_v2_update(environment)
     assert not environment.store_root.exists()
 
+    with pytest.raises(IncrementalUpdateError, match="duplicate"):
+        run_v2_update(environment)
+    manifest_path = next((environment.store_root / "runs").glob("*/manifest.json"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    quality_path = Path(manifest["quality_evidence"]["path"])
+    quality = json.loads(quality_path.read_text(encoding="utf-8"))
+    assert manifest["status"] == "failed"
+    assert quality["batch_status"] == "failed"
+    assert quality["duplicates"]["duplicate_timestamp_count"] == 1
+    assert quality["checksums"]["count"] == 1
+
 
 def test_invalid_era_source_schema_fails_closed(environment: UpdateConfig) -> None:
     path = next(environment.era5_root.glob("hourly/station_id=*/period=*/hourly.csv"))
@@ -664,6 +696,68 @@ def test_invalid_era_source_schema_fails_closed(environment: UpdateConfig) -> No
     with pytest.raises(IncrementalUpdateError, match="missing columns"):
         plan_v2_update(environment)
     assert not environment.store_root.exists()
+
+    with pytest.raises(IncrementalUpdateError, match="missing columns"):
+        run_v2_update(environment)
+    manifest_path = next((environment.store_root / "runs").glob("*/manifest.json"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    quality = json.loads(Path(manifest["quality_evidence"]["path"]).read_text(encoding="utf-8"))
+    assert manifest["status"] == "failed"
+    assert {item["code"] for item in quality["issues"]} >= {"schema_validation_failed"}
+    assert quality["checksums"]["files"][0]["source"] == "rejected_input"
+
+
+def test_invalid_monitoring_policy_produces_failed_batch_evidence(
+    environment: UpdateConfig,
+) -> None:
+    policy_path = environment.store_root.parent / "invalid-policy.json"
+    policy_path.write_text(json.dumps({"schema_version": "invalid"}), encoding="utf-8")
+    config = replace(environment, monitoring_policy_path=policy_path)
+
+    with pytest.raises(ValueError, match="Unsupported monitoring policy"):
+        run_v2_update(config)
+
+    manifest_path = next((environment.store_root / "runs").glob("*/manifest.json"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    quality = json.loads(Path(manifest["quality_evidence"]["path"]).read_text(encoding="utf-8"))
+    assert manifest["status"] == "failed"
+    assert quality["policy"]["status"] == "invalid"
+    assert quality["policy"]["sha256"] == incremental_module.sha256_file(policy_path)
+    assert not (environment.store_root / "state" / "update.lock").exists()
+
+
+def test_failed_run_falls_back_when_detailed_quality_scan_fails(
+    environment: UpdateConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = incremental_module.build_batch_quality_evidence
+    calls = 0
+
+    def flaky_quality(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("simulated quality scan failure")
+        return original(**kwargs)
+
+    monkeypatch.setattr(
+        incremental_module, "build_batch_quality_evidence", flaky_quality
+    )
+
+    def fail(stage: str) -> None:
+        if stage == "after_download":
+            raise RuntimeError("simulated batch failure")
+
+    with pytest.raises(RuntimeError, match="simulated batch failure"):
+        run_v2_update(environment, failure_hook=fail)
+
+    manifest_path = next((environment.store_root / "runs").glob("*/manifest.json"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    quality = json.loads(Path(manifest["quality_evidence"]["path"]).read_text(encoding="utf-8"))
+    assert manifest["status"] == "failed"
+    assert quality["batch_status"] == "failed"
+    assert calls == 2
+    assert not (environment.store_root / "state" / "update.lock").exists()
 
 
 def test_null_ren_revision_fails_closed_without_changing_current(
