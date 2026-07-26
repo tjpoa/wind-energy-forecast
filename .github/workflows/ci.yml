@@ -164,6 +164,7 @@ jobs:
       - name: Validate Airflow Compose configuration
         env:
           AIRFLOW_ADMIN_USERNAME: ci-admin
+          AIRFLOW_API_AUTH_JWT_SECRET: ci-only-${{ github.run_id }}
           AIRFLOW_DATABASE_URL: postgresql+psycopg2://ci_user:ci_password@postgres/ci_airflow
           POSTGRES_USER: ci_user
           POSTGRES_PASSWORD: ci_password
