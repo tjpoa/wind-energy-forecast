@@ -1,0 +1,130 @@
+x-airflow-common: &airflow-common
+  build:
+    context: ..
+    dockerfile: airflow/Dockerfile
+  env_file:
+    - path: .env
+      required: false
+  environment: &airflow-environment
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: Europe/Lisbon
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.api_fastapi.auth.managers.simple.simple_auth_manager.SimpleAuthManager
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "${AIRFLOW_EXECUTION_API_SERVER_URL:-http://airflow-api-server:8080/execution}"
+    AIRFLOW__API_AUTH__JWT_SECRET: "${AIRFLOW_API_AUTH_JWT_SECRET:?Set a local-only JWT secret}"
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: "${AIRFLOW_ADMIN_USERNAME:?Set a local admin username}:admin"
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/logs/simple_auth_manager_passwords.json.generated
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "${AIRFLOW_DATABASE_URL:?Set the Airflow metadata database URL}"
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    AIRFLOW_ADMIN_USERNAME: "${AIRFLOW_ADMIN_USERNAME:?Set AIRFLOW_ADMIN_USERNAME}"
+    WIND_FORECAST_AIRFLOW_ACTIVATION_DATE: "${WIND_FORECAST_AIRFLOW_ACTIVATION_DATE:?Set an explicit activation date}"
+    WIND_FORECAST_BATCH_MODEL_BUNDLE: "${WIND_FORECAST_BATCH_MODEL_BUNDLE:?Select an explicit model bundle}"
+    WIND_FORECAST_BATCH_CALIBRATION_DIR: "${WIND_FORECAST_BATCH_CALIBRATION_DIR:?Select an explicit calibration directory}"
+    WIND_FORECAST_SOURCE_STORE_ROOT: "${WIND_FORECAST_SOURCE_STORE_ROOT:-/opt/wind-energy-forecast/data/processed/v2/incremental_update}"
+    WIND_FORECAST_RAW_STORE_ROOT: "${WIND_FORECAST_RAW_STORE_ROOT:-}"
+    WIND_FORECAST_MONITORING_STORE_ROOT: "${WIND_FORECAST_MONITORING_STORE_ROOT:-/opt/wind-energy-forecast/data/processed/v2/monitoring}"
+    WIND_FORECAST_REN_ROOT: "${WIND_FORECAST_REN_ROOT:-}"
+    WIND_FORECAST_ERA5_ROOT: "${WIND_FORECAST_ERA5_ROOT:-}"
+    WIND_FORECAST_STATION_MAPPING: "${WIND_FORECAST_STATION_MAPPING:-}"
+    WIND_FORECAST_V1_FEATURE_TABLE: "${WIND_FORECAST_V1_FEATURE_TABLE:-}"
+    WIND_FORECAST_BASELINE_INTEGRATED_ROOT: "${WIND_FORECAST_BASELINE_INTEGRATED_ROOT:-}"
+    WIND_FORECAST_BASELINE_FEATURE_ROOT: "${WIND_FORECAST_BASELINE_FEATURE_ROOT:-}"
+    WIND_FORECAST_NO_SOURCE_REFRESH: "${WIND_FORECAST_NO_SOURCE_REFRESH:-false}"
+    WIND_FORECAST_FAIL_ON_ACTIVE_ALERT: "${WIND_FORECAST_FAIL_ON_ACTIVE_ALERT:-false}"
+  user: "${AIRFLOW_UID:-50000}:0"
+  volumes:
+    - type: bind
+      source: ../data
+      target: /opt/wind-energy-forecast/data
+    - type: bind
+      source: ../outputs
+      target: /opt/wind-energy-forecast/outputs
+    - type: bind
+      source: ../config
+      target: /opt/wind-energy-forecast/config
+      read_only: true
+    - type: bind
+      source: ./dags
+      target: /opt/airflow/dags
+      read_only: true
+    - type: bind
+      source: ./logs
+      target: /opt/airflow/logs
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:?Set POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}"
+      POSTGRES_DB: "${POSTGRES_DB:?Set POSTGRES_DB}"
+    volumes:
+      - airflow-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  airflow-init:
+    <<: *airflow-common
+    command: db migrate
+    restart: "no"
+
+  airflow-api-server:
+    <<: *airflow-common
+    command: api-server --apps all
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  airflow-cli:
+    <<: *airflow-common
+    profiles: ["debug"]
+    entrypoint: airflow
+    command: info
+    restart: "no"
+
+volumes:
+  airflow-postgres:

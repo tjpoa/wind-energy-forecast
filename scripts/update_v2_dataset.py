@@ -106,6 +106,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Use only already-present local raw partitions; mainly for controlled recovery.",
     )
+    parser.add_argument("--bootstrap-start", help="Explicit accepted-baseline start date.")
+    parser.add_argument("--bootstrap-end", help="Explicit accepted-baseline end date.")
     args = parser.parse_args(argv)
     if args.revision_lookback_days < 0:
         parser.error("--revision-lookback-days must be zero or greater.")
@@ -158,6 +160,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         recheck_min_age_hours=args.recheck_min_age_hours,
         recheck_ren_dates=tuple(args.recheck_ren_date),
         recheck_era5_months=tuple(args.recheck_era5_month),
+        bootstrap_start=args.bootstrap_start,
+        bootstrap_end=args.bootstrap_end,
         dry_run=args.dry_run,
     )
 

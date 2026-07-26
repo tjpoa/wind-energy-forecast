@@ -1,0 +1,11 @@
+numpy>=2.0,<2.1
+pandas>=2.2,<3
+scipy>=1.15,<2
+requests>=2.32,<3
+python-dotenv>=1.1,<2
+cdsapi>=0.7.7,<0.8
+xarray>=2025.1,<2027
+netCDF4>=1.7,<2
+joblib>=1.5,<2
+scikit-learn==1.6.1
+matplotlib>=3.9,<4
