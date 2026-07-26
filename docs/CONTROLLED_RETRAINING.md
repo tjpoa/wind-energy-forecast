@@ -2,10 +2,11 @@
 
 ## Status
 
-Approved contract. This increment defines policy and side-effect-free evidence
-types only. Monthly evaluation, training, MLflow/Registry writes, deployment
-mutation, model-era monitoring, promotion, stabilization, rollback, and
-scheduling remain unimplemented until their separately reviewed PRs.
+Approved contract. The policy/evidence contracts and manual monthly
+eligibility evaluation are implemented. Training, MLflow/Registry writes,
+deployment mutation, model-era monitoring, promotion, stabilization, rollback,
+and automatic scheduling remain unimplemented until their separately reviewed
+PRs.
 
 The name "Stage 7 — Controlled Retraining" comes from the approved operational
 plan. It does not replace or renumber roadmap Phase 7, which remains GitHub
@@ -52,6 +53,52 @@ The tracked policy is `config/retraining_policy_v1.json`, with schema
   already represent three consecutive distinct reporting dates.
 - Quality alerts block evaluation. They do not trigger retraining.
 - Training, promotion, and stabilization are manual.
+
+## Manual Monthly Evaluation
+
+PR 2 implements an offline, operator-invoked recommendation step:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\evaluate_retraining.py `
+  --monitoring-report-path <exact-report.json> `
+  --incumbent-id <phase9-model-snapshot-id> `
+  --incumbent-fit-cutoff YYYY-MM-DD `
+  --evaluated-at-utc YYYY-MM-DDTHH:MM:SSZ `
+  --dry-run
+```
+
+The operator pins an exact verified Phase 9 report. The evaluator does not
+infer "latest" or month-end evidence. The explicit incumbent identity and fit
+cutoff are transitional inputs and are never described as a `champion`.
+Evaluation is allowed only after day 8 at 13:00 `Europe/Lisbon` in the month
+following the pinned cutoff and after that cutoff crosses D+7. A later manual
+catch-up still seals the original evaluation month.
+
+The evaluator verifies the report, its alert events, the derived report-state
+pointer, and the Phase 9 ledger. It then uses the original `as_issued` feature
+snapshots with the current verified target revision. Feature restatements are
+recorded and ignored. The report's breach category is cross-checked against
+its persistence state and immutable alert event.
+
+Exactly one recommendation outcome is produced:
+
+- `blocked_quality`;
+- `insufficient_observations`;
+- `no_trigger`;
+- `eligible_for_manual_backtest`.
+
+Before the monthly time gate, the outcome is `not_due` and no record is
+written. `--dry-run` verifies and plans without creating an output directory.
+Otherwise, the evaluator seals one content-addressed immutable JSON record
+under
+`data/processed/v2/retraining/evaluations/<YYYY-MM>/<evaluation-id>/evaluation.json`.
+An identical rerun is idempotent. Different evidence for an already sealed
+period fails closed.
+
+This step emits a recommendation only. It does not increment Phase 9
+persistence, train a candidate, write Registry state, promote or stabilize a
+model, mutate deployment state, roll back, call the network, or create a
+scheduler.
 
 ## Temporal Cutoffs
 
@@ -145,8 +192,8 @@ version. Bootstrap initializes governance; it is not a normal promotion.
 
 Implementation is split into separately reviewed PRs:
 
-1. contracts and policy;
-2. monthly evaluation;
+1. contracts and policy (implemented);
+2. monthly evaluation (implemented);
 3. temporal backtesting and v2 Registry;
 4. bootstrap and deployment pointer;
 5. model-era monitoring;
