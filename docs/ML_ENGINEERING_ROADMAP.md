@@ -495,3 +495,34 @@ Design a cloud deployment architecture for the mature project without forcing im
 
 ### Skills demonstrated
 - Cloud architecture, Databricks platform design, MLOps deployment planning and cost-aware engineering.
+
+## Operational Extension — Controlled Retraining
+
+Status: the contract and policy are approved; operational implementation is
+split into separately reviewed increments.
+
+This extension is also referred to as "Stage 7 — Controlled Retraining" in
+its approved delivery plan. It does not replace roadmap Phase 7, which remains
+the completed GitHub Actions continuous-integration phase.
+
+### Objective
+
+Use Phase 9 monitoring evidence to recommend reproducible v2 hindcast
+retraining decisions without automatically training, promoting, stabilizing,
+or rolling back a model.
+
+### Contract
+
+- Evaluate eligibility monthly after the D+7 source-lateness boundary.
+- Require 90 new eligible observations and an already-persistent Phase 9 drift
+  or performance alert.
+- Backtest on complete folds of 30 eligible observations rather than calendar
+  windows.
+- Compare the candidate with the active v2 model and one-day persistence.
+- Keep candidate, champion, probationary, and stable semantics explicit.
+- Require manual promotion and a second manual stability approval.
+- Preserve every model era and support checksum-pinned rollback receipts.
+
+The full accepted decision is recorded in
+[`CONTROLLED_RETRAINING.md`](CONTROLLED_RETRAINING.md). The legacy v1 API and
+automatic model replacement remain out of scope.
