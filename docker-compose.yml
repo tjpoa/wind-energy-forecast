@@ -8,6 +8,7 @@ services:
     environment:
       WIND_FORECAST_CORS_ALLOW_ORIGINS: "${WIND_FORECAST_CORS_ALLOW_ORIGINS:-http://localhost:5173}"
       WIND_FORECAST_PERFORMANCE_ARTIFACT_DIR: /app/performance
+      WIND_FORECAST_MONITORING_STORE_ROOT: /app/data/processed/v2/monitoring
     volumes:
       - type: bind
         source: ./data

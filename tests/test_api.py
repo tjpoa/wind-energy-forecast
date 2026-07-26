@@ -1,4 +1,5 @@
 from datetime import date
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -12,6 +13,7 @@ from wind_forecast.api import (
     PredictionResponse,
     PredictionService,
     create_app,
+    get_monitoring_service,
     get_performance_service,
     get_prediction_service,
 )
@@ -276,7 +278,7 @@ def test_performance_endpoint_returns_typed_json_from_injected_service():
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/json")
-    assert response.json() == {
+    expected_payload = {
         "interval": {
             "requested_start_date": None,
             "requested_end_date": None,
@@ -318,6 +320,12 @@ def test_performance_endpoint_returns_typed_json_from_injected_service():
             },
         ],
     }
+    assert response.json() == expected_payload
+    assert response.content == json.dumps(
+        expected_payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
 
 
 def test_performance_endpoint_passes_date_filters_to_injected_service():
@@ -360,3 +368,19 @@ def test_performance_endpoint_rejects_invalid_date_format():
     )
 
     assert response.status_code == 422
+
+
+def test_monitoring_endpoint_maps_projection_failure_without_exposing_details():
+    class BrokenMonitoringService:
+        def latest(self):
+            from wind_forecast.monitoring_projection import MonitoringProjectionError
+
+            raise MonitoringProjectionError("C:\\private\\monitoring\\state.json")
+
+    app = create_app()
+    app.dependency_overrides[get_monitoring_service] = lambda: BrokenMonitoringService()
+
+    response = TestClient(app).get("/api/v1/monitoring/latest")
+
+    assert response.status_code == 503
+    assert "private" not in response.text

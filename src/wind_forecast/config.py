@@ -11,6 +11,7 @@ from .paths import project_root
 
 
 PERFORMANCE_ARTIFACT_DIR_ENV = "WIND_FORECAST_PERFORMANCE_ARTIFACT_DIR"
+MONITORING_STORE_ROOT_ENV = "WIND_FORECAST_MONITORING_STORE_ROOT"
 CORS_ALLOWED_ORIGINS_ENV = "WIND_FORECAST_CORS_ALLOW_ORIGINS"
 DEFAULT_CORS_ALLOWED_ORIGINS = ("http://localhost:5173",)
 
@@ -30,6 +31,13 @@ class PerformanceArtifactsConfig:
     """Location of one explicitly selected performance-artifact set."""
 
     artifact_dir: Path | None
+
+
+@dataclass(frozen=True)
+class MonitoringStoreConfig:
+    """Location of the immutable Phase 9 monitoring store."""
+
+    store_root: Path
 
 
 @dataclass(frozen=True)
@@ -90,6 +98,19 @@ def load_performance_artifacts_config() -> PerformanceArtifactsConfig:
     if not configured_path.is_absolute():
         configured_path = project_root() / configured_path
     return PerformanceArtifactsConfig(artifact_dir=configured_path.resolve())
+
+
+def load_monitoring_store_config() -> MonitoringStoreConfig:
+    """Load the monitoring store, resolving relative paths from the project root."""
+    raw_path = os.getenv(MONITORING_STORE_ROOT_ENV)
+    configured_path = (
+        Path(raw_path.strip())
+        if raw_path is not None and raw_path.strip()
+        else Path("data/processed/v2/monitoring")
+    )
+    if not configured_path.is_absolute():
+        configured_path = project_root() / configured_path
+    return MonitoringStoreConfig(store_root=configured_path.resolve())
 
 
 def load_cors_config() -> CORSConfig:

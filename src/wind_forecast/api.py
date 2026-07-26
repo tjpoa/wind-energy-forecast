@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Literal
 
 import pandas as pd
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .config import load_cors_config
 from .inference import (
@@ -25,6 +25,11 @@ from .inference import (
     prepare_data_for_prediction,
 )
 from .paths import models_dir, processed_data_dir, project_root
+from .monitoring_projection import (
+    MonitoringProjectionError,
+    MonitoringProjectionService,
+    MonitoringRunNotFoundError,
+)
 from .performance import (
     InvalidPerformanceIntervalError,
     NoPerformanceObservationsError,
@@ -164,6 +169,174 @@ class PerformanceResponse(BaseModel):
     metrics: PerformanceMetricsResponse
     result: PerformanceResultInfoResponse | None
     observations: list[PerformanceObservationResponse]
+
+
+class MonitoringRunFailureResponse(BaseModel):
+    """Sanitized reporting-run failure metadata."""
+
+    failed_at_utc: str | None
+    error_type: str | None
+    message: str
+
+
+class MonitoringRunSummaryResponse(BaseModel):
+    """One reporting attempt in the monitoring history."""
+
+    run_id: str
+    attempted_at_utc: str
+    through_date: str | None
+    source_pipeline_run_id: str | None
+    source_pipeline_status: str | None
+    status: Literal["succeeded", "failed", "in_progress"]
+    report_id: str | None
+    active_alert_count: int
+    failure: MonitoringRunFailureResponse | None
+
+
+class MonitoringAlertResponse(BaseModel):
+    """One sanitized immutable alert transition."""
+
+    alert_event_id: str
+    rule_id: str
+    through_date: str
+    event_type: Literal["opened", "escalated", "resolved"]
+    severity: Literal["not_available", "ok", "warning", "critical"]
+    previous_alert_event_id: str | None
+
+
+class MonitoringMetricResponse(BaseModel):
+    """One moving metric and its sealed-test v2 thresholds."""
+
+    metric: str
+    label: str
+    value: float | None
+    status: str
+    severity: Literal["not_available", "ok", "warning", "critical"]
+    warning: float
+    critical: float
+    direction: Literal["upper", "lower"]
+
+
+class MonitoringDriftResponse(BaseModel):
+    """One ranked feature-drift result."""
+
+    feature: str
+    comparator: Literal["global", "seasonal"]
+    detector: Literal["normalized_wasserstein", "ks_statistic"]
+    value: float
+    severity: Literal["not_available", "ok", "warning", "critical"]
+    threshold: float
+    threshold_ratio: float
+
+
+class MonitoringWindowResponse(BaseModel):
+    """One 30- or 90-day monitoring window."""
+
+    window_days: int
+    status: Literal["available", "insufficient_data", "not_available"]
+    sample_count: int
+    minimum_samples: int | None
+    calendar_start: str | None
+    calendar_end: str | None
+    coverage_ratio: float | None
+    coverage_severity: Literal[
+        "not_available", "ok", "warning", "critical"
+    ] | None
+    performance: list[MonitoringMetricResponse]
+    top_drift: list[MonitoringDriftResponse]
+
+
+class MonitoringFreshnessResponse(BaseModel):
+    """D+5/D+7 freshness derived from verified source evidence."""
+
+    status: Literal["within_objective", "behind_objective", "late", "unknown"]
+    watermark_date: str | None
+    objective_at: str | None
+    late_at: str | None
+    timezone: Literal["Europe/Lisbon"]
+    objective_days: int
+    late_days: int
+
+
+class MonitoringModelResponse(BaseModel):
+    """Report-scoped model identity."""
+
+    snapshot_id: str | None
+    checksum: str
+    model_type: str | None
+    dataset_version: str | None
+    dataset_checksum: str
+    transformation_version: str
+    status: Literal["selected_not_promoted"]
+
+
+class MonitoringSourcePipelineResponse(BaseModel):
+    """Source pipeline linked to one report."""
+
+    run_id: str
+    status: str
+
+
+class MonitoringReportResponse(BaseModel):
+    """Sanitized projection of one immutable Phase 9 report."""
+
+    report_id: str
+    reporting_run_id: str
+    created_at_utc: str
+    as_of_date: str
+    source_pipeline: MonitoringSourcePipelineResponse
+    freshness: MonitoringFreshnessResponse
+    model: MonitoringModelResponse
+    windows: dict[str, MonitoringWindowResponse]
+    active_alerts: list[MonitoringAlertResponse]
+    target_scale: Literal["sum_of_15_minute_MW_observations"]
+
+
+class MonitoringLatestResponse(BaseModel):
+    """Latest report and latest reporting attempt."""
+
+    state: Literal["empty", "available"]
+    mode: Literal["retrospective_historical_batch_not_real_time"]
+    served_at_utc: str
+    message: str | None
+    latest_attempt: MonitoringRunSummaryResponse | None
+    report: MonitoringReportResponse | None
+
+
+class MonitoringRunPageResponse(BaseModel):
+    """Paginated reporting attempts."""
+
+    items: list[MonitoringRunSummaryResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class MonitoringAlertPageResponse(BaseModel):
+    """Paginated immutable alert transitions."""
+
+    items: list[MonitoringAlertResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class MonitoringHistoryResponse(BaseModel):
+    """Monitoring run and alert history."""
+
+    state: Literal["empty", "available"]
+    mode: Literal["retrospective_historical_batch_not_real_time"]
+    runs: MonitoringRunPageResponse
+    alerts: MonitoringAlertPageResponse
+
+
+class MonitoringRunResponse(BaseModel):
+    """One reporting attempt and its optional report."""
+
+    state: Literal["available"]
+    mode: Literal["retrospective_historical_batch_not_real_time"]
+    run: MonitoringRunSummaryResponse
+    report: MonitoringReportResponse | None
 
 
 @dataclass(frozen=True)
@@ -326,6 +499,12 @@ def get_performance_service() -> PerformanceService:
     return PerformanceService.from_config()
 
 
+@lru_cache(maxsize=1)
+def get_monitoring_service() -> MonitoringProjectionService:
+    """Return the cached read-only Phase 9 projection service."""
+    return MonitoringProjectionService.from_config()
+
+
 def _performance_metrics_response(
     metrics: PerformanceMetrics,
 ) -> PerformanceMetricsResponse:
@@ -438,6 +617,71 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except PerformanceArtifactError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @api.get(
+        "/api/v1/monitoring/latest",
+        response_model=MonitoringLatestResponse,
+    )
+    def monitoring_latest(
+        service: MonitoringProjectionService = Depends(get_monitoring_service),
+    ) -> MonitoringLatestResponse:
+        """Return the latest retrospective historical monitoring projection."""
+        try:
+            return MonitoringLatestResponse.model_validate(service.latest())
+        except (MonitoringProjectionError, ValidationError) as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Historical monitoring evidence is unavailable or corrupt.",
+            ) from exc
+
+    @api.get(
+        "/api/v1/monitoring/history",
+        response_model=MonitoringHistoryResponse,
+    )
+    def monitoring_history(
+        run_limit: int = Query(default=20, ge=1, le=100),
+        run_offset: int = Query(default=0, ge=0),
+        alert_limit: int = Query(default=50, ge=1, le=200),
+        alert_offset: int = Query(default=0, ge=0),
+        service: MonitoringProjectionService = Depends(get_monitoring_service),
+    ) -> MonitoringHistoryResponse:
+        """Return paginated reporting attempts and immutable alert events."""
+        try:
+            return MonitoringHistoryResponse.model_validate(
+                service.history(
+                    run_limit=run_limit,
+                    run_offset=run_offset,
+                    alert_limit=alert_limit,
+                    alert_offset=alert_offset,
+                )
+            )
+        except (MonitoringProjectionError, ValidationError) as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Historical monitoring evidence is unavailable or corrupt.",
+            ) from exc
+
+    @api.get(
+        "/api/v1/monitoring/runs/{run_id}",
+        response_model=MonitoringRunResponse,
+    )
+    def monitoring_run(
+        run_id: str,
+        service: MonitoringProjectionService = Depends(get_monitoring_service),
+    ) -> MonitoringRunResponse:
+        """Return one reporting attempt, with report detail when successful."""
+        try:
+            return MonitoringRunResponse.model_validate(service.run(run_id))
+        except MonitoringRunNotFoundError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="Monitoring reporting run was not found.",
+            ) from exc
+        except (MonitoringProjectionError, ValidationError) as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Historical monitoring evidence is unavailable or corrupt.",
+            ) from exc
 
     return api
 

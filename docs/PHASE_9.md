@@ -9,7 +9,7 @@
 | Decision date | `2026-07-20` |
 | Contract version | `historical_batch_monitoring_v1` |
 | Operating mode | Historical batch monitoring with delayed REN and ERA5-Land data |
-| Current implementation status | Stage 2 immutable quality, drift, performance, report, and local-alert layer implemented |
+| Current implementation status | Stage 3 read-only API projection and retrospective dashboard implemented over the immutable Stage 2 evidence |
 
 ## Purpose And Scope
 
@@ -24,9 +24,10 @@ be presented as real-time, same-day, D+1, or multi-day forecasting.
 
 Stage 0 was a documentation-only decision and Stage 1 implemented the approved
 prediction, actual, and metric evidence ledger. Stage 2 adds offline quality,
-drift, performance, immutable reporting, and local alert evidence.
-Orchestration, provider calls, external alert delivery, APIs, notebooks,
-retraining, and model promotion remain outside this phase.
+drift, performance, immutable reporting, and local alert evidence. A separately
+approved Stage 3 projects that evidence through a read-only API and dashboard.
+Orchestration, provider calls, external alert delivery, notebooks, retraining,
+and model promotion remain outside this phase.
 
 ## Decision Summary
 
@@ -380,6 +381,32 @@ The current v1 scalers, models, and metrics are not valid for v2. Stage 2 does
 not promote an artifact, alter predictions, or authorize ex-ante forecasting
 claims.
 
+## Stage 3 Implementation — Read-Only API And Dashboard
+
+`wind_forecast.monitoring_projection` reads the configured
+`WIND_FORECAST_MONITORING_STORE_ROOT` (default
+`data/processed/v2/monitoring`) through identity-, checksum-, and alert-chain
+verified loaders. It exposes sanitized projections through:
+
+- `GET /api/v1/monitoring/latest`;
+- `GET /api/v1/monitoring/history`;
+- `GET /api/v1/monitoring/runs/{run_id}`.
+
+No reports or runs is a valid connected empty state. Unknown runs return
+`404`, invalid pagination returns `422`, and corrupt evidence returns a
+sanitized `503`. Calibration references remain relocatable after a store is
+moved between hosts: if the recorded absolute path no longer exists, the
+loader verifies `reporting/references/{reference_id}` instead.
+
+The React dashboard opens on a `Monitoring` view and retains
+`Historical performance` as a separate view backed by the unchanged
+`/api/v1/performance` contract. Monitoring shows D+5/D+7 source freshness,
+the verified unpromoted model snapshot, source/report run status, 30/90-day
+as-issued performance against sealed-test v2 thresholds, top feature drift,
+and local alert/run history. It refreshes only on view entry or explicit user
+action and is permanently labelled “retrospective historical batch
+monitoring — not real time.”
+
 ## Rejected Alternatives
 
 | Alternative | Decision and reason |
@@ -429,7 +456,9 @@ data or silently returning to an ambiguous operating mode.
 - [x] Phase 8 quality sidecars cover succeeded, no-op, and failed batch attempts.
 - [x] Reports and local alert transitions are append-only; statistical alerts require persistence.
 - [x] Controlled tests cover no-drift/drift, circular direction, quality failures, metrics, persistence, dry-run, and corruption boundaries.
-- [x] APIs, Registry, orchestration, retraining, provider calls, and external alert delivery remain out of scope.
+- [x] A read-only API/dashboard exposes verified monitoring evidence without changing `/api/v1/performance`.
+- [x] Loading, empty, error, delayed, partial-history, refresh, cancellation, pagination, and run-detail paths have offline tests.
+- [x] Registry serving, orchestration, retraining, provider calls, real-time claims, and external alert delivery remain out of scope.
 
 ## External Primary References
 
@@ -438,8 +467,9 @@ data or silently returning to an ambiguous operating mode.
 
 ## Stop Gate
 
-Phase 9 stops at local append-only evidence, calibrated drift/performance
-reports, and local alert state. Phase 10 orchestration, external notifications,
-forecast-weather selection, D+1 forecasting, target migration, dataset
-regeneration, scaler fitting, model training, API/dashboard changes, and
-baseline or Registry promotion require separate approved work.
+Phase 9 and its separately approved read-only projection stop at local
+append-only evidence, sanitized API reads, and retrospective visualization.
+Phase 10 orchestration, external notifications, forecast-weather selection,
+D+1 forecasting, target migration, dataset regeneration, scaler fitting,
+model training, write APIs, and baseline or Registry promotion require
+separate approved work.
