@@ -8,6 +8,9 @@ version = "0.1.0"
 description = "Wind-energy production forecasting utilities."
 requires-python = ">=3.10"
 
+[project.scripts]
+wind-forecast-batch = "wind_forecast.batch_cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["wind_forecast*"]

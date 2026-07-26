@@ -27,6 +27,7 @@ This folder keeps project documentation organized by purpose and roadmap phase.
 | 5 | [PHASE_5.md](PHASE_5.md) | FastAPI prediction API documentation. |
 | 8 | [PHASE_8.md](PHASE_8.md) | Transactional, idempotent v2 dataset updates, revision policy, observability, and recovery. |
 | 9 | [PHASE_9.md](PHASE_9.md) | Delayed historical batch contract, immutable evidence, calibrated drift/performance reports, and local alerts. |
+| 10 | [PHASE_10.md](PHASE_10.md) | Local-first batch orchestration, stable CLI, Task Scheduler operation, and the gate for Airflow. |
 
 Other phases without a file do not yet have dedicated documentation in this
 repository. Older audit records may describe the exact file paths that existed

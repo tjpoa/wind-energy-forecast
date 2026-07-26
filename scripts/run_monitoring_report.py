@@ -35,7 +35,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Sequence[str] | None = None) -> None:
+def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     result = run_monitoring_report(
         MonitoringReportConfig(
@@ -48,8 +48,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     print(json.dumps(result.summary(), indent=2, sort_keys=True))
     if args.fail_on_active_alert and result.active_alert_count:
-        raise SystemExit(2)
+        return 2
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
