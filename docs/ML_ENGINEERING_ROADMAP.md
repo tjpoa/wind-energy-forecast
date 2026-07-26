@@ -386,6 +386,10 @@ Monitor whether live inputs and predictions remain aligned with the training bas
 
 ## Phase 10 — Batch orchestration with Apache Airflow
 
+Status: Part 1 is implemented. The separate Airflow 3.3.0, PostgreSQL and
+LocalExecutor candidate passes structural and synthetic DAG checks but remains
+open pending the required real-artifact, three-date offline backfill.
+
 ### Objective
 Schedule and observe the batch data-processing and prediction workflow.
 

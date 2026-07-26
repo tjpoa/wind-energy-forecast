@@ -1,10 +1,12 @@
-# Phase 10 — Local Batch Orchestration
+# Phase 10 — Local Batch and Airflow Orchestration
 
 ## Status
 
-Phase 10 Part 1 implements the approved local-first batch contract. Apache
-Airflow remains gated until this workflow passes local review and recovery
-evidence.
+Phase 10 Part 1 implements the approved local-first batch contract. Part 2 has
+an implementation candidate for a separate local Apache Airflow 3.3.0 stack
+after Part 1 was reviewed and merged as PR #19. It remains open until the real
+three-date offline backfill gate passes. Both operating modes call the same
+stable CLIs and remain available for validation.
 
 The operating mode remains the Phase 9 delayed historical hindcast. This work
 does not introduce D+1 forecasting, retraining, model promotion, external
@@ -63,16 +65,83 @@ Model and calibration paths may alternatively be supplied through
 user's environment, an explicitly selected ignored `.env`, or `.cdsapirc`.
 Persisted evidence records no credential values.
 
-## Acceptance gate for Airflow
+## Apache Airflow operation
 
-Airflow must not start until the local CLI and scheduler definition pass:
+Copy `airflow/.env.example` to the ignored `airflow/.env` and replace every
+explicit artifact selection and blank local credential/database field. The
+example contains no functional passwords or connection string. Keep the
+Windows task disabled while Airflow is active so that only one scheduler owns
+the batch.
 
-- read-only planning;
-- synthetic end-to-end execution;
-- no-op/idempotent rerun;
-- injected failure and recovery;
-- local artifact dry-run;
-- full tests, lint, diff review, and user review of the draft PR.
+```powershell
+docker compose -f airflow/docker-compose.yml config --quiet
+docker compose -f airflow/docker-compose.yml build
+docker compose -f airflow/docker-compose.yml up airflow-init
+docker compose -f airflow/docker-compose.yml up -d
+```
 
-No live provider refresh is required by this gate. Any live REN/CDS request
-requires separate authorization.
+The local UI/API server is exposed on `http://localhost:8080`. Airflow's local
+Simple Auth Manager generates the selected admin user's password in
+`airflow/logs/simple_auth_manager_passwords.json.generated`. The stack uses
+Linux containers, PostgreSQL and `LocalExecutor`; it is deliberately separate
+from the API/dashboard Compose stack and is not a production deployment.
+
+`wind_forecast_historical_batch_v1` runs at 12:00 in `Europe/Lisbon`, derives
+`through_date` from `data_interval_end` converted to Lisbon, and has the linear
+graph:
+
+```text
+availability_plan -> dataset_update -> predict_reconcile -> drift_publish
+```
+
+Only compact status, paths and checksums cross task boundaries. Data, reports
+and evidence stay in the existing versioned stores.
+
+For the required limited offline backfill, generate the temporary synthetic
+REN/ERA5 fixture inside the Airflow image, point the ignored `airflow/.env` at
+that fixture, and select exactly three consecutive dates. The fixture builder
+does not contact a provider and is never committed:
+
+```powershell
+docker compose -f airflow/docker-compose.yml exec airflow-scheduler `
+  python airflow/tests/build_real_fixture.py `
+  --root /opt/wind-energy-forecast/data/processed/v2/airflow_smoke_fixture
+```
+
+Keep source refresh disabled and use `failed` reprocessing:
+
+```powershell
+docker compose -f airflow/docker-compose.yml run --rm airflow-cli backfill create `
+  --dag-id wind_forecast_historical_batch_v1 `
+  --from-date YYYY-MM-DD `
+  --to-date YYYY-MM-DD `
+  --reprocess-behavior failed `
+  --max-active-runs 1 `
+  --dry-run
+```
+
+Remove `--dry-run` only after confirming three intervals and verified local
+fixtures. Never use this validation command with live REN/CDS access.
+
+## Part 2 acceptance evidence
+
+- the Airflow 3.3.0 image builds with Python 3.11;
+- Compose validates independently from the API stack;
+- `airflow dags list-import-errors --output=json` returns `[]`;
+- graph, schedule, retries and timeouts are inspectable without provider calls;
+- the bridge verifies the Phase 8 manifest checksum before downstream work;
+- a synthetic three-date real-CLI backfill (2026-01-15 through 2026-01-17)
+  completed serially with all four tasks successful;
+- rerunning the same `failed` backfill left the immutable counts unchanged
+  (3 prediction records, 3 actual records, 3 metric records, 6 report files,
+  and 6 source-run files); and
+- setting `WIND_FORECAST_FAIL_ON_ACTIVE_ALERT=true` caused only
+  `drift_publish` to enter `up_for_retry`; restoring the setting and clearing
+  that task recovered it to `success` while the three upstream tasks remained
+  successful and their checksums were unchanged;
+- the local `GET /api/v1/monitoring/latest` projection returned HTTP 200 for
+  the resulting immutable evidence.
+
+No live provider refresh is part of this evidence. A real three-day backfill
+remains an explicit local operation; the observations and generated evidence
+are temporary ignored artifacts, not committed demonstration data.

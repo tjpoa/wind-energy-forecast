@@ -152,3 +152,42 @@ jobs:
 
       - name: Validate Docker Compose configuration
         run: docker compose config --quiet
+
+  airflow-quality:
+    name: Airflow image and DAG import
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate Airflow Compose configuration
+        env:
+          AIRFLOW_ADMIN_USERNAME: ci-admin
+          AIRFLOW_API_AUTH_JWT_SECRET: ci-only-${{ github.run_id }}
+          AIRFLOW_DATABASE_URL: postgresql+psycopg2://ci_user:ci_password@postgres/ci_airflow
+          POSTGRES_USER: ci_user
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: ci_airflow
+        run: docker compose --env-file airflow/.env.example -f airflow/docker-compose.yml config --quiet
+
+      - name: Build Airflow image
+        run: docker build --file airflow/Dockerfile --tag wind-energy-forecast-airflow:ci .
+
+      - name: Validate DAG imports
+        run: |
+          docker run --rm \
+            -e WIND_FORECAST_AIRFLOW_ACTIVATION_DATE=2026-07-27 \
+            -e WIND_FORECAST_BATCH_MODEL_BUNDLE=/tmp/model \
+            -e WIND_FORECAST_BATCH_CALIBRATION_DIR=/tmp/calibration \
+            wind-energy-forecast-airflow:ci \
+            bash -c 'airflow db migrate && test "$(airflow dags list-import-errors --output=json | tail -n 1)" = "[]"'
+
+      - name: Run three-day offline DAG smoke
+        run: |
+          docker run --rm \
+            -e WIND_FORECAST_AIRFLOW_ACTIVATION_DATE=2026-07-01 \
+            -e WIND_FORECAST_BATCH_MODEL_BUNDLE=/tmp/model \
+            -e WIND_FORECAST_BATCH_CALIBRATION_DIR=/tmp/calibration \
+            wind-energy-forecast-airflow:ci \
+            bash -c 'airflow db migrate >/dev/null && python /opt/wind-energy-forecast/airflow/tests/smoke_three_day_backfill.py'

@@ -18,6 +18,8 @@ dist/
 artifacts/releases/
 outputs/registry/
 outputs/reproduction/
+airflow/.env
+airflow/logs/
 
 .env
 .env.*

@@ -13,8 +13,8 @@ The project should be read as a software, full-stack, data, and ML engineering
 portfolio project. Its React dashboard and FastAPI service run locally or with
 Docker Compose against explicitly selected local artifacts. It does not
 currently claim cloud deployment, production operation, real-time data,
-enterprise scalability, complete monitoring, workflow orchestration, or
-registry-based serving.
+enterprise scalability, complete production monitoring, production
+orchestration, or registry-based serving.
 
 ## What this project includes
 
@@ -369,6 +369,20 @@ update, Phase 9 hindcast/actual reconciliation, and immutable monitoring report
 in order. See `docs/PHASE_10.md` and `docs/PHASE_10_RUNBOOK.md` for scheduling
 and recovery.
 
+The same stable boundaries are also available through the separate local
+Airflow 3.3.0 stack:
+
+```powershell
+Copy-Item airflow\.env.example airflow\.env
+docker compose -f airflow\docker-compose.yml config --quiet
+docker compose -f airflow\docker-compose.yml build
+docker compose -f airflow\docker-compose.yml up airflow-init
+docker compose -f airflow\docker-compose.yml up -d
+```
+
+Review `airflow/.env` before starting. Disable the Windows scheduled task while
+the Airflow DAG is active; the two schedulers must not run concurrently.
+
 Generate recent WeatherAPI feature data:
 
 ```powershell
@@ -512,7 +526,7 @@ does not publish or deploy them.
 - There is no production environment or enterprise-scalability claim.
 - Monitoring is retrospective and local; there is no real-time data path,
   scheduler, or external alert delivery.
-- Airflow orchestration has not been implemented.
+- Airflow orchestration is local-only and is not a production deployment.
 - PySpark processing has not been implemented.
 - The FastAPI service is a local/container serving interface, not a deployed
   production service.

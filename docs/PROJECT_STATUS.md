@@ -23,8 +23,8 @@ artifact demonstration.
 
 The project should not be presented as a deployed production system. Cloud
 deployment, production operation, real-time data, enterprise scalability,
-external alert delivery, orchestration, registry-based serving, and PySpark
-processing are not current capabilities.
+external alert delivery, production orchestration, registry-based serving, and
+PySpark processing are not current capabilities.
 
 Historical phase documents preserve the stop-gate wording that was true when
 each checkpoint was written. This file reflects the latest repository state.
@@ -40,7 +40,8 @@ each checkpoint was written. This file reflects the latest repository state.
 | Data validation | Implemented and active | `wind_forecast.validation`, `scripts/validate_feature_ready_v2_dataset.py`, Phase 2 docs | Validation is strong for current contracts, but future data-source changes still require explicit decisions. |
 | V2 data-source work | Substantial local progress | REN and ERA5-Land source modules, Phase 2 acceptance docs | V2 data does not replace v1; v2 model/scaler validity is not claimed. |
 | V2 incremental updates | Implemented and synthetically validated | `wind_forecast.incremental`, batch-quality sidecars, Phase 8 docs and tests | Live REN/CDS refresh was not exercised by the repository test suite. |
-| Historical monitoring | Immutable quality, prediction evidence, drift, performance, reports, and local alerts implemented | `wind_forecast.monitoring`, `wind_forecast.monitoring_reporting`, Phase 9 CLIs/docs/tests | It is delayed historical hindcast monitoring, not live forecasting, external notification, or orchestration. |
+| Historical monitoring | Immutable quality, prediction evidence, drift, performance, reports, and local alerts implemented | `wind_forecast.monitoring`, `wind_forecast.monitoring_reporting`, Phase 9 CLIs/docs/tests | It is delayed historical hindcast monitoring, not live forecasting or external notification. |
+| Batch orchestration | Local CLI, Windows Task Scheduler, and Airflow 3.3.0 local stack implemented | `wind_forecast.orchestration`, `wind_forecast.airflow_orchestration`, `airflow/`, Phase 10 docs/tests | Airflow uses temporary synthetic fixtures for offline validation; both schedulers must not run concurrently. |
 | Automated tests | Implemented | `tests/`, pytest and pytest-cov configuration | Coverage has a conservative baseline gate; source-ingestion and v2 modules still need deeper tests. |
 | Code quality | Implemented baseline | Ruff configuration in `pyproject.toml` | Ruff rule set is intentionally minimal. |
 | Prediction API | Implemented for local/container use | `wind_forecast.api`, `docs/PHASE_5.md`, API tests | The API is not deployed and depends on local mounted artifacts for full serving. |
@@ -68,7 +69,7 @@ each checkpoint was written. This file reflects the latest repository state.
 | 7 | GitHub Actions continuous integration | Implemented matrix backend CI plus frontend tests, linting, build, container build, Compose validation, and backend health checks. |
 | 8 | Idempotency, safe reruns, and observability | Implemented for the accepted v2 dataset with dry-run planning, immutable revisions, atomic publication, structured run evidence, and failure recovery tests. |
 | 9 | Data drift and model-performance monitoring | Completed locally for the accepted historical-batch contract: quality evidence, calibrated 30/90-day drift, as-issued performance, immutable JSON/Markdown reports, and persistent local alerts. |
-| 10 | Batch orchestration with Apache Airflow | Part 1 implemented locally: stable batch coordination, recovery evidence, and Windows Task Scheduler support. Airflow remains gated pending review and acceptance of the local workflow. |
+| 10 | Batch orchestration with Apache Airflow | Completed locally: Airflow 3.3.0 build/import checks and a serial real-CLI three-date synthetic backfill passed; no live provider refresh or production deployment is claimed. |
 | 11 | PySpark data-processing implementation | Not implemented. |
 | 12 | Azure and Databricks deployment design | Not implemented. |
 
@@ -145,7 +146,7 @@ This repository demonstrates:
 - No production cloud deployment exists.
 - No production environment, real-time data path, enterprise-scalability
   guarantee, or complete monitoring system exists.
-- No Airflow orchestration exists.
+- Airflow orchestration is a local Docker Compose workflow, not a production deployment.
 - No PySpark implementation exists.
 - Registry state is local-only and is not yet part of API serving.
 - The dashboard displays retrospective historical batch monitoring and
@@ -153,8 +154,9 @@ This repository demonstrates:
   forecasts, poll continuously, or provide live model monitoring.
 - Public artifact distribution and a clean-clone round-trip remain gated by
   provenance/licence approval and explicit network authorization.
-- Monitoring is local and retrospective. It has no scheduler, external alert
-  delivery, live forecasting, automatic retraining, or model promotion.
+- Monitoring is local and retrospective. Its schedulers are local-only; it has
+  no external alert delivery, live forecasting, automatic retraining, or model
+  promotion.
 - The v2 reference is independent of v1 scalers/models, but is not promoted or
   connected to serving.
 - The Phase 8 live provider refresh path requires approved credentials/network
@@ -172,4 +174,4 @@ This repository demonstrates:
    preserving the current contracts.
 4. Raise test coverage as source-ingestion and v2 modules mature.
 5. Define and review an interactive-prediction UI/API contract separately,
-   then address orchestration and cloud deployment as later roadmap phases.
+   then address production deployment as a later roadmap phase.

@@ -16,9 +16,14 @@ def project_root() -> Path:
     start = Path(__file__).resolve().parent
     for candidate in (start, *start.parents):
         if (
-            (candidate / "README.md").is_file()
-            and (candidate / "data").is_dir()
-            and (candidate / "models").is_dir()
+            ((candidate / "README.md").is_file()
+             and (candidate / "data").is_dir()
+             and (candidate / "models").is_dir())
+            or (
+                (candidate / "pyproject.toml").is_file()
+                and (candidate / "src").is_dir()
+                and (candidate / "config").is_dir()
+            )
         ):
             return candidate
 
