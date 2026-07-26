@@ -6,6 +6,7 @@ import argparse
 from datetime import date, datetime, timedelta
 import json
 from pathlib import Path
+from typing import Sequence
 
 try:
     from scripts.ingest_ren_production_v2 import run_ingestion as run_ren_ingestion
@@ -25,7 +26,7 @@ from wind_forecast.incremental import (
 )
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments without reading data or creating outputs."""
     parser = argparse.ArgumentParser(
         description="Run one transactional incremental update of the v2 dataset.",
@@ -105,7 +106,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Use only already-present local raw partitions; mainly for controlled recovery.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.revision_lookback_days < 0:
         parser.error("--revision-lookback-days must be zero or greater.")
     if args.recheck_min_age_hours < 0:
@@ -139,9 +140,9 @@ def _month_bounds(month: str, eligible_through: str) -> tuple[str, str]:
     return first.isoformat(), last.isoformat()
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point."""
-    args = parse_args()
+    args = parse_args(argv)
     config = UpdateConfig(
         through_date=args.through_date,
         ren_root=args.ren_root,
@@ -209,7 +210,8 @@ def main() -> None:
 
     result = run_v2_update(config, source_refresher=refresher)
     print(json.dumps(result.summary(), ensure_ascii=True, indent=2, sort_keys=True))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

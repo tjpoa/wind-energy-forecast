@@ -68,7 +68,7 @@ each checkpoint was written. This file reflects the latest repository state.
 | 7 | GitHub Actions continuous integration | Implemented matrix backend CI plus frontend tests, linting, build, container build, Compose validation, and backend health checks. |
 | 8 | Idempotency, safe reruns, and observability | Implemented for the accepted v2 dataset with dry-run planning, immutable revisions, atomic publication, structured run evidence, and failure recovery tests. |
 | 9 | Data drift and model-performance monitoring | Completed locally for the accepted historical-batch contract: quality evidence, calibrated 30/90-day drift, as-issued performance, immutable JSON/Markdown reports, and persistent local alerts. |
-| 10 | Batch orchestration with Apache Airflow | Not implemented. |
+| 10 | Batch orchestration with Apache Airflow | Part 1 implemented locally: stable batch coordination, recovery evidence, and Windows Task Scheduler support. Airflow remains gated pending review and acceptance of the local workflow. |
 | 11 | PySpark data-processing implementation | Not implemented. |
 | 12 | Azure and Databricks deployment design | Not implemented. |
 

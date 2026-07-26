@@ -355,6 +355,20 @@ alerts plus their causally ordered immutable history.
   --dry-run
 ```
 
+Plan the complete local historical batch without writes or provider calls:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\run_batch_pipeline.py plan `
+  --through-date YYYY-MM-DD `
+  --model-bundle outputs\training\v2_reference_mlflow `
+  --calibration-dir data\processed\v2\monitoring\reporting\calibrations\<ID>
+```
+
+Use `run` only after reviewing the plan. The coordinator executes the Phase 8
+update, Phase 9 hindcast/actual reconciliation, and immutable monitoring report
+in order. See `docs/PHASE_10.md` and `docs/PHASE_10_RUNBOOK.md` for scheduling
+and recovery.
+
 Generate recent WeatherAPI feature data:
 
 ```powershell

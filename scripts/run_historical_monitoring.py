@@ -51,7 +51,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def main(argv: Sequence[str] | None = None) -> None:
+def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     config = MonitoringConfig(
         source_store_root=args.source_store_root,
@@ -65,7 +65,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     result = run_historical_monitoring(config)
     print(json.dumps(result.summary(), indent=2, sort_keys=True))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
