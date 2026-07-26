@@ -181,7 +181,7 @@ jobs:
             -e WIND_FORECAST_BATCH_MODEL_BUNDLE=/tmp/model \
             -e WIND_FORECAST_BATCH_CALIBRATION_DIR=/tmp/calibration \
             wind-energy-forecast-airflow:ci \
-            bash -c 'airflow db migrate && test "$(airflow dags list-import-errors --output=json)" = "[]"'
+            bash -c 'airflow db migrate && test "$(airflow dags list-import-errors --output=json | tail -n 1)" = "[]"'
 
       - name: Run three-day offline DAG smoke
         run: |
