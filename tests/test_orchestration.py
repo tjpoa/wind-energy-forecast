@@ -11,7 +11,7 @@ import pytest
 
 from scripts.run_monitoring_report import parse_args as parse_report_args
 from scripts.update_v2_dataset import parse_args as parse_update_args
-from wind_forecast import batch_cli
+from wind_forecast import batch_cli, orchestration
 from wind_forecast.orchestration import (
     BATCH_SCHEMA,
     BatchConfig,
@@ -158,6 +158,16 @@ def test_live_lock_rejects_concurrent_batch(tmp_path: Path) -> None:
 
     with pytest.raises(ConcurrentBatchError, match="live run"):
         run_batch(config, runner=lambda command, timeout: {"status": "planned"})
+
+
+def test_current_process_liveness_does_not_signal_itself(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_kill(pid: int, signal: int) -> None:
+        raise AssertionError("Current-process liveness must not call os.kill.")
+
+    monkeypatch.setattr(orchestration.os, "kill", unexpected_kill)
+    assert orchestration._pid_is_live(os.getpid()) is True
 
 
 def test_stale_lock_is_recorded_before_recovery(tmp_path: Path) -> None:

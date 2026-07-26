@@ -465,6 +465,8 @@ def _release_lock(lock: Path, run_id: str) -> None:
 def _pid_is_live(pid: int) -> bool:
     if pid < 1:
         return False
+    if pid == os.getpid():
+        return True
     try:
         os.kill(pid, 0)
     except OSError:
