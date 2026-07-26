@@ -260,17 +260,28 @@ def load_monitoring_calibration(calibration_dir: str | Path) -> dict[str, Any]:
     """Load a calibration after verifying its content-addressed identity and reference."""
     root = Path(calibration_dir)
     record = _read_json(root / "calibration.json")
+    if record.get("schema_version") != CALIBRATION_SCHEMA:
+        raise MonitoringReportingError("Unsupported monitoring calibration schema.")
     _verify_record_id(
         record,
         "monitoring_calibration",
         "calibration_id",
         ignored=("reference_dir",),
     )
-    reference_dir = Path(str(record.get("reference_dir") or ""))
+    reference_id = str(record.get("reference_id") or "")
+    recorded_reference_dir = Path(str(record.get("reference_dir") or ""))
+    relocatable_reference_dir = root.parent.parent / "references" / reference_id
+    reference_dir = (
+        recorded_reference_dir
+        if recorded_reference_dir.is_dir()
+        else relocatable_reference_dir
+    )
     manifest_path = reference_dir / "manifest.json"
     if not manifest_path.is_file() or sha256_file(manifest_path) != record.get("reference_manifest_sha256"):
         raise MonitoringReportingError("Monitoring reference manifest is missing or corrupt.")
     reference = _read_json(manifest_path)
+    if reference.get("schema_version") != REFERENCE_SCHEMA:
+        raise MonitoringReportingError("Unsupported monitoring reference schema.")
     _verify_record_id(reference, "monitoring_reference", "reference_id", ignored=("reference_path",))
     if reference.get("reference_id") != record.get("reference_id"):
         raise MonitoringReportingError("Calibration and reference identities differ.")
@@ -452,6 +463,12 @@ def load_monitoring_report(report_path: str | Path) -> dict[str, Any]:
     """Load and verify one immutable report and all referenced alert events."""
     path = Path(report_path)
     report = _read_json(path)
+    if report.get("schema_version") != REPORT_SCHEMA:
+        raise MonitoringReportingError("Unsupported monitoring report schema.")
+    if not isinstance(report.get("active_alerts"), dict):
+        raise MonitoringReportingError("Monitoring report active alerts are invalid.")
+    if not isinstance(report.get("alert_events"), list):
+        raise MonitoringReportingError("Monitoring report alert events are invalid.")
     _verify_record_id(report, "monitoring_report", "report_id")
     reporting_root = path.parent.parent.parent
     alert_ids = set(report.get("alert_events") or []) | set(
@@ -465,6 +482,14 @@ def load_monitoring_report(report_path: str | Path) -> dict[str, Any]:
         alert = _read_json(reporting_root / "alerts" / f"{alert_id}.json")
         _verify_record_id(alert, "monitoring_alert", "alert_event_id")
     return report
+
+
+def load_monitoring_report_state(
+    monitoring_store_root: str | Path,
+) -> dict[str, Any] | None:
+    """Return a verified copy of the derived reporting-state pointer."""
+    state = _load_report_state(Path(monitoring_store_root) / "reporting")
+    return None if state is None else json.loads(json.dumps(state))
 
 
 def load_active_alerts(monitoring_store_root: str | Path) -> dict[str, Any]:
@@ -1136,9 +1161,21 @@ def _load_report_state(reporting_root: Path) -> dict[str, Any] | None:
     payload = _read_json(path)
     if payload.get("schema_version") != REPORT_STATE_SCHEMA:
         raise MonitoringReportingError("Unsupported monitoring report-state schema.")
-    alert_ids = set((payload.get("active_alerts") or {}).values()) | {
+    active_alerts = payload.get("active_alerts")
+    rules = payload.get("rules")
+    if not isinstance(active_alerts, dict) or not isinstance(rules, dict):
+        raise MonitoringReportingError("Monitoring report state is invalid.")
+    if not all(
+        isinstance(rule_id, str) and isinstance(alert_id, str)
+        for rule_id, alert_id in active_alerts.items()
+    ) or not all(
+        isinstance(rule_id, str) and isinstance(rule, dict)
+        for rule_id, rule in rules.items()
+    ):
+        raise MonitoringReportingError("Monitoring report state is invalid.")
+    alert_ids = set(active_alerts.values()) | {
         rule.get("last_event_id")
-        for rule in (payload.get("rules") or {}).values()
+        for rule in rules.values()
         if rule.get("last_event_id")
     }
     for alert_id in alert_ids:
@@ -1423,6 +1460,7 @@ __all__ = [
     "load_alert_history",
     "load_monitoring_calibration",
     "load_monitoring_report",
+    "load_monitoring_report_state",
     "plan_monitoring_report",
     "run_monitoring_report",
 ]

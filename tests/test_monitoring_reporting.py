@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from hashlib import sha256
 import json
+from pathlib import Path
 
 import joblib
 import numpy as np
@@ -137,6 +138,19 @@ def test_calibration_is_content_addressed_and_reproducible(tmp_path, monkeypatch
     (first.calibration_dir / "backtest_summary.json").write_text("{}", encoding="utf-8")
     with pytest.raises(reporting.MonitoringReportingError, match="backtest summary"):
         load_monitoring_calibration(first.calibration_dir)
+
+
+def test_calibration_reference_path_is_relocatable(tmp_path, monkeypatch) -> None:
+    calibrated = _calibration_environment(tmp_path, monkeypatch)
+    calibration_path = calibrated.calibration_dir / "calibration.json"
+    payload = json.loads(calibration_path.read_text(encoding="utf-8"))
+    payload["reference_dir"] = "C:/previous-host/missing/reference"
+    calibration_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = load_monitoring_calibration(calibrated.calibration_dir)
+
+    assert loaded["reference_id"] == calibrated.reference_id
+    assert Path(loaded["_reference_path"]).is_file()
 
 
 def test_calibration_rejects_reference_boundaries_outside_train_validation(

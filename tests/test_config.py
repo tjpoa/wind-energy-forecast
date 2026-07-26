@@ -1,11 +1,16 @@
+from pathlib import Path
+
 import pytest
 
 from wind_forecast.config import (
     CORS_ALLOWED_ORIGINS_ENV,
     DEFAULT_CORS_ALLOWED_ORIGINS,
+    MONITORING_STORE_ROOT_ENV,
     load_cors_config,
+    load_monitoring_store_config,
     load_weather_api_config,
 )
+from wind_forecast.paths import project_root
 
 
 WEATHER_ENV_VARS = [
@@ -99,3 +104,14 @@ def test_load_cors_config_rejects_invalid_origins(monkeypatch, origins):
 
     with pytest.raises(ValueError, match=CORS_ALLOWED_ORIGINS_ENV):
         load_cors_config()
+
+
+def test_monitoring_store_relative_path_is_resolved_from_project_root(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(MONITORING_STORE_ROOT_ENV, "custom/monitoring")
+
+    config = load_monitoring_store_config()
+
+    assert config.store_root == (project_root() / "custom/monitoring").resolve()

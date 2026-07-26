@@ -1,6 +1,6 @@
 # Project Status
 
-Last reviewed: 2026-07-22.
+Last reviewed: 2026-07-26.
 
 This document summarizes the current state of the wind-energy forecasting
 repository for portfolio and hiring-review purposes. It is a factual status
@@ -17,8 +17,9 @@ feature engineering, saved-model inference, a tested FastAPI service, Docker
 container support, GitHub Actions CI, and local MLflow tracking around the
 existing forecasting workflow, including a local MLflow Registry and
 reproducibility bundle tooling. A responsive React and TypeScript dashboard now
-consumes a typed historical-performance endpoint, completing a local
-frontend-to-API-to-evaluation-artifact demonstration.
+opens on a read-only retrospective monitoring projection and retains the typed
+historical-performance view, completing a local frontend-to-API-to-verified
+artifact demonstration.
 
 The project should not be presented as a deployed production system. Cloud
 deployment, production operation, real-time data, enterprise scalability,
@@ -44,7 +45,8 @@ each checkpoint was written. This file reflects the latest repository state.
 | Code quality | Implemented baseline | Ruff configuration in `pyproject.toml` | Ruff rule set is intentionally minimal. |
 | Prediction API | Implemented for local/container use | `wind_forecast.api`, `docs/PHASE_5.md`, API tests | The API is not deployed and depends on local mounted artifacts for full serving. |
 | Historical performance API | Implemented and consumed by the dashboard | `GET /api/v1/performance`, `wind_forecast.performance`, backend contract tests | It reads explicitly selected local evaluation artifacts; it is not live monitoring. |
-| React dashboard | Implemented for local/container demonstration | `frontend/`, frontend tests, `docs/DEMO.md` | It visualizes historical holdout performance only and does not call `/predict`. |
+| Historical monitoring API | Implemented as a read-only verified projection | `GET /api/v1/monitoring/latest`, `/history`, `/runs/{run_id}`, `wind_forecast.monitoring_projection` | It projects immutable local batch evidence; it is not real time and performs no writes. |
+| React dashboard | Implemented for local/container demonstration | `frontend/`, frontend tests, `docs/DEMO.md` | It shows retrospective monitoring and historical holdout performance; it does not call `/predict`. |
 | Training CLIs | V1 baseline preserved; first v2 reference accepted locally | `wind_forecast.training`, `wind_forecast.v2_training`, dedicated scripts, and `docs/PHASE_4.md` | The v2 result is a historical hindcast and is not promoted or served; tuned ANN/Optuna remains notebook-based. |
 | Docker support | Implemented baseline with runtime hardening | Backend and frontend Dockerfiles, Compose stack, CI image builds, and backend smoke test | No image publishing, digest pinning, or production deployment workflow yet. |
 | CI | Implemented for backend and frontend validation | `.github/workflows/ci.yml` | CI covers Python tests and Ruff, frontend tests/lint/build, both Docker image builds, Compose validation, and backend health checks; it does not deploy artifacts. |
@@ -146,8 +148,9 @@ This repository demonstrates:
 - No Airflow orchestration exists.
 - No PySpark implementation exists.
 - Registry state is local-only and is not yet part of API serving.
-- The dashboard displays historical evaluation results only; it does not call
-  `/predict`, generate future forecasts, or provide live model monitoring.
+- The dashboard displays retrospective historical batch monitoring and
+  historical evaluation results. It does not call `/predict`, generate future
+  forecasts, poll continuously, or provide live model monitoring.
 - Public artifact distribution and a clean-clone round-trip remain gated by
   provenance/licence approval and explicit network authorization.
 - Monitoring is local and retrospective. It has no scheduler, external alert
@@ -168,6 +171,5 @@ This repository demonstrates:
 3. Extend the baseline training CLI toward the tuned notebook workflow while
    preserving the current contracts.
 4. Raise test coverage as source-ingestion and v2 modules mature.
-5. Define and review an interactive-prediction UI/API contract before extending
-   the dashboard, then address orchestration and cloud deployment as separate
-   roadmap phases.
+5. Define and review an interactive-prediction UI/API contract separately,
+   then address orchestration and cloud deployment as later roadmap phases.
