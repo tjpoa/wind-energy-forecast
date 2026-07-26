@@ -1,0 +1,48 @@
+{
+  "automation": {
+    "automatic_promotion": false,
+    "automatic_stability": false,
+    "automatic_training": false
+  },
+  "backtest": {
+    "baseline_feature": "Wind_Production_Lag1",
+    "fold_observation_count": 30,
+    "minimum_complete_folds": 3,
+    "performance_limit_contract": "incumbent_phase9_performance_30",
+    "require_aggregate_mae_strictly_better": true,
+    "require_each_fold_mae_not_worse": true,
+    "require_no_performance_breach": true
+  },
+  "evaluation": {
+    "day_of_month": 8,
+    "hour_local": 13,
+    "minimum_new_eligible_observations": 90,
+    "timezone": "Europe/Lisbon"
+  },
+  "phase9_alerts": {
+    "blocking_categories": [
+      "quality"
+    ],
+    "persistence_distinct_reports": 3,
+    "trigger_categories": [
+      "feature_drift",
+      "prediction_drift",
+      "target_drift",
+      "performance"
+    ],
+    "trigger_severities": [
+      "warning",
+      "critical"
+    ]
+  },
+  "schema_version": "wind_forecast.retraining_policy.v1",
+  "stability": {
+    "allowed_issuance_kinds": [
+      "scheduled",
+      "catch_up"
+    ],
+    "minimum_eligible_observations": 90,
+    "require_no_active_warning_or_critical": true,
+    "require_second_manual_approval": true
+  }
+}

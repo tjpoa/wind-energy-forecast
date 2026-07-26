@@ -15,6 +15,7 @@ This folder keeps project documentation organized by purpose and roadmap phase.
 | --- | --- |
 | [Demo Guide](DEMO.md) | Full-stack local demo for preparing evaluation artifacts, running React with FastAPI, using Docker Compose, and validating the project. |
 | [Reproducibility Guide](REPRODUCIBILITY.md) | MLflow Registry workflow and immutable artifact-bundle recovery. |
+| [Controlled Retraining](CONTROLLED_RETRAINING.md) | Approved post-monitoring lifecycle contract, policy, cutoffs, deployment semantics, and staged delivery plan. |
 
 ## Phase Documents
 
