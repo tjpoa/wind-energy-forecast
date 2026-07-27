@@ -42,7 +42,7 @@ each checkpoint was written. This file reflects the latest repository state.
 | V2 incremental updates | Implemented and synthetically validated | `wind_forecast.incremental`, batch-quality sidecars, Phase 8 docs and tests | Live REN/CDS refresh was not exercised by the repository test suite. |
 | Historical monitoring | Immutable quality, prediction evidence, drift, performance, reports, and local alerts implemented | `wind_forecast.monitoring`, `wind_forecast.monitoring_reporting`, Phase 9 CLIs/docs/tests | It is delayed historical hindcast monitoring, not live forecasting or external notification. |
 | Batch orchestration | Local CLI, Windows Task Scheduler, and Airflow 3.3.0 local stack implemented | `wind_forecast.orchestration`, `wind_forecast.airflow_orchestration`, `airflow/`, Phase 10 docs/tests | Airflow uses temporary synthetic fixtures for offline validation; both schedulers must not run concurrently. |
-| Controlled retraining | Contract, versioned policy, and manual monthly eligibility recommendation implemented | `wind_forecast.retraining_policy`, `wind_forecast.retraining_evaluation`, `scripts/evaluate_retraining.py`, and `docs/CONTROLLED_RETRAINING.md` | Temporal backtesting, training, Registry v2, deployment mutation, model eras, promotion, stability, rollback, and automatic scheduling remain later reviewed increments. |
+| Controlled retraining | Contract, monthly eligibility, fail-closed temporal backtesting, and guarded candidate-only v2 Registry action implemented | `wind_forecast.retraining_policy`, `wind_forecast.retraining_evaluation`, `wind_forecast.retraining_backtesting`, `wind_forecast.retraining_registry`, their manual CLIs/tests, and `docs/CONTROLLED_RETRAINING.md` | Registry preparation still requires a separately controlled finished local MLflow run; the alias lock coordinates only PR3 CLIs sharing one output root. Deployment mutation, model eras, promotion, stability, rollback, and scheduling remain later increments. |
 | Automated tests | Implemented | `tests/`, pytest and pytest-cov configuration | Coverage has a conservative baseline gate; source-ingestion and v2 modules still need deeper tests. |
 | Code quality | Implemented baseline | Ruff configuration in `pyproject.toml` | Ruff rule set is intentionally minimal. |
 | Prediction API | Implemented for local/container use | `wind_forecast.api`, `docs/PHASE_5.md`, API tests | The API is not deployed and depends on local mounted artifacts for full serving. |
@@ -158,10 +158,11 @@ This repository demonstrates:
 - Monitoring is local and retrospective. Its schedulers are local-only; it has
   no external alert delivery, live forecasting, automatic retraining, or model
   promotion.
-- Controlled retraining performs only an offline, manually invoked monthly
-  eligibility recommendation over operator-pinned Phase 9 evidence. It does
-  not train candidates, mutate Registry aliases, switch deployments, schedule
-  itself, or run rollback.
+- Controlled retraining is offline and manually invoked. It performs a monthly
+  eligibility recommendation over operator-pinned Phase 9 evidence, can seal a
+  fail-closed temporal backtest, and can register an accepted version under
+  only the v2 `candidate` alias. It does not mutate `champion`, `stable`,
+  deployment state, promotion, stability, or rollback state.
 - The v2 reference is independent of v1 scalers/models, but is not promoted or
   connected to serving.
 - The Phase 8 live provider refresh path requires approved credentials/network
