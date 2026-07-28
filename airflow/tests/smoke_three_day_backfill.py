@@ -6,10 +6,16 @@ from hashlib import sha256
 import importlib.util
 import json
 from datetime import timedelta
+import os
 from pathlib import Path
 import tempfile
 
 import pendulum
+
+from wind_forecast.scheduler_ownership import (
+    configure_scheduler_owner,
+    load_scheduler_lease,
+)
 
 
 def _load_dag_module():
@@ -27,6 +33,17 @@ def main() -> None:
     created = {"source": set(), "prediction": set(), "report": set()}
     deployment_checks: list[str | None] = []
     model_era_id = "smoke-model-era"
+    environment_id = "airflow-smoke"
+    scheduler_root = root / "scheduler"
+    configure_scheduler_owner(
+        scheduler_root,
+        environment_id,
+        "airflow",
+        expected_generation=0,
+        expected_owner=None,
+    )
+    os.environ["WIND_FORECAST_SCHEDULER_STATE_ROOT"] = str(scheduler_root)
+    os.environ["WIND_FORECAST_ENVIRONMENT_ID"] = environment_id
 
     def deployment(*, expected_model_era_id: str | None = None) -> dict:
         if expected_model_era_id is not None:
@@ -101,6 +118,7 @@ def main() -> None:
     for logical_date in dates:
         run = dag.test(logical_date=logical_date)
         assert run.state.value == "success"
+        assert load_scheduler_lease(scheduler_root, environment_id) is None
 
     expected = {str(item.date()) for item in dates}
     assert created == {
