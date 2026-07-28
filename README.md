@@ -350,7 +350,9 @@ alerts plus their causally ordered immutable history.
 ```powershell
 .\venv\Scripts\python.exe .\scripts\run_monitoring_report.py `
   --source-run-manifest data\processed\v2\incremental_update\runs\<RUN_ID>\manifest.json `
+  --model-bundle outputs\training\v2_reference_mlflow `
   --calibration-dir data\processed\v2\monitoring\reporting\calibrations\<CALIBRATION_ID> `
+  --deployment-root data\processed\v2\deployment `
   --through-date YYYY-MM-DD `
   --dry-run
 ```
@@ -385,13 +387,16 @@ Plan the complete local historical batch without writes or provider calls:
 .\venv\Scripts\python.exe .\scripts\run_batch_pipeline.py plan `
   --through-date YYYY-MM-DD `
   --model-bundle outputs\training\v2_reference_mlflow `
-  --calibration-dir data\processed\v2\monitoring\reporting\calibrations\<ID>
+  --calibration-dir data\processed\v2\monitoring\reporting\calibrations\<ID> `
+  --deployment-root data\processed\v2\deployment
 ```
 
 Use `run` only after reviewing the plan. The coordinator executes the Phase 8
-update, Phase 9 hindcast/actual reconciliation, and immutable monitoring report
-in order. See `docs/PHASE_10.md` and `docs/PHASE_10_RUNBOOK.md` for scheduling
-and recovery.
+update, Phase 9 hindcast/actual reconciliation, and immutable era-scoped
+monitoring report in order. It verifies the deployment pointer, explicit
+artifacts, and MLflow aliases before source mutation and again before final
+publication. See `docs/PHASE_10.md` and `docs/PHASE_10_RUNBOOK.md` for
+scheduling and recovery.
 
 The same stable boundaries are also available through the separate local
 Airflow 3.3.0 stack:
@@ -403,6 +408,9 @@ docker compose -f airflow\docker-compose.yml build
 docker compose -f airflow\docker-compose.yml up airflow-init
 docker compose -f airflow\docker-compose.yml up -d
 ```
+
+The tracking URI sealed in the deployment must be reachable from every batch
+runtime, including from inside the Airflow container.
 
 Review `airflow/.env` before starting. Disable the Windows scheduled task while
 the Airflow DAG is active; the two schedulers must not run concurrently.

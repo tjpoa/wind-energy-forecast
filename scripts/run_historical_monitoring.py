@@ -35,6 +35,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Accepted, unpromoted v2 reference output directory.",
     )
     parser.add_argument(
+        "--deployment-root",
+        type=Path,
+        required=True,
+        help="Checksum-pinned active v2 deployment store.",
+    )
+    parser.add_argument(
         "--activation-date",
         help="Required on the first run and immutable afterwards.",
     )
@@ -57,6 +63,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         source_store_root=args.source_store_root,
         monitoring_store_root=args.monitoring_store_root,
         model_bundle=args.model_bundle,
+        deployment_root=args.deployment_root,
         through_date=args.through_date,
         activation_date=args.activation_date,
         backfill_start=args.backfill_start,

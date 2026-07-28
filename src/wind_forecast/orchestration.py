@@ -19,8 +19,10 @@ from wind_forecast.manifests import sha256_file
 from wind_forecast.paths import project_root
 
 
-BATCH_SCHEMA = "wind_forecast.batch_run.v1"
-BATCH_STATE_SCHEMA = "wind_forecast.batch_state.v1"
+BATCH_SCHEMA = "wind_forecast.batch_run.v2"
+LEGACY_BATCH_SCHEMA = "wind_forecast.batch_run.v1"
+BATCH_STATE_SCHEMA = "wind_forecast.batch_state.v2"
+LEGACY_BATCH_STATE_SCHEMA = "wind_forecast.batch_state.v1"
 LISBON = ZoneInfo("Europe/Lisbon")
 _SECRET_PARTS = ("key", "secret", "password", "token", "credential")
 
@@ -39,6 +41,7 @@ class BatchConfig:
 
     model_bundle: Path
     calibration_dir: Path
+    deployment_root: Path
     through_date: str | date | None = None
     activation_date: str | date | None = None
     backfill_start: str | date | None = None
@@ -59,6 +62,7 @@ class BatchConfig:
             "source_store_root",
             "monitoring_store_root",
             "orchestration_root",
+            "deployment_root",
         ):
             value = Path(getattr(self, name))
             if not value.is_absolute():
@@ -122,6 +126,21 @@ class BatchRunResult:
         payload["manifest_path"] = (
             str(self.manifest_path) if self.manifest_path else None
         )
+        deployment = next(
+            (
+                stage.payload
+                for stage in self.stages
+                if stage.name == "deployment_preflight"
+            ),
+            {},
+        )
+        payload["model_era_id"] = deployment.get("model_era_id")
+        payload["deployment_id"] = (
+            deployment.get("deployment") or {}
+        ).get("deployment_id")
+        payload["model_version"] = (
+            deployment.get("registry") or {}
+        ).get("model_version")
         return payload
 
 
@@ -132,6 +151,12 @@ def plan_batch(config: BatchConfig, *, runner: Runner | None = None) -> BatchPla
     """Plan source availability and monitoring without coordinator writes."""
 
     execute = runner or _run_json_command
+    deployment = _execute_stage(
+        "deployment_preflight",
+        _deployment_command(config),
+        config.stage_timeout_seconds,
+        execute,
+    )
     availability = _execute_stage(
         "availability_plan",
         _update_command(config, dry_run=True),
@@ -162,7 +187,7 @@ def plan_batch(config: BatchConfig, *, runner: Runner | None = None) -> BatchPla
         )
     return BatchPlan(
         through_date=config.through_date.isoformat(),
-        stages=(availability, monitoring),
+        stages=(deployment, availability, monitoring),
     )
 
 
@@ -170,16 +195,27 @@ def run_batch(config: BatchConfig, *, runner: Runner | None = None) -> BatchRunR
     """Run the stable batch CLIs sequentially and persist coordinator evidence."""
 
     execute = runner or _run_json_command
+    deployment = _execute_stage(
+        "deployment_preflight",
+        _deployment_command(config),
+        config.stage_timeout_seconds,
+        execute,
+    )
     run_id = _run_id(config.now_utc)
     root = config.orchestration_root
     lock = _acquire_lock(root, run_id, config.now_utc)
     run_root = root / "runs" / run_id
     manifest_path = run_root / "manifest.json"
-    stages: list[BatchStageResult] = []
+    stages: list[BatchStageResult] = [deployment]
     run_root.mkdir(parents=True, exist_ok=False)
     request = _request_payload(config, run_id)
+    request["model_era"] = dict(deployment.payload)
     _write_json(manifest_path, {**request, "status": "running", "stages": []})
     try:
+        _write_json(
+            manifest_path,
+            {**request, "status": "running", "stages": [deployment.summary()]},
+        )
         stages.append(
             _execute_stage(
                 "availability_plan",
@@ -215,6 +251,20 @@ def run_batch(config: BatchConfig, *, runner: Runner | None = None) -> BatchRunR
             execute,
         )
         stages.append(report)
+        postcheck = _execute_stage(
+            "deployment_postcheck",
+            _deployment_command(config),
+            config.stage_timeout_seconds,
+            execute,
+        )
+        if (
+            postcheck.payload.get("model_era_id")
+            != deployment.payload.get("model_era_id")
+        ):
+            raise BatchOrchestrationError(
+                "Active deployment changed during coordinated batch."
+            )
+        stages.append(postcheck)
         alerts = int(report.payload.get("active_alert_count") or 0)
         status = "completed_with_alerts" if alerts else "succeeded"
         manifest = {
@@ -244,7 +294,8 @@ def run_batch(config: BatchConfig, *, runner: Runner | None = None) -> BatchRunR
             "stages": [item.summary() for item in stages],
         }
         _write_json(manifest_path, failure)
-        _publish_pointer(root, manifest_path, run_id, "failed")
+        if failure["failed_stage"] != "deployment_postcheck":
+            _publish_pointer(root, manifest_path, run_id, "failed")
         raise
     finally:
         _release_lock(lock, run_id)
@@ -260,7 +311,10 @@ def load_verified_batch_run(
     if manifest_path is None:
         pointer_path = root / "state" / "current.json"
         pointer = _read_json(pointer_path)
-        if pointer.get("schema_version") != BATCH_STATE_SCHEMA:
+        if pointer.get("schema_version") not in {
+            BATCH_STATE_SCHEMA,
+            LEGACY_BATCH_STATE_SCHEMA,
+        }:
             raise BatchOrchestrationError("Unsupported batch state schema.")
         path = Path(str(pointer.get("manifest_path") or ""))
         expected = str(pointer.get("manifest_sha256") or "")
@@ -269,7 +323,7 @@ def load_verified_batch_run(
     else:
         path = Path(manifest_path)
     payload = _read_json(path)
-    if payload.get("schema_version") != BATCH_SCHEMA:
+    if payload.get("schema_version") not in {BATCH_SCHEMA, LEGACY_BATCH_SCHEMA}:
         raise BatchOrchestrationError("Unsupported batch manifest schema.")
     return payload
 
@@ -308,6 +362,19 @@ def _update_command(config: BatchConfig, *, dry_run: bool) -> list[str]:
     return command
 
 
+def _deployment_command(config: BatchConfig) -> list[str]:
+    return [
+        sys.executable,
+        str(project_root() / "scripts" / "verify_active_deployment.py"),
+        "--deployment-root",
+        str(config.deployment_root),
+        "--model-bundle",
+        str(config.model_bundle),
+        "--calibration-dir",
+        str(config.calibration_dir),
+    ]
+
+
 def _monitoring_command(config: BatchConfig, *, dry_run: bool) -> list[str]:
     command = [
         sys.executable,
@@ -320,6 +387,8 @@ def _monitoring_command(config: BatchConfig, *, dry_run: bool) -> list[str]:
         str(config.monitoring_store_root),
         "--model-bundle",
         str(config.model_bundle),
+        "--deployment-root",
+        str(config.deployment_root),
     ]
     if config.activation_date:
         command.extend(["--activation-date", config.activation_date.isoformat()])
@@ -347,6 +416,10 @@ def _report_command(config: BatchConfig, source_manifest: str) -> list[str]:
         str(config.monitoring_store_root),
         "--calibration-dir",
         str(config.calibration_dir),
+        "--model-bundle",
+        str(config.model_bundle),
+        "--deployment-root",
+        str(config.deployment_root),
         "--through-date",
         config.through_date.isoformat(),
     ]
@@ -398,6 +471,7 @@ def _request_payload(config: BatchConfig, run_id: str) -> dict[str, Any]:
         "configuration": {
             "model_bundle": str(config.model_bundle),
             "calibration_dir": str(config.calibration_dir),
+            "deployment_root": str(config.deployment_root),
             "source_store_root": str(config.source_store_root),
             "monitoring_store_root": str(config.monitoring_store_root),
             "activation_date": (
@@ -536,7 +610,14 @@ def _redact(value: str) -> str:
 
 
 def _next_stage(stages: Sequence[BatchStageResult]) -> str:
-    names = ("availability_plan", "dataset_update", "predict_reconcile", "drift_publish")
+    names = (
+        "deployment_preflight",
+        "availability_plan",
+        "dataset_update",
+        "predict_reconcile",
+        "drift_publish",
+        "deployment_postcheck",
+    )
     return names[min(len(stages), len(names) - 1)]
 
 

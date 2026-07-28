@@ -4,8 +4,8 @@
 
 Approved contract. The policy/evidence contracts, manual monthly eligibility
 evaluation, manual temporal backtesting, v2 candidate Registry action, and
-one-time deployment bootstrap are implemented. Model-era monitoring,
-promotion, stabilization, rollback, and automatic scheduling remain
+one-time deployment bootstrap and model-era monitoring are implemented.
+Promotion, stabilization, rollback, and automatic scheduling remain
 unimplemented until their separately reviewed PRs.
 
 The name "Stage 7 — Controlled Retraining" comes from the approved operational
@@ -376,9 +376,28 @@ Implementation is split into separately reviewed PRs:
 2. monthly evaluation (implemented);
 3. temporal backtesting and v2 Registry (implemented);
 4. bootstrap and deployment pointer (implemented);
-5. model-era monitoring;
+5. model-era monitoring (implemented);
 6. promotion, probation, and rollback;
 7. stability and monthly scheduling.
 
 Each PR must leave the repository safe and usable. The next PR starts only
 after the previous PR has been reviewed and integrated.
+
+## Model-Era Monitoring
+
+Every Phase 9 prediction batch, report, local coordinator run, and Airflow run
+now verifies the active deployment pointer, immutable state and receipt, the
+explicit bundle and calibration, and all expected MLflow aliases. Any
+disagreement fails closed, with verification repeated before derived pointers
+advance.
+
+The append-only ledger stores a content-addressed model-era record containing
+deployment and Registry identities, fit/activation cutoffs, calibration and
+reference IDs, and bundle/model/dataset/schema/calibration/ledger hashes.
+Reporting windows and alert persistence never cross an era boundary.
+
+The generation-one bootstrap adopts the earlier Phase 9 ledger without
+rewriting it. Before the first v2 pointer update, the exact checksum-pinned
+legacy state is sealed as immutable era evidence. Existing v1 reports remain
+byte-identical and are labelled `bootstrap_adopted` only when calibration and
+prediction lineage match; ambiguous history remains `legacy_unassociated`.

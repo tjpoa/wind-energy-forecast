@@ -23,6 +23,7 @@ from wind_forecast.monitoring_reporting import (
     load_monitoring_calibration,
     load_monitoring_report,
     load_monitoring_report_state,
+    resolve_report_model_era,
 )
 
 
@@ -227,7 +228,10 @@ class MonitoringProjectionService:
         plan = request.get("plan")
         if (
             request.get("schema_version")
-            != "wind_forecast.monitoring_report_request.v1"
+            not in {
+                "wind_forecast.monitoring_report_request.v1",
+                "wind_forecast.monitoring_report_request.v2",
+            }
             or request.get("run_id") != run_id
             or not isinstance(plan, dict)
             or plan.get("status") != "planned"
@@ -356,6 +360,7 @@ class MonitoringProjectionService:
             self._sanitize_alert(alert_by_id[alert_id])
             for alert_id in sorted(active_ids)
         ]
+        model_era = resolve_report_model_era(self.store_root, report)
         return {
             "report_id": report.get("report_id"),
             "reporting_run_id": report.get("run_id"),
@@ -367,6 +372,7 @@ class MonitoringProjectionService:
             },
             "freshness": self._freshness(report, now),
             "model": self._model(report, calibration),
+            "model_era": model_era,
             "windows": {
                 window: self._project_window(
                     window,
@@ -407,6 +413,12 @@ class MonitoringProjectionService:
             evidence = load_prediction_evidence(self.store_root, str(prediction_id))
             snapshot = evidence["model_snapshot"]
             snapshots[str(snapshot.get("model_snapshot_id") or "")] = snapshot
+        association = resolve_report_model_era(self.store_root, report)
+        if association.get("association_kind") in {
+            "active_deployment",
+            "bootstrap_adopted",
+        }:
+            projected["status"] = "champion"
         if not snapshots:
             return projected
         if len(snapshots) != 1 or "" in snapshots:

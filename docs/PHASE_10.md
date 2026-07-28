@@ -20,7 +20,8 @@ The supported coordinator is:
 .\venv\Scripts\python.exe .\scripts\run_batch_pipeline.py plan `
   --through-date YYYY-MM-DD `
   --model-bundle outputs\training\v2_reference_mlflow `
-  --calibration-dir data\processed\v2\monitoring\reporting\calibrations\<ID>
+  --calibration-dir data\processed\v2\monitoring\reporting\calibrations\<ID> `
+  --deployment-root data\processed\v2\deployment
 ```
 
 After reviewing the plan, replace `plan` with `run`. `status` verifies the
@@ -29,13 +30,14 @@ editable package also exposes the equivalent `wind-forecast-batch` command.
 
 The coordinator preserves the existing atomic boundaries:
 
-1. read-only source availability plan;
-2. transactional Phase 8 ingestion, validation, integration, and features;
-3. Phase 9 hindcast issuance and actual reconciliation;
-4. immutable drift/performance calculation and report publication.
+1. fail-closed active-deployment preflight;
+2. read-only source availability plan;
+3. transactional Phase 8 ingestion, validation, integration, and features;
+4. Phase 9 hindcast issuance and actual reconciliation;
+5. immutable era-scoped report and active-deployment postcheck.
 
 Every real attempt writes an append-only
-`wind_forecast.batch_run.v1` manifest below
+`wind_forecast.batch_run.v2` manifest below
 `data/processed/v2/orchestration/runs/`. The only mutable coordinator artifact
 is the atomic `state/current.json` pointer. A failed stage blocks all downstream
 stages. Recovery is an identical rerun after correcting the cause.
@@ -50,6 +52,7 @@ Register the task only after validating all selected paths:
   -RepositoryRoot $PWD `
   -ModelBundle .\outputs\training\v2_reference_mlflow `
   -CalibrationDirectory .\data\processed\v2\monitoring\reporting\calibrations\<ID> `
+  -DeploymentRoot .\data\processed\v2\deployment `
   -ActivationDate YYYY-MM-DD `
   -WhatIf
 ```
@@ -59,9 +62,10 @@ at local 12:00, never overlaps itself, has a six-hour execution limit, and is
 retried twice at 30-minute intervals. It uses the current interactive Windows
 identity and stores no credential in the repository.
 
-Model and calibration paths may alternatively be supplied through
+Model, calibration, and deployment paths may alternatively be supplied through
 `WIND_FORECAST_BATCH_MODEL_BUNDLE` and
-`WIND_FORECAST_BATCH_CALIBRATION_DIR`. CDS credentials remain in the scheduled
+`WIND_FORECAST_BATCH_CALIBRATION_DIR`, and
+`WIND_FORECAST_DEPLOYMENT_ROOT`. CDS credentials remain in the scheduled
 user's environment, an explicitly selected ignored `.env`, or `.cdsapirc`.
 Persisted evidence records no credential values.
 

@@ -80,6 +80,20 @@ const monitoringReport = {
     transformation_version: "feature_ready_ren_era5_land_v2",
     status: "selected_not_promoted",
   },
+  model_era: {
+    model_era_id: "e".repeat(64),
+    association_kind: "active_deployment",
+    deployment_id: "a".repeat(64),
+    deployment_state_id: "b".repeat(64),
+    deployment_generation: 1,
+    registered_model_name: "wind-v2",
+    model_version: "1",
+    cutoffs: {
+      fit_cutoff: "2024-12-31",
+      activation_cutoff: "2026-01-01",
+    },
+    pins: { model_sha256: "c".repeat(64) },
+  },
   windows: {
     "30": {
       window_days: 30,

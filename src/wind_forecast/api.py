@@ -267,7 +267,23 @@ class MonitoringModelResponse(BaseModel):
     dataset_version: str | None
     dataset_checksum: str
     transformation_version: str
-    status: Literal["selected_not_promoted"]
+    status: Literal["selected_not_promoted", "champion"]
+
+
+class MonitoringModelEraResponse(BaseModel):
+    """Deployment attribution for one monitoring report."""
+
+    model_era_id: str | None = None
+    association_kind: Literal[
+        "active_deployment", "bootstrap_adopted", "legacy_unassociated"
+    ]
+    deployment_id: str | None = None
+    deployment_state_id: str | None = None
+    deployment_generation: int | None = None
+    registered_model_name: str | None = None
+    model_version: str | None = None
+    cutoffs: dict[str, str] | None = None
+    pins: dict[str, str] | None = None
 
 
 class MonitoringSourcePipelineResponse(BaseModel):
@@ -287,6 +303,7 @@ class MonitoringReportResponse(BaseModel):
     source_pipeline: MonitoringSourcePipelineResponse
     freshness: MonitoringFreshnessResponse
     model: MonitoringModelResponse
+    model_era: MonitoringModelEraResponse
     windows: dict[str, MonitoringWindowResponse]
     active_alerts: list[MonitoringAlertResponse]
     target_scale: Literal["sum_of_15_minute_MW_observations"]

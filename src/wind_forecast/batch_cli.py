@@ -29,6 +29,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         child.add_argument("--through-date", help="Inclusive YYYY-MM-DD; defaults to the current Lisbon date.")
         child.add_argument("--model-bundle", type=Path)
         child.add_argument("--calibration-dir", type=Path)
+        child.add_argument("--deployment-root", type=Path)
         child.add_argument("--activation-date")
         child.add_argument("--backfill-start")
         child.add_argument("--backfill-end")
@@ -88,14 +89,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         calibration_dir = args.calibration_dir or os.getenv(
             "WIND_FORECAST_BATCH_CALIBRATION_DIR"
         )
-        if not model_bundle or not calibration_dir:
+        deployment_root = args.deployment_root or os.getenv(
+            "WIND_FORECAST_DEPLOYMENT_ROOT"
+        )
+        if not model_bundle or not calibration_dir or not deployment_root:
             raise BatchOrchestrationError(
-                "Set --model-bundle and --calibration-dir, or their batch environment variables."
+                "Set --model-bundle, --calibration-dir and --deployment-root, "
+                "or their batch environment variables."
             )
         config = BatchConfig(
             through_date=args.through_date,
             model_bundle=Path(model_bundle),
             calibration_dir=Path(calibration_dir),
+            deployment_root=Path(deployment_root),
             activation_date=args.activation_date,
             backfill_start=args.backfill_start,
             backfill_end=args.backfill_end,

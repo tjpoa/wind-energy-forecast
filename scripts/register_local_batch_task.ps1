@@ -8,6 +8,8 @@ param(
     [string]$ModelBundle,
     [Parameter(Mandatory = $true)]
     [string]$CalibrationDirectory,
+    [Parameter(Mandatory = $true)]
+    [string]$DeploymentRoot,
     [string]$ActivationDate,
     [string]$EnvFile,
     [string]$TaskName = "WindForecastHistoricalBatch"
@@ -31,6 +33,7 @@ function Resolve-RepositoryPath([string]$Value) {
 $python = Resolve-RepositoryPath $PythonExecutable
 $model = Resolve-RepositoryPath $ModelBundle
 $calibration = Resolve-RepositoryPath $CalibrationDirectory
+$deployment = Resolve-RepositoryPath $DeploymentRoot
 $environmentFile = if ($EnvFile) { Resolve-RepositoryPath $EnvFile } else { $null }
 
 $timezone = [System.TimeZoneInfo]::Local.Id
@@ -53,7 +56,8 @@ $actionArguments = @(
     "-PythonExecutable", (Quote-TaskArgument $python),
     "-RepositoryRoot", (Quote-TaskArgument $repository),
     "-ModelBundle", (Quote-TaskArgument $model),
-    "-CalibrationDirectory", (Quote-TaskArgument $calibration)
+    "-CalibrationDirectory", (Quote-TaskArgument $calibration),
+    "-DeploymentRoot", (Quote-TaskArgument $deployment)
 )
 if ($ActivationDate) {
     $actionArguments += @("-ActivationDate", (Quote-TaskArgument $ActivationDate))

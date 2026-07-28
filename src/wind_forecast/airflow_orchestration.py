@@ -29,6 +29,7 @@ class AirflowBatchConfig:
 
     model_bundle: Path
     calibration_dir: Path
+    deployment_root: Path
     source_store_root: Path
     monitoring_store_root: Path
     activation_date: str | date
@@ -51,6 +52,7 @@ class AirflowBatchConfig:
             "calibration_dir",
             "source_store_root",
             "monitoring_store_root",
+            "deployment_root",
         ):
             value = Path(getattr(self, name))
             if not value.is_absolute():
@@ -94,6 +96,38 @@ def validate_three_day_backfill(start: str | date, end: str | date) -> tuple[str
     if (last - first).days != 2:
         raise ValueError("The Phase 10 validation backfill must span exactly 3 days.")
     return first.isoformat(), last.isoformat()
+
+
+def run_deployment_preflight(
+    config: AirflowBatchConfig,
+    *,
+    expected_model_era_id: str | None = None,
+    timeout_seconds: int = 10 * 60,
+) -> dict[str, Any]:
+    """Verify pointer, aliases and artifacts before or after an Airflow run."""
+    command = [
+        sys.executable,
+        str(project_root() / "scripts" / "verify_active_deployment.py"),
+        "--deployment-root",
+        str(config.deployment_root),
+        "--model-bundle",
+        str(config.model_bundle),
+        "--calibration-dir",
+        str(config.calibration_dir),
+    ]
+    payload = _run_cli_json(command, timeout_seconds)
+    if (
+        expected_model_era_id is not None
+        and payload.get("model_era_id") != expected_model_era_id
+    ):
+        raise AirflowStageError("Active deployment changed during Airflow batch.")
+    return _small_result(
+        "deployment_preflight",
+        payload,
+        model_era_id=payload.get("model_era_id"),
+        deployment_id=(payload.get("deployment") or {}).get("deployment_id"),
+        model_version=(payload.get("registry") or {}).get("model_version"),
+    )
 
 
 def run_availability_plan(
@@ -154,6 +188,8 @@ def run_predict_reconcile(
         str(config.monitoring_store_root),
         "--model-bundle",
         str(config.model_bundle),
+        "--deployment-root",
+        str(config.deployment_root),
         "--activation-date",
         config.activation_date.isoformat(),
     ]
@@ -186,6 +222,10 @@ def run_drift_publish(
         str(config.monitoring_store_root),
         "--calibration-dir",
         str(config.calibration_dir),
+        "--model-bundle",
+        str(config.model_bundle),
+        "--deployment-root",
+        str(config.deployment_root),
         "--through-date",
         through_date,
     ]

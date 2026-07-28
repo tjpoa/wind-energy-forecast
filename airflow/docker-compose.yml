@@ -20,6 +20,7 @@ x-airflow-common: &airflow-common
     WIND_FORECAST_AIRFLOW_ACTIVATION_DATE: "${WIND_FORECAST_AIRFLOW_ACTIVATION_DATE:?Set an explicit activation date}"
     WIND_FORECAST_BATCH_MODEL_BUNDLE: "${WIND_FORECAST_BATCH_MODEL_BUNDLE:?Select an explicit model bundle}"
     WIND_FORECAST_BATCH_CALIBRATION_DIR: "${WIND_FORECAST_BATCH_CALIBRATION_DIR:?Select an explicit calibration directory}"
+    WIND_FORECAST_DEPLOYMENT_ROOT: "${WIND_FORECAST_DEPLOYMENT_ROOT:?Select the active deployment store}"
     WIND_FORECAST_SOURCE_STORE_ROOT: "${WIND_FORECAST_SOURCE_STORE_ROOT:-/opt/wind-energy-forecast/data/processed/v2/incremental_update}"
     WIND_FORECAST_RAW_STORE_ROOT: "${WIND_FORECAST_RAW_STORE_ROOT:-}"
     WIND_FORECAST_MONITORING_STORE_ROOT: "${WIND_FORECAST_MONITORING_STORE_ROOT:-/opt/wind-energy-forecast/data/processed/v2/monitoring}"
