@@ -9,6 +9,7 @@ from pathlib import Path
 import pendulum
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.sdk import DAG
+from airflow.task.trigger_rule import TriggerRule
 from airflow.timetables.trigger import CronTriggerTimetable
 
 from wind_forecast.airflow_orchestration import (
@@ -18,6 +19,10 @@ from wind_forecast.airflow_orchestration import (
     run_dataset_update,
     run_drift_publish,
     run_predict_reconcile,
+)
+from wind_forecast.scheduler_ownership import (
+    acquire_scheduler_lease,
+    release_scheduler_lease,
 )
 
 
@@ -97,6 +102,26 @@ def _run_availability(*, through_date: str) -> dict:
     return run_availability_plan(_config(), through_date)
 
 
+def _acquire_scheduler(*, run_id: str) -> dict:
+    lease = acquire_scheduler_lease(
+        Path(_required_environment("WIND_FORECAST_SCHEDULER_STATE_ROOT")),
+        _required_environment("WIND_FORECAST_ENVIRONMENT_ID"),
+        "airflow",
+        workflow=DAG_ID,
+        run_id=run_id,
+    )
+    return lease.to_dict()
+
+
+def _release_scheduler(*, lease_id: str) -> dict:
+    release_scheduler_lease(
+        Path(_required_environment("WIND_FORECAST_SCHEDULER_STATE_ROOT")),
+        _required_environment("WIND_FORECAST_ENVIRONMENT_ID"),
+        lease_id,
+    )
+    return {"status": "released", "lease_id": lease_id}
+
+
 def _run_deployment(*, expected_model_era_id: str | None = None) -> dict:
     return run_deployment_preflight(
         _config(),
@@ -156,6 +181,14 @@ with DAG(
     dagrun_timeout=timedelta(hours=6),
     tags=["wind-forecast", "historical-batch", "local"],
 ) as dag:
+    scheduler_lease = PythonOperator(
+        task_id="scheduler_lease",
+        python_callable=_acquire_scheduler,
+        op_kwargs={"run_id": "{{ run_id }}"},
+        multiple_outputs=True,
+        retries=0,
+        execution_timeout=timedelta(minutes=5),
+    )
     deployment_preflight = PythonOperator(
         task_id="deployment_preflight",
         python_callable=_run_deployment,
@@ -213,12 +246,22 @@ with DAG(
         retries=0,
         execution_timeout=timedelta(minutes=10),
     )
+    scheduler_release = PythonOperator(
+        task_id="scheduler_release",
+        python_callable=_release_scheduler,
+        op_kwargs={"lease_id": scheduler_lease.output["lease_id"]},
+        retries=0,
+        trigger_rule=TriggerRule.ALL_DONE,
+        execution_timeout=timedelta(minutes=5),
+    )
 
     (
-        deployment_preflight
+        scheduler_lease
+        >> deployment_preflight
         >> availability_plan
         >> dataset_update
         >> predict_reconcile
         >> drift_publish
         >> deployment_postcheck
+        >> scheduler_release
     )

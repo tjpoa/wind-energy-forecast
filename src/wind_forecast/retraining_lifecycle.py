@@ -14,6 +14,10 @@ from typing import Any, Literal, Mapping
 from uuid import uuid4
 
 from wind_forecast.manifests import sha256_file
+from wind_forecast.monthly_governance import (
+    MonthlyGovernanceError,
+    load_monthly_governance_recommendation,
+)
 from wind_forecast.monitoring import (
     load_prediction_evidence,
     load_verified_monitoring_state,
@@ -94,6 +98,7 @@ class LifecycleConfig:
     policy_path: Path | None = None
     monitoring_policy_path: Path | None = None
     observation_cutoff: date | str | None = None
+    monthly_recommendation: Path | None = None
     promotion_receipt: Path | None = None
     expected_rollback_state_id: str | None = None
     now_utc: datetime | None = None
@@ -111,6 +116,7 @@ class LifecycleConfig:
             "monitoring_report",
             "policy_path",
             "monitoring_policy_path",
+            "monthly_recommendation",
             "promotion_receipt",
             "approval_path",
         ):
@@ -579,14 +585,22 @@ def _plan_stabilization(
             config.policy_path,
             config.monitoring_policy_path,
             config.observation_cutoff,
+            config.monthly_recommendation,
         )
     ):
         raise RetrainingLifecycleError(
-            "Stabilization requires monitoring store, report, policy and cutoff."
+            "Stabilization requires monitoring store, report, policies, monthly "
+            "recommendation and cutoff."
         )
     report = load_monitoring_report(config.monitoring_report)
     policy = _read_json(config.policy_path)
     monitoring_policy = _read_json(config.monitoring_policy_path)
+    try:
+        recommendation = load_monthly_governance_recommendation(
+            config.monthly_recommendation
+        )
+    except MonthlyGovernanceError as exc:
+        raise RetrainingLifecycleError(str(exc)) from exc
     report_state = load_monitoring_report_state(config.monitoring_store_root)
     stability = policy.get("stability") or {}
     automation = policy.get("automation") or {}
@@ -601,6 +615,36 @@ def _plan_stabilization(
         raise RetrainingLifecycleError(
             "Policy does not enforce the fixed manual stability contract."
         )
+    stability_recommendation = recommendation.get("stability") or {}
+    recommendation_deployment = recommendation.get("deployment") or {}
+    if (
+        stability_recommendation.get("decision")
+        != "ready_for_second_manual_approval"
+        or stability_recommendation.get("second_manual_approval_required")
+        is not True
+        or stability_recommendation.get("observation_cutoff")
+        != config.observation_cutoff.isoformat()
+        or len(stability_recommendation.get("fixed_observations") or []) != 90
+        or recommendation_deployment.get("deployment_id")
+        != state["deployment_id"]
+        or recommendation_deployment.get("deployment_state_id")
+        != state["deployment_state_id"]
+        or recommendation_deployment.get("generation")
+        != config.expected.generation
+        or recommendation_deployment.get("expected_aliases")
+        != config.expected.aliases()
+        or recommendation_deployment.get("pointer_sha256")
+        != config.expected.pointer_sha256
+        or (recommendation.get("policy") or {}).get("sha256")
+        != sha256_file(config.policy_path)
+        or (recommendation.get("policy") or {}).get(
+            "monitoring_policy_sha256"
+        )
+        != sha256_file(config.monitoring_policy_path)
+    ):
+        raise RetrainingLifecycleError(
+            "Monthly recommendation does not authorize this manual stability review."
+        )
     if report.get("active_alerts") or any(
         item.get("severity") in {"warning", "critical"}
         for item in report.get("breaches", [])
@@ -612,6 +656,8 @@ def _plan_stabilization(
         report_state is None
         or report_state.get("latest_report_id") != report.get("report_id")
         or report_state.get("latest_through_date") != report.get("through_date")
+        or (report_state.get("active_alerts") or {})
+        != (report.get("active_alerts") or {})
         or (report.get("reference") or {}).get("policy_sha256")
         != sha256_file(config.monitoring_policy_path)
         or report.get("config") != monitoring_policy
@@ -623,7 +669,8 @@ def _plan_stabilization(
     if (
         era.get("deployment_id") != state["deployment_id"]
         or str(era.get("model_version")) != str(config.expected.champion)
-        or report.get("through_date") != config.observation_cutoff.isoformat()
+        or date.fromisoformat(report.get("through_date"))
+        < config.observation_cutoff
     ):
         raise RetrainingLifecycleError(
             "Monitoring report is not current for the probationary deployment."
@@ -637,7 +684,7 @@ def _plan_stabilization(
             "Monitoring ledger is not on the probationary model era."
         )
     start = date.fromisoformat(state["cutoffs"]["promotion_effective_date"])
-    eligible: list[str] = []
+    eligible: list[dict[str, str]] = []
     for day, prediction_id in sorted((ledger.get("as_issued") or {}).items()):
         target = date.fromisoformat(day)
         if target < start or target > config.observation_cutoff:
@@ -655,22 +702,44 @@ def _plan_stabilization(
             ),
             None,
         )
+        if prediction.get("target_date") != day:
+            raise RetrainingLifecycleError(
+                "Probation prediction target date differs from the ledger."
+            )
         if (
             prediction.get("model_era_id") != era_id
-            or prediction.get("issuance_kind") not in {"scheduled", "catch_up"}
-            or prediction.get("target_date") != day
-            or actual is None
-            or actual.get("target_date") != day
-            or not math.isfinite(float(prediction.get("prediction")))
-            or not math.isfinite(float(actual.get("actual")))
+            or prediction.get("issuance_kind")
+            not in {"scheduled", "catch_up"}
+            or actual_id is None
         ):
+            continue
+        if actual is None or actual.get("target_date") != day:
             raise RetrainingLifecycleError(
-                "Probation observation set contains ineligible evidence."
+                "Probation actual revision differs from the ledger."
             )
-        eligible.append(day)
+        try:
+            finite = math.isfinite(
+                float(prediction.get("prediction"))
+            ) and math.isfinite(float(actual.get("actual")))
+        except (TypeError, ValueError):
+            finite = False
+        if not finite:
+            continue
+        eligible.append(
+            {
+                "target_date": day,
+                "prediction_id": str(prediction_id),
+                "actual_revision_id": str(actual_id),
+            }
+        )
     if len(eligible) != 90:
         raise RetrainingLifecycleError(
             f"Stabilization requires exactly 90 eligible observations; found {len(eligible)}."
+        )
+    if stability_recommendation.get("fixed_observations") != eligible:
+        raise RetrainingLifecycleError(
+            "Monthly recommendation observation evidence differs from the "
+            "current first 90 eligible observations."
         )
     if (report.get("quality") or {}).get("issues"):
         raise RetrainingLifecycleError(
@@ -685,6 +754,13 @@ def _plan_stabilization(
         "monitoring_report_path": str(config.monitoring_report.resolve()),
         "monitoring_report_sha256": sha256_file(config.monitoring_report),
         "monitoring_report_id": report["report_id"],
+        "monthly_recommendation_path": str(
+            config.monthly_recommendation.resolve()
+        ),
+        "monthly_recommendation_sha256": sha256_file(
+            config.monthly_recommendation
+        ),
+        "monthly_recommendation_id": recommendation["recommendation_id"],
         "policy_path": str(config.policy_path.resolve()),
         "policy_sha256": sha256_file(config.policy_path),
         "monitoring_policy_path": str(
@@ -694,7 +770,9 @@ def _plan_stabilization(
             config.monitoring_policy_path
         ),
         "observation_cutoff": config.observation_cutoff.isoformat(),
-        "eligible_observation_dates": eligible,
+        "eligible_observation_dates": [
+            observation["target_date"] for observation in eligible
+        ],
         "eligible_observation_count": 90,
         "model_era_id": era_id,
     }

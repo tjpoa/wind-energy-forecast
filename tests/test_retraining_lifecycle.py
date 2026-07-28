@@ -328,21 +328,68 @@ def _stability_inputs(tmp_path: Path, count: int) -> LifecycleConfig:
         ),
         encoding="utf-8",
     )
+    recommendation = tmp_path / "recommendation.json"
+    recommendation.write_text("{}", encoding="utf-8")
     return _config(
         tmp_path,
         monitoring_store_root=tmp_path / "monitoring",
         monitoring_report=report,
         policy_path=policy,
         monitoring_policy_path=monitoring_policy,
-        observation_cutoff=date(2026, 6, 1),
+        observation_cutoff=date(2026, 5, 1),
+        monthly_recommendation=recommendation,
     )
 
 
-@pytest.mark.parametrize("count", [89, 91])
-def test_stabilization_requires_exactly_90_observations(
+def _mock_ready_recommendation(
+    monkeypatch: pytest.MonkeyPatch,
+    config: LifecycleConfig,
+) -> dict:
+    payload = {
+        "recommendation_id": "recommendation",
+        "policy": {
+            "sha256": sha256(config.policy_path.read_bytes()).hexdigest(),
+            "monitoring_policy_sha256": sha256(
+                config.monitoring_policy_path.read_bytes()
+            ).hexdigest(),
+        },
+        "deployment": {
+            "deployment_id": "c" * 64,
+            "deployment_state_id": "b" * 64,
+            "generation": 2,
+            "expected_aliases": config.expected.aliases(),
+            "pointer_sha256": config.expected.pointer_sha256,
+        },
+        "stability": {
+            "decision": "ready_for_second_manual_approval",
+            "second_manual_approval_required": True,
+            "observation_cutoff": config.observation_cutoff.isoformat(),
+            "fixed_observations": [
+                {
+                    "target_date": date.fromordinal(
+                        date(2026, 2, 1).toordinal() + index
+                    ).isoformat(),
+                    "prediction_id": f"p{index}",
+                    "actual_revision_id": "a",
+                }
+                for index in range(90)
+            ],
+        },
+    }
+    monkeypatch.setattr(
+        lifecycle,
+        "load_monthly_governance_recommendation",
+        lambda _path: payload,
+    )
+    return payload
+
+
+@pytest.mark.parametrize("count", [89])
+def test_stabilization_requires_first_90_observations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, count: int
 ) -> None:
     config = _stability_inputs(tmp_path, count)
+    _mock_ready_recommendation(monkeypatch, config)
     days = {
         f"2026-02-{index + 1:02d}" if index < 28 else f"2026-03-{index - 27:02d}": f"p{index}"
         for index in range(min(count, 59))
@@ -421,13 +468,31 @@ def test_stabilization_requires_exactly_90_observations(
         lifecycle._plan_stabilization(config, _probationary_state())
 
 
-def test_stabilization_accepts_exactly_90_and_moves_only_stable(
+def test_stabilization_rejects_recommendation_for_other_deployment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = _stability_inputs(tmp_path, 90)
+    recommendation = _mock_ready_recommendation(monkeypatch, config)
+    recommendation["deployment"]["deployment_id"] = "d" * 64
+    monkeypatch.setattr(lifecycle, "load_monitoring_report", lambda _path: {})
+    monkeypatch.setattr(
+        lifecycle,
+        "load_monitoring_report_state",
+        lambda _root: None,
+    )
+    with pytest.raises(RetrainingLifecycleError, match="does not authorize"):
+        lifecycle._plan_stabilization(config, _probationary_state())
+
+
+@pytest.mark.parametrize("count", [90, 91])
+def test_stabilization_accepts_first_90_and_moves_only_stable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, count: int
+) -> None:
+    config = _stability_inputs(tmp_path, count)
+    _mock_ready_recommendation(monkeypatch, config)
     days = {
         date.fromordinal(date(2026, 2, 1).toordinal() + index).isoformat(): f"p{index}"
-        for index in range(90)
+        for index in range(count)
     }
     monitoring_policy_payload = json.loads(
         config.monitoring_policy_path.read_text(encoding="utf-8")
@@ -505,6 +570,7 @@ def test_stabilization_blocks_active_warning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = _stability_inputs(tmp_path, 90)
+    _mock_ready_recommendation(monkeypatch, config)
     monkeypatch.setattr(
         lifecycle,
         "load_monitoring_report",

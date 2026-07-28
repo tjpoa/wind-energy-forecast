@@ -41,8 +41,8 @@ each checkpoint was written. This file reflects the latest repository state.
 | V2 data-source work | Substantial local progress | REN and ERA5-Land source modules, Phase 2 acceptance docs | V2 data does not replace v1; v2 model/scaler validity is not claimed. |
 | V2 incremental updates | Implemented and synthetically validated | `wind_forecast.incremental`, batch-quality sidecars, Phase 8 docs and tests | Live REN/CDS refresh was not exercised by the repository test suite. |
 | Historical monitoring | Immutable quality, prediction evidence, drift, performance, reports, and local alerts implemented | `wind_forecast.monitoring`, `wind_forecast.monitoring_reporting`, Phase 9 CLIs/docs/tests | It is delayed historical hindcast monitoring, not live forecasting or external notification. |
-| Batch orchestration | Local CLI, Windows Task Scheduler, and Airflow 3.3.0 local stack implemented | `wind_forecast.orchestration`, `wind_forecast.airflow_orchestration`, `airflow/`, Phase 10 docs/tests | Airflow uses temporary synthetic fixtures for offline validation; both schedulers must not run concurrently. |
-| Controlled retraining | Contract, eligibility, backtesting, candidate registration, bootstrap, model-era monitoring, and manual promotion/stability/rollback implemented | `wind_forecast.retraining_policy`, `wind_forecast.retraining_evaluation`, `wind_forecast.retraining_backtesting`, `wind_forecast.retraining_registry`, `wind_forecast.retraining_deployment`, `wind_forecast.retraining_lifecycle`, their manual CLIs/tests, and `docs/CONTROLLED_RETRAINING.md` | Bootstrap still requires the accepted Phase 9 ledger; lifecycle transitions require exact operator-approved local evidence. Scheduling remains a later increment and no transition is automatic. |
+| Batch orchestration | Local CLI, Windows Task Scheduler, and Airflow 3.3.0 local stack implemented | `wind_forecast.orchestration`, `wind_forecast.airflow_orchestration`, `airflow/`, Phase 10 docs/tests | Airflow uses temporary synthetic fixtures for offline validation; a shared owner pointer and lease prevent both schedulers from executing concurrently. |
+| Controlled retraining | Contract, eligibility, backtesting, candidate registration, bootstrap, model-era monitoring, manual lifecycle, and recommendation-only monthly scheduling implemented | Controlled-retraining modules, manual/scheduled CLIs, Airflow DAGs, tests, and `docs/CONTROLLED_RETRAINING.md` | Bootstrap still requires the accepted Phase 9 ledger; training and every lifecycle transition require explicit operator action and exact evidence. |
 | Automated tests | Implemented | `tests/`, pytest and pytest-cov configuration | Coverage has a conservative baseline gate; source-ingestion and v2 modules still need deeper tests. |
 | Code quality | Implemented baseline | Ruff configuration in `pyproject.toml` | Ruff rule set is intentionally minimal. |
 | Prediction API | Implemented for local/container use | `wind_forecast.api`, `docs/PHASE_5.md`, API tests | The API is not deployed and depends on local mounted artifacts for full serving. |
@@ -159,16 +159,18 @@ This repository demonstrates:
 - Monitoring is local and retrospective. Its schedulers are local-only; it has
   no external alert delivery, live forecasting, automatic retraining, or model
   promotion.
-- Controlled retraining is offline and manually invoked. It performs a monthly
-  eligibility recommendation over operator-pinned Phase 9 evidence, can seal a
+- Controlled retraining remains offline. A scheduler may seal monthly
+  retraining/stability recommendations over verified Phase 9 evidence; operators
+  can then seal a
   fail-closed temporal backtest, and can register an accepted version under
   only the v2 `candidate` alias. A separate one-time, manually approved
   bootstrap can initialize generation-one `stable` and `champion` plus an
   immutable checksum-pinned deployment pointer. Normal V2 promotion, probation,
-  stability after exactly 90 eligible same-era observations, and rollback to
+  stability review over the first 90 eligible same-era observations plus current
+  health, and rollback to
   the promotion-fixed last stable are explicit approval-gated commands with
-  immutable evidence and atomic pointer publication. Scheduling remains
-  unimplemented; no lifecycle transition is automatic.
+  immutable evidence and atomic pointer publication. Scheduling is
+  recommendation-only; no lifecycle transition is automatic.
 - The v2 reference is independent of v1 scalers/models, but is not promoted or
   connected to serving.
 - The Phase 8 live provider refresh path requires approved credentials/network

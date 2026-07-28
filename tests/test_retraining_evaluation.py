@@ -543,3 +543,43 @@ def test_concurrent_different_records_atomically_seal_exactly_one_period(
     }
     assert list(config.output_root.glob(".*.tmp")) == []
     evaluation._seal_period(period_root, sealed)
+
+
+def test_v2_evaluation_is_model_era_scoped_and_v1_remains_supported(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, values = _environment(tmp_path, monkeypatch)
+    values["ledger"]["active_model_era_id"] = "era-current"
+    values["report"]["model_era"] = {"model_era_id": "era-current"}
+    adopted = dict(values["ledger"]["as_issued"])
+    monkeypatch.setattr(
+        evaluation,
+        "load_model_era",
+        lambda *_args: {"_adopted_state": {"as_issued": adopted}},
+    )
+    era_config = MonthlyRetrainingEvaluationConfig(
+        **{
+            **config.__dict__,
+            "model_era_id": "era-current",
+        }
+    )
+
+    result = run_monthly_retraining_evaluation(era_config)
+    loaded = load_monthly_retraining_evaluation(result.evaluation_path)
+
+    assert loaded["schema_version"] == evaluation.EVALUATION_SCHEMA_V2
+    assert loaded["incumbent"]["model_era_id"] == "era-current"
+    assert loaded["phase9_ledger"]["active_model_era_id"] == "era-current"
+    assert loaded["eligibility"]["eligible_observation_count"] == 90
+
+    legacy_config = MonthlyRetrainingEvaluationConfig(
+        **{
+            **config.__dict__,
+            "output_root": tmp_path / "legacy-evaluations",
+        }
+    )
+    legacy = run_monthly_retraining_evaluation(legacy_config)
+    assert load_monthly_retraining_evaluation(legacy.evaluation_path)[
+        "schema_version"
+    ] == evaluation.EVALUATION_SCHEMA

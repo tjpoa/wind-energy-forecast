@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 from wind_forecast.manifests import sha256_file
 from wind_forecast.monitoring import (
     MonitoringError,
+    load_model_era,
     load_prediction_evidence,
     load_verified_monitoring_state,
 )
@@ -34,6 +35,7 @@ from wind_forecast.retraining_policy import (
 
 
 EVALUATION_SCHEMA = "wind_forecast.monthly_retraining_evaluation.v1"
+EVALUATION_SCHEMA_V2 = "wind_forecast.monthly_retraining_evaluation.v2"
 EVALUATION_OUTCOMES = (
     "blocked_quality",
     "insufficient_observations",
@@ -56,6 +58,7 @@ class MonthlyRetrainingEvaluationConfig:
     incumbent_id: str
     incumbent_fit_cutoff: date
     evaluated_at_utc: datetime | str
+    model_era_id: str | None = None
     output_root: Path = Path("data/processed/v2/retraining/evaluations")
     dry_run: bool = False
 
@@ -69,6 +72,13 @@ class MonthlyRetrainingEvaluationConfig:
             object.__setattr__(self, name, Path(getattr(self, name)))
         if not isinstance(self.incumbent_id, str) or not self.incumbent_id.strip():
             raise RetrainingEvaluationError("incumbent_id must be a non-empty string.")
+        if self.model_era_id is not None and (
+            not isinstance(self.model_era_id, str)
+            or not self.model_era_id.strip()
+        ):
+            raise RetrainingEvaluationError(
+                "model_era_id must be a non-empty string when supplied."
+            )
         cutoff = self.incumbent_fit_cutoff
         if not isinstance(cutoff, date):
             try:
@@ -179,6 +189,15 @@ def plan_monthly_retraining_evaluation(
         raise RetrainingEvaluationError(
             "Explicit incumbent_id differs from the verified Phase 9 model snapshot."
         )
+    if config.model_era_id is not None:
+        if (
+            ledger.get("active_model_era_id") != config.model_era_id
+            or (report.get("model_era") or {}).get("model_era_id")
+            != config.model_era_id
+        ):
+            raise RetrainingEvaluationError(
+                "Explicit model_era_id differs from the active ledger/report era."
+            )
     _cross_check_report_ledger(report, ledger)
     alert_details = _active_alert_details(report, alerts, policy)
     blockers = tuple(
@@ -218,7 +237,11 @@ def plan_monthly_retraining_evaluation(
     state_path = config.monitoring_store_root / "reporting" / "state" / "current.json"
     ledger_path = config.monitoring_store_root / "state" / "current.json"
     body = {
-        "schema_version": EVALUATION_SCHEMA,
+        "schema_version": (
+            EVALUATION_SCHEMA_V2
+            if config.model_era_id is not None
+            else EVALUATION_SCHEMA
+        ),
         "evaluation_period": evaluation_period,
         "evaluated_at_utc": _utc_text(config.evaluated_at_utc),
         "schedule": {
@@ -246,6 +269,11 @@ def plan_monthly_retraining_evaluation(
             "incumbent_id": config.incumbent_id,
             "identity_role": "transitional_incumbent_input",
             "champion_claim": False,
+            **(
+                {"model_era_id": config.model_era_id}
+                if config.model_era_id is not None
+                else {}
+            ),
         },
         "cutoffs": {
             "incumbent_fit_cutoff": config.incumbent_fit_cutoff.isoformat(),
@@ -271,6 +299,11 @@ def plan_monthly_retraining_evaluation(
         "phase9_ledger": {
             "generation": ledger.get("generation"),
             "model_snapshot_id": ledger.get("model_snapshot_id"),
+            **(
+                {"active_model_era_id": ledger.get("active_model_era_id")}
+                if config.model_era_id is not None
+                else {}
+            ),
             "path": str(ledger_path.resolve()),
             "sha256": sha256_file(ledger_path),
             "feature_view": "as_issued",
@@ -360,7 +393,10 @@ def load_monthly_retraining_evaluation(path: str | Path) -> dict[str, Any]:
         raise RetrainingEvaluationError(
             f"Invalid monthly retraining evaluation: {record_path}."
         ) from exc
-    if not isinstance(payload, dict) or payload.get("schema_version") != EVALUATION_SCHEMA:
+    if not isinstance(payload, dict) or payload.get("schema_version") not in {
+        EVALUATION_SCHEMA,
+        EVALUATION_SCHEMA_V2,
+    }:
         raise RetrainingEvaluationError("Unsupported monthly evaluation schema.")
     identifier = payload.get("evaluation_id")
     if not isinstance(identifier, str) or identifier != _record_id(
@@ -396,6 +432,28 @@ def load_monthly_retraining_evaluation(path: str | Path) -> dict[str, Any]:
     if set(payload) != required or payload.get("outcome") not in EVALUATION_OUTCOMES:
         raise RetrainingEvaluationError(
             "Monthly evaluation fields differ from the v1 contract."
+        )
+    incumbent = payload.get("incumbent")
+    ledger = payload.get("phase9_ledger")
+    if not isinstance(incumbent, dict) or not isinstance(ledger, dict):
+        raise RetrainingEvaluationError("Monthly evaluation identities are invalid.")
+    if payload["schema_version"] == EVALUATION_SCHEMA_V2:
+        era_id = incumbent.get("model_era_id")
+        if (
+            not isinstance(era_id, str)
+            or not era_id
+            or ledger.get("active_model_era_id") != era_id
+        ):
+            raise RetrainingEvaluationError(
+                "Monthly v2 evaluation model-era identity is invalid."
+            )
+    elif set(incumbent) != {
+        "incumbent_id",
+        "identity_role",
+        "champion_claim",
+    }:
+        raise RetrainingEvaluationError(
+            "Monthly v1 evaluation incumbent fields are invalid."
         )
     if record_path.parent.parent.name != payload.get("evaluation_period"):
         raise RetrainingEvaluationError(
@@ -585,6 +643,23 @@ def _build_eligibility(
     expected_transformation: str | None = None
     expected_schema: str | None = None
     restatements_ignored: list[dict[str, str]] = []
+    adopted_prediction_ids: set[str] = set()
+    if config.model_era_id is not None:
+        try:
+            era = load_model_era(
+                config.monitoring_store_root,
+                config.model_era_id,
+            )
+        except MonitoringError as exc:
+            raise RetrainingEvaluationError(str(exc)) from exc
+        adopted = era.get("_adopted_state") or {}
+        adopted_prediction_ids = {
+            str(value)
+            for value in (
+                list((adopted.get("as_issued") or {}).values())
+                + list((adopted.get("restated") or {}).values())
+            )
+        }
     for day in candidate_days:
         prediction_id = as_issued[day]
         if not isinstance(prediction_id, str):
@@ -598,6 +673,13 @@ def _build_eligibility(
         prediction = evidence["prediction"]
         snapshot = evidence["model_input_snapshot"]
         model = evidence["model_snapshot"]
+        prediction_era_id = prediction.get("model_era_id")
+        if config.model_era_id is not None and (
+            prediction_era_id != config.model_era_id
+            and prediction_id not in adopted_prediction_ids
+        ):
+            exclusions[prediction_id] = ("different_model_era",)
+            continue
         if (
             prediction.get("view") != "as_issued"
             or prediction.get("target_date") != day
@@ -906,6 +988,7 @@ def _utc_text(value: datetime) -> str:
 __all__ = [
     "EVALUATION_OUTCOMES",
     "EVALUATION_SCHEMA",
+    "EVALUATION_SCHEMA_V2",
     "MonthlyRetrainingEvaluationConfig",
     "MonthlyRetrainingEvaluationPlan",
     "MonthlyRetrainingEvaluationResult",
