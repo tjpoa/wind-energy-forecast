@@ -93,8 +93,22 @@ export interface MonitoringReport {
     readonly dataset_version: string | null;
     readonly dataset_checksum: string;
     readonly transformation_version: string;
-    readonly status: "selected_not_promoted";
+    readonly status: "selected_not_promoted" | "champion";
   } | null;
+  readonly model_era: {
+    readonly model_era_id: string | null;
+    readonly association_kind:
+      | "active_deployment"
+      | "bootstrap_adopted"
+      | "legacy_unassociated";
+    readonly deployment_id: string | null;
+    readonly deployment_state_id: string | null;
+    readonly deployment_generation: number | null;
+    readonly registered_model_name: string | null;
+    readonly model_version: string | null;
+    readonly cutoffs: Readonly<Record<string, string>> | null;
+    readonly pins: Readonly<Record<string, string>> | null;
+  };
   readonly windows: {
     readonly "30": MonitoringWindow;
     readonly "90": MonitoringWindow;

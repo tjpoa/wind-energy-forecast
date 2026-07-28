@@ -8,6 +8,8 @@ param(
     [string]$ModelBundle,
     [Parameter(Mandatory = $true)]
     [string]$CalibrationDirectory,
+    [Parameter(Mandatory = $true)]
+    [string]$DeploymentRoot,
     [string]$ActivationDate,
     [string]$EnvFile
 )
@@ -25,7 +27,8 @@ $arguments = @(
     $batchScript,
     "run",
     "--model-bundle", $ModelBundle,
-    "--calibration-dir", $CalibrationDirectory
+    "--calibration-dir", $CalibrationDirectory,
+    "--deployment-root", $DeploymentRoot
 )
 if ($ActivationDate) {
     $arguments += @("--activation-date", $ActivationDate)

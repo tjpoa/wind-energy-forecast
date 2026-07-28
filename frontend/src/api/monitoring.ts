@@ -128,6 +128,7 @@ function isReport(value: unknown): value is MonitoringReport {
     !record(value.source_pipeline) ||
     !record(value.freshness) ||
     !record(value.windows) ||
+    !record(value.model_era) ||
     !Array.isArray(value.active_alerts)
   ) return false;
   const model = value.model;
@@ -158,7 +159,19 @@ function isReport(value: unknown): value is MonitoringReport {
         nullableString(model.dataset_version) &&
         typeof model.dataset_checksum === "string" &&
         typeof model.transformation_version === "string" &&
-        model.status === "selected_not_promoted")) &&
+        oneOf(model.status, ["selected_not_promoted", "champion"]))) &&
+    oneOf(value.model_era.association_kind, [
+      "active_deployment",
+      "bootstrap_adopted",
+      "legacy_unassociated",
+    ]) &&
+    nullableString(value.model_era.model_era_id) &&
+    nullableString(value.model_era.deployment_id) &&
+    nullableString(value.model_era.deployment_state_id) &&
+    (value.model_era.deployment_generation === null ||
+      Number.isInteger(value.model_era.deployment_generation)) &&
+    nullableString(value.model_era.registered_model_name) &&
+    nullableString(value.model_era.model_version) &&
     isWindow(value.windows["30"]) &&
     isWindow(value.windows["90"]) &&
     value.active_alerts.every(isAlert) &&

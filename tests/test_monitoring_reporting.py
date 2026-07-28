@@ -29,6 +29,14 @@ def _sha(path) -> str:
     return sha256(path.read_bytes()).hexdigest()
 
 
+def _alert_model_era() -> dict[str, object]:
+    return {
+        "model_era_id": "era-test",
+        "deployment": {"deployment_id": "deployment-test"},
+        "registry": {"model_version": "7"},
+    }
+
+
 def _calibration_environment(tmp_path, monkeypatch):
     dates = pd.date_range("2022-01-01", "2023-12-31", freq="D")
     frame = pd.DataFrame(
@@ -111,6 +119,36 @@ def _calibration_environment(tmp_path, monkeypatch):
             output_root=tmp_path / "calibration-output",
             backtest_stride_days=30,
         )
+    )
+    monkeypatch.setattr(
+        reporting,
+        "verify_active_model_era",
+        lambda *_args, **_kwargs: {
+            "model_era_id": "e" * 64,
+            "association_kind": "active_deployment",
+            "deployment": {
+                "deployment_id": "d" * 64,
+                "deployment_state_id": "s" * 64,
+                "generation": 1,
+            },
+            "registry": {
+                "registered_model_name": "wind-v2",
+                "model_version": "1",
+            },
+            "cutoffs": {
+                "fit_cutoff": "2023-12-31",
+                "activation_cutoff": "2026-01-01",
+            },
+            "pins": {
+                "model_sha256": _sha(bundle / "model.joblib"),
+                "dataset_sha256": _sha(dataset),
+            },
+            "calibration": {
+                "calibration_id": result.calibration_id,
+                "reference_id": result.reference_id,
+            },
+            "monitoring": {"ledger_model_snapshot_id": "m" * 64},
+        },
     )
     return result
 
@@ -215,7 +253,9 @@ def test_v2_quality_is_required_and_manifest_lineage_must_match(tmp_path, monkey
     config = MonitoringReportConfig(
         source_run_manifest=manifest_path,
         monitoring_store_root=tmp_path / "monitoring-contract",
+        model_bundle=tmp_path / "bundle",
         calibration_dir=calibrated.calibration_dir,
+        deployment_root=tmp_path / "deployment",
         through_date="2026-01-01",
         dry_run=True,
     )
@@ -250,7 +290,9 @@ def test_v2_quality_is_required_and_manifest_lineage_must_match(tmp_path, monkey
     mismatch = MonitoringReportConfig(
         source_run_manifest=manifest_path,
         monitoring_store_root=tmp_path / "monitoring-contract",
+        model_bundle=tmp_path / "bundle",
         calibration_dir=calibrated.calibration_dir,
+        deployment_root=tmp_path / "deployment",
         through_date="2026-01-02",
         dry_run=True,
     )
@@ -297,7 +339,9 @@ def test_quality_only_report_is_immutable_and_opens_immediate_alert(tmp_path, mo
         MonitoringReportConfig(
             source_run_manifest=manifest_path,
             monitoring_store_root=store,
+            model_bundle=tmp_path / "bundle",
             calibration_dir=calibrated.calibration_dir,
+            deployment_root=tmp_path / "deployment",
             through_date="2026-01-01",
             dry_run=True,
         )
@@ -309,7 +353,9 @@ def test_quality_only_report_is_immutable_and_opens_immediate_alert(tmp_path, mo
         MonitoringReportConfig(
             source_run_manifest=manifest_path,
             monitoring_store_root=store,
+            model_bundle=tmp_path / "bundle",
             calibration_dir=calibrated.calibration_dir,
+            deployment_root=tmp_path / "deployment",
             through_date="2026-01-01",
             now_utc=datetime(2026, 1, 8, 12, tzinfo=timezone.utc),
         )
@@ -326,7 +372,9 @@ def test_quality_only_report_is_immutable_and_opens_immediate_alert(tmp_path, mo
         MonitoringReportConfig(
             source_run_manifest=manifest_path,
             monitoring_store_root=store,
+            model_bundle=tmp_path / "bundle",
             calibration_dir=calibrated.calibration_dir,
+            deployment_root=tmp_path / "deployment",
             through_date="2026-01-01",
             now_utc=datetime(2026, 1, 8, 13, tzinfo=timezone.utc),
         )
@@ -352,18 +400,27 @@ def test_statistical_alert_requires_three_distinct_report_dates() -> None:
             "immediate": False,
         }
     ]
-    state, events = reporting._evaluate_alerts(None, date(2026, 1, 1), breach, 3)
+    era = _alert_model_era()
+    state, events = reporting._evaluate_alerts(None, date(2026, 1, 1), breach, 3, era)
     assert events == []
-    state, events = reporting._evaluate_alerts(state, date(2026, 1, 2), breach, 3)
+    state, events = reporting._evaluate_alerts(
+        state, date(2026, 1, 2), breach, 3, era
+    )
     assert events == []
-    state, events = reporting._evaluate_alerts(state, date(2026, 1, 3), breach, 3)
+    state, events = reporting._evaluate_alerts(
+        state, date(2026, 1, 3), breach, 3, era
+    )
     assert [event["event_type"] for event in events] == ["opened"]
 
-    same_day, events = reporting._evaluate_alerts(state, date(2026, 1, 3), breach, 3)
+    same_day, events = reporting._evaluate_alerts(
+        state, date(2026, 1, 3), breach, 3, era
+    )
     assert events == []
     assert same_day["rules"][breach[0]["rule_id"]]["consecutive"] == 3
 
-    _, events = reporting._evaluate_alerts(same_day, date(2026, 1, 4), [], 3)
+    _, events = reporting._evaluate_alerts(
+        same_day, date(2026, 1, 4), [], 3, era
+    )
     assert [event["event_type"] for event in events] == ["resolved"]
 
 
@@ -376,13 +433,20 @@ def test_statistical_alert_persistence_resets_after_a_date_gap() -> None:
             "immediate": False,
         }
     ]
-    state, _ = reporting._evaluate_alerts(None, date(2026, 1, 1), breach, 3)
-    state, events = reporting._evaluate_alerts(state, date(2026, 1, 3), breach, 3)
+    era = _alert_model_era()
+    state, _ = reporting._evaluate_alerts(None, date(2026, 1, 1), breach, 3, era)
+    state, events = reporting._evaluate_alerts(
+        state, date(2026, 1, 3), breach, 3, era
+    )
     assert events == []
     assert state["rules"][breach[0]["rule_id"]]["consecutive"] == 1
 
-    state, _ = reporting._evaluate_alerts(state, date(2026, 1, 4), breach, 3)
-    state, events = reporting._evaluate_alerts(state, date(2026, 1, 5), breach, 3)
+    state, _ = reporting._evaluate_alerts(
+        state, date(2026, 1, 4), breach, 3, era
+    )
+    state, events = reporting._evaluate_alerts(
+        state, date(2026, 1, 5), breach, 3, era
+    )
     assert [event["event_type"] for event in events] == ["opened"]
 
 
@@ -395,9 +459,16 @@ def test_immediate_alert_reopens_same_day_and_report_date_cannot_regress(tmp_pat
             "immediate": True,
         }
     ]
-    state, opened = reporting._evaluate_alerts(None, date(2026, 1, 2), breach, 3)
-    state, resolved = reporting._evaluate_alerts(state, date(2026, 1, 2), [], 3)
-    state, reopened = reporting._evaluate_alerts(state, date(2026, 1, 2), breach, 3)
+    era = _alert_model_era()
+    state, opened = reporting._evaluate_alerts(
+        None, date(2026, 1, 2), breach, 3, era
+    )
+    state, resolved = reporting._evaluate_alerts(
+        state, date(2026, 1, 2), [], 3, era
+    )
+    state, reopened = reporting._evaluate_alerts(
+        state, date(2026, 1, 2), breach, 3, era
+    )
     assert [item["event_type"] for item in opened + resolved + reopened] == [
         "opened",
         "resolved",
@@ -418,7 +489,9 @@ def test_immediate_alert_reopens_same_day_and_report_date_cannot_regress(tmp_pat
         "opened",
     ]
     with pytest.raises(reporting.MonitoringReportingError, match="cannot precede"):
-        reporting._evaluate_alerts(state, date(2026, 1, 1), [], 3)
+        reporting._evaluate_alerts(
+            state, date(2026, 1, 1), [], 3, era
+        )
 
 
 def test_report_state_rejects_missing_inactive_alert_predecessor(tmp_path) -> None:
@@ -526,7 +599,9 @@ def test_full_report_reads_as_issued_evidence_without_mutating_it(tmp_path, monk
         MonitoringReportConfig(
             source_run_manifest=manifest_path,
             monitoring_store_root=store,
+            model_bundle=tmp_path / "bundle",
             calibration_dir=calibrated.calibration_dir,
+            deployment_root=tmp_path / "deployment",
             through_date="2026-03-31",
             now_utc=datetime(2026, 4, 7, 12, tzinfo=timezone.utc),
         )
@@ -538,3 +613,54 @@ def test_full_report_reads_as_issued_evidence_without_mutating_it(tmp_path, monk
     assert report["windows"]["30"]["performance"]["status"] == "available"
     assert report["lineage"]["primary_view"] == "as_issued"
     assert (_sha(prediction_sentinel), _sha(model_sentinel)) == before
+
+
+def test_ledger_windows_exclude_predictions_from_other_model_eras(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    era = {
+        "model_era_id": "a" * 64,
+        "deployment": {"deployment_id": "d" * 64},
+        "registry": {"model_version": "1"},
+        "monitoring": {"ledger_model_snapshot_id": "m" * 64},
+    }
+    state = {
+        "schema_version": "wind_forecast.monitoring_state.v2",
+        "as_issued": {
+            "2026-01-01": "prediction-a",
+            "2026-01-02": "prediction-b",
+        },
+        "metrics": {},
+        "restated": {},
+    }
+
+    def evidence(_root: Path, prediction_id: str) -> dict:
+        suffix = prediction_id[-1]
+        return {
+            "prediction": {
+                "prediction_id": prediction_id,
+                "model_era_id": ("a" if suffix == "a" else "b") * 64,
+                "prediction": 1.0,
+            },
+            "model_input_snapshot": {
+                "model_input_snapshot_id": f"input-{suffix}",
+                "feature_names": ["x"],
+                "feature_values": [1.0],
+            },
+            "metric_revisions": [],
+            "actual_revisions": [],
+        }
+
+    monkeypatch.setattr(reporting, "load_prediction_evidence", evidence)
+    frame, lineage = reporting._load_ledger_observations(
+        tmp_path,
+        state,
+        date(2026, 1, 2),
+        30,
+        ["x"],
+        era,
+    )
+
+    assert frame["Date"].tolist() == ["2026-01-01"]
+    assert lineage["prediction_ids"] == ["prediction-a"]
+    assert lineage["model_era_id"] == "a" * 64

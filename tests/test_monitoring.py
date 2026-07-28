@@ -268,10 +268,42 @@ def environment(
         "load_verified_current_state",
         lambda _root: json.loads(json.dumps(source)),
     )
+    model_snapshot_id = monitoring._model_snapshot_record(
+        monitoring._validate_model_bundle(bundle)
+    )["model_snapshot_id"]
+    era = {
+        "schema_version": "wind_forecast.monitoring_model_era.v1",
+        "association_kind": "active_deployment",
+        "deployment": {
+            "deployment_id": "d" * 64,
+            "deployment_state_id": "s" * 64,
+            "generation": 1,
+            "pointer_sha256": "1" * 64,
+            "state_manifest_sha256": "2" * 64,
+            "authorizing_receipt_sha256": "3" * 64,
+        },
+        "registry": {
+            "registered_model_name": "wind-v2",
+            "model_version": "1",
+            "run_id": "run-1",
+            "model_uri": "models:/wind-v2/1",
+        },
+        "expected_aliases": {"candidate": None, "champion": "1", "stable": "1"},
+        "cutoffs": {"fit_cutoff": "2024-12-31", "activation_cutoff": TARGET},
+        "pins": {"ledger_sha256": "4" * 64},
+        "calibration": {"calibration_id": "cal-1", "reference_id": "ref-1"},
+        "monitoring": {"ledger_model_snapshot_id": model_snapshot_id, "ledger_state_sha256": "4" * 64},
+    }
+    era = {
+        "model_era_id": monitoring._record_id("monitoring_model_era", era),
+        **era,
+    }
+    monkeypatch.setattr(monitoring, "verify_active_model_era", lambda *_args, **_kwargs: era)
     config = MonitoringConfig(
         source_store_root=tmp_path / "incremental",
         monitoring_store_root=tmp_path / "monitoring",
         model_bundle=bundle,
+        deployment_root=tmp_path / "deployment",
         through_date=TARGET,
         activation_date=TARGET,
         now_utc=NOW,
@@ -761,7 +793,9 @@ def test_incompatible_restatement_transformation_is_blocked(
     assert pointer["date_states"][TARGET] == "blocked_prerequisite"
 
 
-def test_monitoring_plan_uses_real_verified_phase8_loader(tmp_path: Path) -> None:
+def test_monitoring_plan_uses_real_verified_phase8_loader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     bundle = _make_bundle(tmp_path / "bundle")
     source = _make_source(tmp_path)
     source_store = tmp_path / "incremental"
@@ -770,10 +804,20 @@ def test_monitoring_plan_uses_real_verified_phase8_loader(tmp_path: Path) -> Non
     _write_json(source_store / "state" / "current.json", source)
     loaded = load_verified_current_state(source_store)
     assert loaded["release_id"] == "source-release-1"
+    monkeypatch.setattr(
+        monitoring,
+        "verify_active_model_era",
+        lambda *_args, **_kwargs: {
+            "model_era_id": "e" * 64,
+            "deployment": {"deployment_id": "d" * 64},
+            "registry": {"model_version": "1"},
+        },
+    )
     config = MonitoringConfig(
         source_store_root=source_store,
         monitoring_store_root=tmp_path / "monitoring",
         model_bundle=bundle,
+        deployment_root=tmp_path / "deployment",
         through_date=TARGET,
         activation_date=TARGET,
         now_utc=NOW,
@@ -787,6 +831,51 @@ def test_monitoring_plan_uses_real_verified_phase8_loader(tmp_path: Path) -> Non
     feature_path.write_bytes(feature_path.read_bytes() + b"\n")
     with pytest.raises(IncrementalUpdateError, match="corrupt"):
         load_verified_current_state(source_store)
+
+
+def test_legacy_prediction_metric_keeps_bootstrap_adopted_era(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prediction = {
+        "prediction_id": "prediction-v1",
+        "model_snapshot_id": "snapshot-bootstrap",
+    }
+    bootstrap = {
+        "model_era_id": "era-bootstrap",
+        "deployment": {"deployment_id": "deployment-bootstrap"},
+        "registry": {"model_version": "1"},
+        "monitoring": {"ledger_model_snapshot_id": "snapshot-bootstrap"},
+        "_adopted_state": {"as_issued": {TARGET: "prediction-v1"}},
+    }
+    active = {
+        "model_era_id": "era-current",
+        "deployment": {"deployment_id": "deployment-current"},
+        "registry": {"model_version": "2"},
+        "monitoring": {"ledger_model_snapshot_id": "snapshot-current"},
+    }
+    eras = {
+        "era-bootstrap": bootstrap,
+        "era-current": active,
+    }
+    monkeypatch.setattr(
+        monitoring,
+        "load_model_era",
+        lambda _root, era_id: eras[era_id],
+    )
+
+    resolved = monitoring._resolve_prediction_model_era(
+        tmp_path,
+        prediction,
+        {
+            "model_eras": {
+                "deployment-bootstrap": "era-bootstrap",
+                "deployment-current": "era-current",
+            }
+        },
+        active_model_era=active,
+    )
+
+    assert resolved["model_era_id"] == "era-bootstrap"
 
 
 def test_cli_requires_paired_backfill_arguments() -> None:
@@ -809,6 +898,8 @@ def test_cli_requires_paired_backfill_arguments() -> None:
             TARGET,
             "--model-bundle",
             "bundle",
+            "--deployment-root",
+            "deployment",
             "--activation-date",
             TARGET,
             "--dry-run",

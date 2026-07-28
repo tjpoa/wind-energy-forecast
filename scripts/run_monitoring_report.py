@@ -24,7 +24,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=Path("data/processed/v2/monitoring"),
     )
+    parser.add_argument("--model-bundle", type=Path, required=True)
     parser.add_argument("--calibration-dir", type=Path, required=True)
+    parser.add_argument("--deployment-root", type=Path, required=True)
     parser.add_argument("--through-date", required=True, help="Inclusive YYYY-MM-DD.")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
@@ -41,7 +43,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         MonitoringReportConfig(
             source_run_manifest=args.source_run_manifest,
             monitoring_store_root=args.monitoring_store_root,
+            model_bundle=args.model_bundle,
             calibration_dir=args.calibration_dir,
+            deployment_root=args.deployment_root,
             through_date=args.through_date,
             dry_run=args.dry_run,
         )

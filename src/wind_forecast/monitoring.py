@@ -19,18 +19,25 @@ import numpy as np
 import pandas as pd
 
 from wind_forecast.incremental import load_verified_current_state
+from wind_forecast.deployment_runtime import (
+    DeploymentRuntimeError,
+    MODEL_ERA_SCHEMA,
+    same_model_era,
+    verify_active_model_era,
+)
 from wind_forecast.manifests import sha256_file
 from wind_forecast.schemas import DATE_COLUMN, TARGET_COLUMN
 from wind_forecast.v2_features import TRANSFORMATION_VERSION
 
 
 CONTRACT_VERSION = "historical_batch_monitoring_v1"
-PREDICTION_SCHEMA = "wind_forecast.monitoring_prediction.v1"
+PREDICTION_SCHEMA = "wind_forecast.monitoring_prediction.v2"
 INPUT_SCHEMA = "wind_forecast.monitoring_input_snapshot.v1"
 ACTUAL_SCHEMA = "wind_forecast.actual_revision.v1"
-METRIC_SCHEMA = "wind_forecast.metric_revision.v1"
+METRIC_SCHEMA = "wind_forecast.metric_revision.v2"
 MODEL_SCHEMA = "wind_forecast.monitoring_model_snapshot.v1"
-STATE_SCHEMA = "wind_forecast.monitoring_state.v1"
+STATE_SCHEMA = "wind_forecast.monitoring_state.v2"
+LEGACY_STATE_SCHEMA = "wind_forecast.monitoring_state.v1"
 ACTIVATION_SCHEMA = "wind_forecast.monitoring_activation.v1"
 TARGET_CONTRACT = "ren_wind_production_15min_mw_sum_v1"
 TARGET_SCALE = "sum_of_15_minute_MW_observations"
@@ -76,6 +83,7 @@ class MonitoringConfig:
     source_store_root: Path
     monitoring_store_root: Path
     model_bundle: Path
+    deployment_root: Path
     through_date: str | date
     activation_date: str | date | None = None
     backfill_start: str | date | None = None
@@ -92,6 +100,7 @@ class MonitoringConfig:
             self, "monitoring_store_root", Path(self.monitoring_store_root)
         )
         object.__setattr__(self, "model_bundle", Path(self.model_bundle))
+        object.__setattr__(self, "deployment_root", Path(self.deployment_root))
         object.__setattr__(self, "through_date", _parse_date(self.through_date))
         for name in ("activation_date", "backfill_start", "backfill_end"):
             value = getattr(self, name)
@@ -125,6 +134,9 @@ class MonitoringPlan:
     restatement_dates: tuple[str, ...]
     backfill_dates: tuple[str, ...]
     date_states: Mapping[str, str]
+    model_era_id: str
+    deployment_id: str
+    model_version: str
 
     def summary(self) -> dict[str, Any]:
         return asdict(self)
@@ -149,6 +161,9 @@ class MonitoringResult:
             str(self.current_state_path) if self.current_state_path else None
         )
         result["plan"] = self.plan.summary()
+        result["model_era_id"] = self.plan.model_era_id
+        result["deployment_id"] = self.plan.deployment_id
+        result["model_version"] = self.plan.model_version
         return result
 
 
@@ -158,12 +173,15 @@ FailureHook = Callable[[str], None]
 def plan_historical_monitoring(config: MonitoringConfig) -> MonitoringPlan:
     """Plan monitoring without creating locks, directories, or files."""
     bundle = _validate_model_bundle(config.model_bundle)
+    era = _verify_model_era(config)
     source = load_verified_current_state(config.source_store_root)
     activation = _resolve_activation(config, write=False)
     current = _load_current(config.monitoring_store_root, verify=True)
     expected_model = _model_snapshot_record(bundle)
-    if current is not None and current.get("model_snapshot_id") != expected_model.get(
-        "model_snapshot_id"
+    if (
+        current is not None
+        and current.get("schema_version") == LEGACY_STATE_SCHEMA
+        and current.get("model_snapshot_id") != expected_model.get("model_snapshot_id")
     ):
         raise MonitoringError(
             "The activated model snapshot is immutable for this Stage 1 ledger."
@@ -204,6 +222,9 @@ def plan_historical_monitoring(config: MonitoringConfig) -> MonitoringPlan:
         restatement_dates=tuple(restatements),
         backfill_dates=tuple(backfills),
         date_states=date_states,
+        model_era_id=str(era["model_era_id"]),
+        deployment_id=str(era["deployment"]["deployment_id"]),
+        model_version=str(era["registry"]["model_version"]),
     )
 
 
@@ -225,14 +246,17 @@ def run_historical_monitoring(
     blocked: dict[str, str] = {}
     try:
         run_root.mkdir(parents=True, exist_ok=False)
+        era = _verify_model_era(config)
+        _require_same_planned_era(plan, era)
         _immutable_json(
             run_root / "request.json",
             {
-                "schema_version": "wind_forecast.monitoring_request.v1",
+                "schema_version": "wind_forecast.monitoring_request.v2",
                 "run_id": run_id,
                 "requested_at_utc": _utc_text(config.now_utc),
                 "config": _config_payload(config),
                 "plan": plan.summary(),
+                "model_era": _copy(era),
             },
         )
         source = load_verified_current_state(config.source_store_root)
@@ -240,14 +264,14 @@ def run_historical_monitoring(
         activation = _resolve_activation(config, write=True)
         model = _persist_model_snapshot(config.monitoring_store_root, bundle)
         previous = _load_current(config.monitoring_store_root, verify=True)
-        if previous is not None and previous.get("model_snapshot_id") != model.get(
-            "model_snapshot_id"
-        ):
-            raise MonitoringError(
-                "The activated model snapshot is immutable for this Stage 1 ledger."
-            )
+        _persist_model_era(config.monitoring_store_root, era, previous)
         state = _empty_state(activation, model) if previous is None else _copy(previous)
+        state["schema_version"] = STATE_SCHEMA
         state["model_snapshot_id"] = model["model_snapshot_id"]
+        state["active_model_era_id"] = era["model_era_id"]
+        state.setdefault("model_eras", {})[
+            era["deployment"]["deployment_id"]
+        ] = era["model_era_id"]
 
         target_set = set(plan.eligible_dates)
         target_set.update((state.get("as_issued") or {}).keys())
@@ -262,6 +286,7 @@ def run_historical_monitoring(
                     source=source,
                     bundle=bundle,
                     model_snapshot=model,
+                    model_era=era,
                     state=state,
                     backfill=day in plan.backfill_dates,
                 )
@@ -288,6 +313,7 @@ def run_historical_monitoring(
                         stored_prediction,
                         actual,
                         state,
+                        model_era=era,
                         observed_at=config.now_utc,
                     )
                     if metric_created:
@@ -299,6 +325,11 @@ def run_historical_monitoring(
                 blocked[day] = f"blocked_prerequisite: {exc}"
 
         state.pop("_store_root", None)
+        verified_again = _verify_model_era(config)
+        if not same_model_era(era, verified_again):
+            raise MonitoringError(
+                "Active deployment changed before monitoring pointer publication."
+            )
         state["schema_version"] = STATE_SCHEMA
         state["generation"] = int((previous or {}).get("generation", 0)) + 1
         state["updated_at_utc"] = _utc_text(config.now_utc)
@@ -373,6 +404,11 @@ def load_prediction_evidence(
         )
         if item.get("prediction_id") != prediction_id:
             continue
+        if (
+            prediction.get("model_era_id") is not None
+            and item.get("model_era_id") != prediction.get("model_era_id")
+        ):
+            raise MonitoringError("Prediction and metric model eras differ.")
         metrics.append(item)
         actual_id = str(item["actual_revision_id"])
         actuals[actual_id] = _load_typed_record(
@@ -433,6 +469,38 @@ def validate_monitoring_model_bundle(root: str | Path) -> dict[str, Any]:
 def load_verified_monitoring_state(store_root: str | Path) -> dict[str, Any] | None:
     """Load the derived ledger pointer after verifying all referenced evidence."""
     return _load_current(Path(store_root), verify=True)
+
+
+def load_model_era(store_root: str | Path, model_era_id: str) -> dict[str, Any]:
+    """Load one immutable model-era record and optional bootstrap adoption."""
+    root = Path(store_root)
+    era_root = root / "model_eras" / model_era_id
+    era = _load_typed_record(
+        era_root / "era.json",
+        "model_era_id",
+        "monitoring_model_era",
+    )
+    if era.get("schema_version") != MODEL_ERA_SCHEMA:
+        raise MonitoringError("Unsupported monitoring model-era schema.")
+    adopted = era_root / "adopted_ledger_state.json"
+    if adopted.is_file():
+        expected = (era.get("pins") or {}).get("ledger_sha256")
+        if sha256_file(adopted) != expected:
+            raise MonitoringError("Adopted bootstrap ledger checksum is invalid.")
+        era["_adopted_state"] = _read_json(adopted)
+    return era
+
+
+def list_model_eras(store_root: str | Path) -> list[dict[str, Any]]:
+    """Return every identity-verified model era without changing the ledger."""
+    root = Path(store_root) / "model_eras"
+    if not root.is_dir():
+        return []
+    return [
+        load_model_era(store_root, path.name)
+        for path in sorted(root.iterdir())
+        if path.is_dir()
+    ]
 
 
 def _validate_model_bundle(root: Path) -> dict[str, Any]:
@@ -630,6 +698,31 @@ def _persist_model_snapshot(root: Path, bundle: Mapping[str, Any]) -> dict[str, 
     return _load_model_snapshot(root, record["model_snapshot_id"])
 
 
+def _persist_model_era(
+    root: Path,
+    era: Mapping[str, Any],
+    previous: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    era_id = str(era["model_era_id"])
+    era_root = root / "model_eras" / era_id
+    if previous is not None and previous.get("schema_version") == LEGACY_STATE_SCHEMA:
+        current_path = root / "state" / "current.json"
+        expected = str((era.get("pins") or {}).get("ledger_sha256") or "")
+        if not current_path.is_file() or sha256_file(current_path) != expected:
+            raise MonitoringError(
+                "Legacy ledger pointer differs from bootstrap deployment pin."
+            )
+        if previous.get("model_snapshot_id") != (
+            era.get("monitoring") or {}
+        ).get("ledger_model_snapshot_id"):
+            raise MonitoringError(
+                "Legacy ledger model snapshot differs from bootstrap deployment."
+            )
+        _immutable_copy(current_path, era_root / "adopted_ledger_state.json")
+    _immutable_json(era_root / "era.json", era)
+    return load_model_era(root, era_id)
+
+
 def _model_snapshot_record(bundle: Mapping[str, Any]) -> dict[str, Any]:
     body = {
         "schema_version": MODEL_SCHEMA,
@@ -667,6 +760,7 @@ def _ensure_prediction(
     source: Mapping[str, Any],
     bundle: Mapping[str, Any],
     model_snapshot: Mapping[str, Any],
+    model_era: Mapping[str, Any],
     state: Mapping[str, Any],
     backfill: bool,
 ) -> tuple[dict[str, Any], bool]:
@@ -773,6 +867,9 @@ def _ensure_prediction(
     body = {
         "schema_version": PREDICTION_SCHEMA,
         "run_id": run_id,
+        "model_era_id": model_era["model_era_id"],
+        "deployment_id": model_era["deployment"]["deployment_id"],
+        "model_version": model_era["registry"]["model_version"],
         "target_date": target_date,
         "scheduled_at_local": scheduled.isoformat(),
         "scheduled_at_utc": _utc_text(scheduled.astimezone(timezone.utc)),
@@ -898,6 +995,7 @@ def _ensure_metric(
     actual: Mapping[str, Any],
     state: Mapping[str, Any],
     *,
+    model_era: Mapping[str, Any],
     observed_at: datetime,
 ) -> tuple[dict[str, Any], bool]:
     prediction_id = str(prediction["prediction_id"])
@@ -911,8 +1009,17 @@ def _ensure_metric(
         if current.get("actual_revision_id") == actual.get("actual_revision_id"):
             return current, False
     error = float(prediction["prediction"]) - float(actual["actual"])
+    prediction_era = _resolve_prediction_model_era(
+        root,
+        prediction,
+        state,
+        active_model_era=model_era,
+    )
     body = {
         "schema_version": METRIC_SCHEMA,
+        "model_era_id": prediction_era["model_era_id"],
+        "deployment_id": prediction_era["deployment"]["deployment_id"],
+        "model_version": prediction_era["registry"]["model_version"],
         "target_date": prediction["target_date"],
         "prediction_id": prediction_id,
         "actual_revision_id": actual["actual_revision_id"],
@@ -935,6 +1042,55 @@ def _ensure_metric(
         return orphan, False
     _immutable_json(root / "metrics" / f"{record['metric_revision_id']}.json", record)
     return record, True
+
+
+def _resolve_prediction_model_era(
+    root: Path,
+    prediction: Mapping[str, Any],
+    state: Mapping[str, Any],
+    *,
+    active_model_era: Mapping[str, Any],
+) -> dict[str, Any]:
+    era_id = prediction.get("model_era_id")
+    if era_id is not None:
+        era = load_model_era(root, str(era_id))
+        if (
+            prediction.get("deployment_id")
+            != era["deployment"]["deployment_id"]
+            or prediction.get("model_version")
+            != era["registry"]["model_version"]
+        ):
+            raise MonitoringError("Prediction model-era identity is inconsistent.")
+        return era
+
+    prediction_id = str(prediction.get("prediction_id") or "")
+    model_snapshot_id = prediction.get("model_snapshot_id")
+    adopted: list[dict[str, Any]] = []
+    for candidate_id in set((state.get("model_eras") or {}).values()):
+        candidate = load_model_era(root, str(candidate_id))
+        adopted_state = candidate.get("_adopted_state") or {}
+        adopted_prediction_ids = {
+            *(adopted_state.get("as_issued") or {}).values(),
+            *(adopted_state.get("restated") or {}).values(),
+        }
+        if (
+            (candidate.get("monitoring") or {}).get(
+                "ledger_model_snapshot_id"
+            )
+            == model_snapshot_id
+            and prediction_id in adopted_prediction_ids
+        ):
+            adopted.append(candidate)
+    if len(adopted) != 1:
+        raise MonitoringError(
+            "Legacy prediction has no unique bootstrap-adopted model era."
+        )
+    if (
+        active_model_era.get("model_era_id")
+        not in set((state.get("model_eras") or {}).values())
+    ):
+        raise MonitoringError("Active model era is absent from monitoring state.")
+    return adopted[0]
 
 
 def _dependency_map(
@@ -1140,6 +1296,8 @@ def _empty_state(
         "activation_id": activation["activation_id"],
         "activation_date": activation["activation_date"],
         "model_snapshot_id": model["model_snapshot_id"],
+        "active_model_era_id": None,
+        "model_eras": {},
         "as_issued": {},
         "restated": {},
         "actuals": {},
@@ -1152,7 +1310,7 @@ def _load_current(root: Path, *, verify: bool) -> dict[str, Any] | None:
     if not path.is_file():
         return None
     state = _read_json(path)
-    if state.get("schema_version") != STATE_SCHEMA:
+    if state.get("schema_version") not in {STATE_SCHEMA, LEGACY_STATE_SCHEMA}:
         raise MonitoringError("Unsupported monitoring current-state schema.")
     if verify:
         _verify_state(root, state)
@@ -1168,11 +1326,34 @@ def _verify_state(root: Path, state: Mapping[str, Any]) -> None:
         "activation",
     )
     _load_model_snapshot(root, str(state.get("model_snapshot_id") or ""))
+    if state.get("schema_version") == STATE_SCHEMA:
+        active_era_id = str(state.get("active_model_era_id") or "")
+        active_era = load_model_era(root, active_era_id)
+        eras = state.get("model_eras")
+        if (
+            not isinstance(eras, Mapping)
+            or eras.get(active_era["deployment"]["deployment_id"])
+            != active_era_id
+        ):
+            raise MonitoringError("Monitoring state model-era index is invalid.")
     for prediction_id in {
         *(state.get("as_issued") or {}).values(),
         *(state.get("restated") or {}).values(),
     }:
         prediction = _load_prediction(root, str(prediction_id))
+        if prediction.get("model_era_id") is not None:
+            era_id = str(prediction["model_era_id"])
+            era = load_model_era(root, era_id)
+            if (
+                era_id not in set((state.get("model_eras") or {}).values())
+                or prediction.get("deployment_id")
+                != era["deployment"]["deployment_id"]
+                or prediction.get("model_version")
+                != era["registry"]["model_version"]
+            ):
+                raise MonitoringError(
+                    "Prediction and monitoring model-era index differ."
+                )
         _load_typed_record(
             root / "input_snapshots" / f"{prediction['model_input_snapshot_id']}.json",
             "model_input_snapshot_id",
@@ -1233,7 +1414,11 @@ def _load_typed_record(
     identifier = str(payload.get(id_field) or "")
     body = {key: value for key, value in payload.items() if key != id_field}
     expected = _record_id(kind, body)
-    path_identifier = path.parent.name if path.name == "snapshot.json" else path.stem
+    path_identifier = (
+        path.parent.name
+        if path.name in {"snapshot.json", "era.json"}
+        else path.stem
+    )
     if identifier != expected or identifier != path_identifier:
         raise MonitoringError(f"Content-addressed record is corrupt: {path}.")
     return payload
@@ -1425,6 +1610,7 @@ def _config_payload(config: MonitoringConfig) -> dict[str, Any]:
         "source_store_root": str(config.source_store_root),
         "monitoring_store_root": str(config.monitoring_store_root),
         "model_bundle": str(config.model_bundle),
+        "deployment_root": str(config.deployment_root),
         "through_date": config.through_date.isoformat(),
         "activation_date": (
             config.activation_date.isoformat() if config.activation_date else None
@@ -1443,6 +1629,29 @@ def _copy(value: Any) -> Any:
     return json.loads(json.dumps(value))
 
 
+def _verify_model_era(config: MonitoringConfig) -> dict[str, Any]:
+    try:
+        return verify_active_model_era(
+            config.deployment_root,
+            config.model_bundle,
+        )
+    except DeploymentRuntimeError as exc:
+        raise MonitoringError(str(exc)) from exc
+
+
+def _require_same_planned_era(
+    plan: MonitoringPlan,
+    era: Mapping[str, Any],
+) -> None:
+    if (
+        plan.model_era_id != era.get("model_era_id")
+        or plan.deployment_id
+        != (era.get("deployment") or {}).get("deployment_id")
+        or plan.model_version != (era.get("registry") or {}).get("model_version")
+    ):
+        raise MonitoringError("Active deployment changed after monitoring planning.")
+
+
 def _call_hook(hook: FailureHook | None, stage: str) -> None:
     if hook is not None:
         hook(stage)
@@ -1455,6 +1664,8 @@ __all__ = [
     "MonitoringPlan",
     "MonitoringResult",
     "load_prediction_evidence",
+    "load_model_era",
+    "list_model_eras",
     "load_verified_monitoring_state",
     "plan_historical_monitoring",
     "replay_prediction",

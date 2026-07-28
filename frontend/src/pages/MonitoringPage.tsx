@@ -195,11 +195,13 @@ function ReportSummary({
           <article className="metric-card">
             <h3>Model version</h3>
             <p className="metric-card__compact">
-              {report.model?.checksum.slice(0, 12) ?? "Not available"}
+              {report.model_era.model_version
+                ? `v${report.model_era.model_version}`
+                : report.model?.checksum.slice(0, 12) ?? "Not available"}
             </p>
             <span>
               {report.model
-                ? `${report.model.model_type ?? "model"} · dataset ${report.model.dataset_version ?? "unknown"} · transform ${report.model.transformation_version} · selected, not promoted`
+                ? `${report.model.model_type ?? "model"} · deployment ${report.model_era.deployment_id?.slice(0, 12) ?? "legacy"} · ${report.model_era.association_kind.replaceAll("_", " ")} · ${report.model.status === "champion" ? "champion" : "selected, not promoted"}`
                 : "No verified model snapshot in the ledger"}
             </span>
           </article>

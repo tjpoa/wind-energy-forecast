@@ -659,13 +659,13 @@ def load_verified_deployment_pointer(
             mlflow.set_tracking_uri(tracking_uri)
         client = mlflow.MlflowClient()
     name = state["registry"]["registered_model_name"]
-    version = state["registry"]["model_version"]
-    _require_alias(client, name, "stable", version)
-    _require_alias(client, name, "champion", version)
-    if _alias_version(client, name, "candidate") is not None:
-        raise RetrainingDeploymentError(
-            "Candidate alias must remain absent after bootstrap."
-        )
+    for alias in ALIASES:
+        expected = state["expected_aliases"][alias]
+        actual = _alias_version(client, name, alias)
+        if actual != expected:
+            raise RetrainingDeploymentError(
+                f"Registry alias {alias} differs from deployment state."
+            )
     return {
         "pointer": pointer.to_dict(),
         "state": state,
@@ -674,6 +674,11 @@ def load_verified_deployment_pointer(
         "state_manifest_path": str(state_path),
         "receipt_path": str(receipt_path),
     }
+
+
+def load_exact_v2_bundle(root: str | Path) -> dict[str, Any]:
+    """Public strict loader used to bind explicit runtime artifacts."""
+    return _load_exact_bundle(Path(root))
 
 
 def _load_exact_bundle(root: Path) -> dict[str, Any]:
@@ -1716,5 +1721,6 @@ __all__ = [
     "load_bootstrap_approval",
     "load_bootstrap_receipt",
     "load_verified_deployment_pointer",
+    "load_exact_v2_bundle",
     "plan_v2_deployment_bootstrap",
 ]

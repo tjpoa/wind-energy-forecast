@@ -36,6 +36,7 @@
 | Failure after prediction | Immutable prediction exists without later evidence | Rerun; reconciliation/reporting continue without duplicate issuance |
 | Active drift alert | Batch is `completed_with_alerts` by default | Inspect the report and alert history; do not retrain or promote automatically |
 | Corrupt current pointer | Reader rejects path/checksum/schema | Stop. Preserve all files and escalate for an evidence-based repair plan |
+| Deployment/bundle/alias divergence | Preflight fails before source update, or a later postcheck blocks publication | Preserve evidence; restore pointer, bundle selection, and aliases to the same approved state, then rerun identically |
 
 ## Scheduler operations
 

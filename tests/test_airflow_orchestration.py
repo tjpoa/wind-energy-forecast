@@ -21,6 +21,7 @@ def _config(tmp_path: Path) -> AirflowBatchConfig:
     return AirflowBatchConfig(
         model_bundle=tmp_path / "model",
         calibration_dir=tmp_path / "calibration",
+        deployment_root=tmp_path / "deployment",
         source_store_root=tmp_path / "source",
         monitoring_store_root=tmp_path / "monitoring",
         activation_date="2026-07-01",

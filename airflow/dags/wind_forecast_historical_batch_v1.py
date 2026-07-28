@@ -14,6 +14,7 @@ from airflow.timetables.trigger import CronTriggerTimetable
 from wind_forecast.airflow_orchestration import (
     AirflowBatchConfig,
     run_availability_plan,
+    run_deployment_preflight,
     run_dataset_update,
     run_drift_publish,
     run_predict_reconcile,
@@ -51,6 +52,9 @@ def _config() -> AirflowBatchConfig:
         model_bundle=Path(_required_environment("WIND_FORECAST_BATCH_MODEL_BUNDLE")),
         calibration_dir=Path(
             _required_environment("WIND_FORECAST_BATCH_CALIBRATION_DIR")
+        ),
+        deployment_root=Path(
+            _required_environment("WIND_FORECAST_DEPLOYMENT_ROOT")
         ),
         source_store_root=Path(
             os.environ.get(
@@ -91,6 +95,13 @@ def _config() -> AirflowBatchConfig:
 
 def _run_availability(*, through_date: str) -> dict:
     return run_availability_plan(_config(), through_date)
+
+
+def _run_deployment(*, expected_model_era_id: str | None = None) -> dict:
+    return run_deployment_preflight(
+        _config(),
+        expected_model_era_id=expected_model_era_id,
+    )
 
 
 def _run_update(*, through_date: str) -> dict:
@@ -145,6 +156,13 @@ with DAG(
     dagrun_timeout=timedelta(hours=6),
     tags=["wind-forecast", "historical-batch", "local"],
 ) as dag:
+    deployment_preflight = PythonOperator(
+        task_id="deployment_preflight",
+        python_callable=_run_deployment,
+        multiple_outputs=True,
+        retries=0,
+        execution_timeout=timedelta(minutes=10),
+    )
     availability_plan = PythonOperator(
         task_id="availability_plan",
         python_callable=_run_availability,
@@ -186,5 +204,21 @@ with DAG(
         retry_delay=timedelta(minutes=10),
         execution_timeout=timedelta(minutes=30),
     )
+    deployment_postcheck = PythonOperator(
+        task_id="deployment_postcheck",
+        python_callable=_run_deployment,
+        op_kwargs={
+            "expected_model_era_id": deployment_preflight.output["model_era_id"]
+        },
+        retries=0,
+        execution_timeout=timedelta(minutes=10),
+    )
 
-    availability_plan >> dataset_update >> predict_reconcile >> drift_publish
+    (
+        deployment_preflight
+        >> availability_plan
+        >> dataset_update
+        >> predict_reconcile
+        >> drift_publish
+        >> deployment_postcheck
+    )

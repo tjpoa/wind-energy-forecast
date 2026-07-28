@@ -17,7 +17,16 @@ import numpy as np
 import pandas as pd
 
 from wind_forecast.manifests import sha256_file
+from wind_forecast.deployment_runtime import (
+    DeploymentRuntimeError,
+    same_model_era,
+    verify_active_model_era,
+)
 from wind_forecast.monitoring import (
+    LEGACY_STATE_SCHEMA,
+    MonitoringError,
+    list_model_eras,
+    load_model_era,
     load_prediction_evidence,
     load_verified_monitoring_state,
     validate_monitoring_model_bundle,
@@ -39,9 +48,11 @@ from wind_forecast.schemas import DATE_COLUMN, TARGET_COLUMN
 
 REFERENCE_SCHEMA = "wind_forecast.monitoring_reference.v1"
 CALIBRATION_SCHEMA = "wind_forecast.monitoring_calibration.v1"
-REPORT_SCHEMA = "wind_forecast.monitoring_report.v1"
-REPORT_STATE_SCHEMA = "wind_forecast.monitoring_report_state.v1"
-ALERT_SCHEMA = "wind_forecast.monitoring_alert_event.v1"
+REPORT_SCHEMA = "wind_forecast.monitoring_report.v2"
+LEGACY_REPORT_SCHEMA = "wind_forecast.monitoring_report.v1"
+REPORT_STATE_SCHEMA = "wind_forecast.monitoring_report_state.v2"
+LEGACY_REPORT_STATE_SCHEMA = "wind_forecast.monitoring_report_state.v1"
+ALERT_SCHEMA = "wind_forecast.monitoring_alert_event.v2"
 SOURCE_RUN_SCHEMAS = {
     "wind_forecast.v2_incremental_run.v1",
     "wind_forecast.v2_incremental_run.v2",
@@ -91,7 +102,9 @@ class MonitoringReportConfig:
 
     source_run_manifest: Path
     monitoring_store_root: Path
+    model_bundle: Path
     calibration_dir: Path
+    deployment_root: Path
     through_date: str | date
     dry_run: bool = False
     now_utc: datetime | None = None
@@ -100,6 +113,8 @@ class MonitoringReportConfig:
         object.__setattr__(self, "source_run_manifest", Path(self.source_run_manifest))
         object.__setattr__(self, "monitoring_store_root", Path(self.monitoring_store_root))
         object.__setattr__(self, "calibration_dir", Path(self.calibration_dir))
+        object.__setattr__(self, "model_bundle", Path(self.model_bundle))
+        object.__setattr__(self, "deployment_root", Path(self.deployment_root))
         value = self.through_date
         object.__setattr__(self, "through_date", value if isinstance(value, date) else date.fromisoformat(value))
         now = self.now_utc or datetime.now(timezone.utc)
@@ -117,6 +132,9 @@ class MonitoringReportPlan:
     calibration_id: str
     ledger_available: bool
     quality_available: bool
+    model_era_id: str
+    deployment_id: str
+    model_version: str
 
     def summary(self) -> dict[str, Any]:
         return asdict(self)
@@ -137,6 +155,9 @@ class MonitoringReportResult:
         payload["report_path"] = str(self.report_path) if self.report_path else None
         payload["markdown_path"] = str(self.markdown_path) if self.markdown_path else None
         payload["plan"] = self.plan.summary()
+        payload["model_era_id"] = self.plan.model_era_id
+        payload["deployment_id"] = self.plan.deployment_id
+        payload["model_version"] = self.plan.model_version
         return payload
 
 
@@ -304,8 +325,10 @@ def plan_monitoring_report(config: MonitoringReportConfig) -> MonitoringReportPl
     source_manifest = _load_source_manifest(config.source_run_manifest)
     _validate_source_manifest_date(source_manifest, config.through_date)
     calibration = load_monitoring_calibration(config.calibration_dir)
+    era = _verify_reporting_era(config)
     quality_available = _load_quality(source_manifest) is not None
     ledger = load_verified_monitoring_state(config.monitoring_store_root)
+    _require_ledger_era(ledger, era)
     return MonitoringReportPlan(
         status="planned",
         source_run_id=str(source_manifest["run_id"]),
@@ -314,6 +337,9 @@ def plan_monitoring_report(config: MonitoringReportConfig) -> MonitoringReportPl
         calibration_id=str(calibration["calibration_id"]),
         ledger_available=ledger is not None,
         quality_available=quality_available,
+        model_era_id=str(era["model_era_id"]),
+        deployment_id=str(era["deployment"]["deployment_id"]),
+        model_version=str(era["registry"]["model_version"]),
     )
 
 
@@ -336,19 +362,24 @@ def run_monitoring_report(config: MonitoringReportConfig) -> MonitoringReportRes
     run_dir = reporting_root / "runs" / run_id
     try:
         run_dir.mkdir(parents=True, exist_ok=False)
+        era = _verify_reporting_era(config)
+        _require_reporting_plan_era(plan, era)
         _immutable_json(
             run_dir / "request.json",
             {
-                "schema_version": "wind_forecast.monitoring_report_request.v1",
+                "schema_version": "wind_forecast.monitoring_report_request.v2",
                 "run_id": run_id,
                 "requested_at_utc": _utc_text(config.now_utc),
                 "config": {
                     "source_run_manifest": str(config.source_run_manifest.resolve()),
                     "monitoring_store_root": str(config.monitoring_store_root.resolve()),
+                    "model_bundle": str(config.model_bundle.resolve()),
                     "calibration_dir": str(config.calibration_dir.resolve()),
+                    "deployment_root": str(config.deployment_root.resolve()),
                     "through_date": config.through_date.isoformat(),
                 },
                 "plan": plan.summary(),
+                "model_era": era,
             },
         )
         calibration = load_monitoring_calibration(config.calibration_dir)
@@ -365,6 +396,7 @@ def run_monitoring_report(config: MonitoringReportConfig) -> MonitoringReportRes
             config.through_date,
             max(policy.windows_days),
             calibration["_reference_manifest"]["feature_names"],
+            era,
         )
         windows, statistical_breaches = _build_window_reports(
             observations,
@@ -376,11 +408,30 @@ def run_monitoring_report(config: MonitoringReportConfig) -> MonitoringReportRes
         quality_breaches = _quality_breaches(quality)
         breaches = quality_breaches + statistical_breaches
         previous_state = _load_report_state(reporting_root)
+        if (
+            previous_state is not None
+            and (
+                (
+                    previous_state.get("schema_version") == REPORT_STATE_SCHEMA
+                    and previous_state.get("model_era_id") != era["model_era_id"]
+                )
+                or (
+                    previous_state.get("schema_version")
+                    == LEGACY_REPORT_STATE_SCHEMA
+                    and not _legacy_state_is_adoptable(
+                        config.monitoring_store_root,
+                        era,
+                    )
+                )
+            )
+        ):
+            previous_state = None
         next_state, alert_events = _evaluate_alerts(
             previous_state,
             config.through_date,
             breaches,
             policy.alert_persistence_distinct_dates,
+            era,
         )
         for event in alert_events:
             _immutable_json(
@@ -392,6 +443,17 @@ def run_monitoring_report(config: MonitoringReportConfig) -> MonitoringReportRes
             "run_id": run_id,
             "created_at_utc": _utc_text(config.now_utc),
             "through_date": config.through_date.isoformat(),
+            "model_era": {
+                "model_era_id": era["model_era_id"],
+                "association_kind": "active_deployment",
+                "deployment_id": era["deployment"]["deployment_id"],
+                "deployment_state_id": era["deployment"]["deployment_state_id"],
+                "deployment_generation": era["deployment"]["generation"],
+                "registered_model_name": era["registry"]["registered_model_name"],
+                "model_version": era["registry"]["model_version"],
+                "cutoffs": era["cutoffs"],
+                "pins": era["pins"],
+            },
             "source_batch": {
                 "run_id": source_manifest["run_id"],
                 "status": source_manifest["status"],
@@ -430,6 +492,13 @@ def run_monitoring_report(config: MonitoringReportConfig) -> MonitoringReportRes
         next_state["generation"] = int((previous_state or {}).get("generation", 0)) + 1
         next_state["updated_at_utc"] = _utc_text(config.now_utc)
         next_state["latest_report_id"] = report["report_id"]
+        next_state["model_era_id"] = era["model_era_id"]
+        next_state["deployment_id"] = era["deployment"]["deployment_id"]
+        verified_again = _verify_reporting_era(config)
+        if not same_model_era(era, verified_again):
+            raise MonitoringReportingError(
+                "Active deployment changed before report pointer publication."
+            )
         _atomic_json(reporting_root / "state" / "current.json", next_state)
         result = MonitoringReportResult(
             status="succeeded",
@@ -463,7 +532,7 @@ def load_monitoring_report(report_path: str | Path) -> dict[str, Any]:
     """Load and verify one immutable report and all referenced alert events."""
     path = Path(report_path)
     report = _read_json(path)
-    if report.get("schema_version") != REPORT_SCHEMA:
+    if report.get("schema_version") not in {REPORT_SCHEMA, LEGACY_REPORT_SCHEMA}:
         raise MonitoringReportingError("Unsupported monitoring report schema.")
     if not isinstance(report.get("active_alerts"), dict):
         raise MonitoringReportingError("Monitoring report active alerts are invalid.")
@@ -482,6 +551,48 @@ def load_monitoring_report(report_path: str | Path) -> dict[str, Any]:
         alert = _read_json(reporting_root / "alerts" / f"{alert_id}.json")
         _verify_record_id(alert, "monitoring_alert", "alert_event_id")
     return report
+
+
+def resolve_report_model_era(
+    monitoring_store_root: str | Path,
+    report: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Resolve persisted V2 identity or a strictly evidenced bootstrap adoption."""
+    embedded = report.get("model_era")
+    if report.get("schema_version") == REPORT_SCHEMA and isinstance(embedded, dict):
+        return dict(embedded)
+    prediction_ids = {
+        str(value)
+        for value in ((report.get("lineage") or {}).get("prediction_ids") or [])
+    }
+    reference = report.get("reference") or {}
+    matches: list[dict[str, Any]] = []
+    for era in list_model_eras(monitoring_store_root):
+        adopted = era.get("_adopted_state") or {}
+        adopted_ids = {
+            str(value)
+            for value in (adopted.get("as_issued") or {}).values()
+        }
+        if (
+            era.get("calibration", {}).get("calibration_id")
+            == reference.get("calibration_id")
+            and prediction_ids.issubset(adopted_ids)
+        ):
+            matches.append(era)
+    if len(matches) != 1:
+        return {"association_kind": "legacy_unassociated"}
+    era = matches[0]
+    return {
+        "model_era_id": era["model_era_id"],
+        "association_kind": "bootstrap_adopted",
+        "deployment_id": era["deployment"]["deployment_id"],
+        "deployment_state_id": era["deployment"]["deployment_state_id"],
+        "deployment_generation": era["deployment"]["generation"],
+        "registered_model_name": era["registry"]["registered_model_name"],
+        "model_version": era["registry"]["model_version"],
+        "cutoffs": era["cutoffs"],
+        "pins": era["pins"],
+    }
 
 
 def load_monitoring_report_state(
@@ -894,6 +1005,7 @@ def _load_ledger_observations(
     through_date: date,
     window_days: int,
     feature_names: Sequence[str],
+    model_era: Mapping[str, Any],
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     columns = [DATE_COLUMN, *feature_names, LEDGER_PREDICTION_COLUMN, ACTUAL_COLUMN]
     if state is None:
@@ -903,12 +1015,18 @@ def _load_ledger_observations(
     prediction_ids: list[str] = []
     actual_ids: list[str] = []
     input_ids: list[str] = []
+    adopted_ids = _adopted_prediction_ids(root, state, model_era)
     for day, prediction_id in sorted((state.get("as_issued") or {}).items()):
         day_date = date.fromisoformat(day)
         if not start <= day_date <= through_date:
             continue
         evidence = load_prediction_evidence(root, str(prediction_id))
         prediction = evidence["prediction"]
+        if (
+            prediction.get("model_era_id") != model_era["model_era_id"]
+            and str(prediction_id) not in adopted_ids
+        ):
+            continue
         snapshot = evidence["model_input_snapshot"]
         if snapshot["feature_names"] != list(feature_names):
             raise MonitoringReportingError("Ledger and calibration feature orders differ.")
@@ -942,6 +1060,39 @@ def _load_ledger_observations(
         "model_input_snapshot_ids": input_ids,
         "restated_prediction_count": len(state.get("restated") or {}),
         "primary_view": "as_issued",
+        "model_era_id": model_era["model_era_id"],
+        "deployment_id": model_era["deployment"]["deployment_id"],
+        "model_version": model_era["registry"]["model_version"],
+    }
+
+
+def _adopted_prediction_ids(
+    root: Path,
+    state: Mapping[str, Any],
+    model_era: Mapping[str, Any],
+) -> set[str]:
+    if (
+        state.get("schema_version") in {None, LEGACY_STATE_SCHEMA}
+        and (
+            state.get("model_snapshot_id") is None
+            or state.get("model_snapshot_id")
+            == (model_era.get("monitoring") or {}).get(
+                "ledger_model_snapshot_id"
+            )
+        )
+    ):
+        return {
+            str(value)
+            for value in (state.get("as_issued") or {}).values()
+        }
+    try:
+        stored = load_model_era(root, str(model_era["model_era_id"]))
+    except (MonitoringError, OSError):
+        return set()
+    adopted = stored.get("_adopted_state") or {}
+    return {
+        str(value)
+        for value in (adopted.get("as_issued") or {}).values()
     }
 
 
@@ -1044,6 +1195,7 @@ def _evaluate_alerts(
     through_date: date,
     breaches: Sequence[Mapping[str, Any]],
     persistence: int,
+    model_era: Mapping[str, Any],
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     rules = json.loads(json.dumps(dict((previous or {}).get("rules") or {})))
     active = dict((previous or {}).get("active_alerts") or {})
@@ -1083,6 +1235,7 @@ def _evaluate_alerts(
                 event_type,
                 severity,
                 prior.get("last_event_id") or active.get(rule_id),
+                model_era,
             )
             events.append(event)
             active[rule_id] = event["alert_event_id"]
@@ -1114,6 +1267,7 @@ def _evaluate_alerts(
                 "resolved",
                 "ok",
                 prior.get("last_event_id") or active.get(rule_id),
+                model_era,
             )
             events.append(event)
         active.pop(rule_id, None)
@@ -1132,6 +1286,8 @@ def _evaluate_alerts(
         "latest_through_date": day,
         "rules": rules,
         "active_alerts": active,
+        "model_era_id": model_era["model_era_id"],
+        "deployment_id": model_era["deployment"]["deployment_id"],
     }, events
 
 
@@ -1141,6 +1297,7 @@ def _alert_event(
     event_type: str,
     severity: str,
     previous_alert_event_id: str | None,
+    model_era: Mapping[str, Any],
 ) -> dict[str, Any]:
     body = {
         "schema_version": ALERT_SCHEMA,
@@ -1149,6 +1306,9 @@ def _alert_event(
         "event_type": event_type,
         "severity": severity,
         "previous_alert_event_id": previous_alert_event_id,
+        "model_era_id": model_era["model_era_id"],
+        "deployment_id": model_era["deployment"]["deployment_id"],
+        "model_version": model_era["registry"]["model_version"],
         "delivery": "local_immutable_record",
     }
     return _with_id("monitoring_alert", "alert_event_id", body)
@@ -1159,7 +1319,10 @@ def _load_report_state(reporting_root: Path) -> dict[str, Any] | None:
     if not path.is_file():
         return None
     payload = _read_json(path)
-    if payload.get("schema_version") != REPORT_STATE_SCHEMA:
+    if payload.get("schema_version") not in {
+        REPORT_STATE_SCHEMA,
+        LEGACY_REPORT_STATE_SCHEMA,
+    }:
         raise MonitoringReportingError("Unsupported monitoring report-state schema.")
     active_alerts = payload.get("active_alerts")
     rules = payload.get("rules")
@@ -1425,6 +1588,69 @@ def _utc_text(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _verify_reporting_era(config: MonitoringReportConfig) -> dict[str, Any]:
+    try:
+        return verify_active_model_era(
+            config.deployment_root,
+            config.model_bundle,
+            calibration_dir=config.calibration_dir,
+        )
+    except DeploymentRuntimeError as exc:
+        raise MonitoringReportingError(str(exc)) from exc
+
+
+def _require_ledger_era(
+    ledger: Mapping[str, Any] | None,
+    era: Mapping[str, Any],
+) -> None:
+    if ledger is None:
+        return
+    if (
+        ledger.get("schema_version") == LEGACY_STATE_SCHEMA
+        and ledger.get("model_snapshot_id")
+        != (era.get("monitoring") or {}).get("ledger_model_snapshot_id")
+    ):
+        raise MonitoringReportingError(
+            "Legacy monitoring ledger differs from active deployment era."
+        )
+    if (
+        ledger.get("schema_version") not in {None, LEGACY_STATE_SCHEMA}
+        and ledger.get("active_model_era_id") != era.get("model_era_id")
+    ):
+        raise MonitoringReportingError(
+            "Monitoring ledger and active deployment eras differ."
+        )
+
+
+def _legacy_state_is_adoptable(
+    monitoring_store_root: Path,
+    era: Mapping[str, Any],
+) -> bool:
+    try:
+        stored = load_model_era(
+            monitoring_store_root,
+            str(era["model_era_id"]),
+        )
+    except (MonitoringError, OSError):
+        return False
+    return bool(stored.get("_adopted_state"))
+
+
+def _require_reporting_plan_era(
+    plan: MonitoringReportPlan,
+    era: Mapping[str, Any],
+) -> None:
+    if (
+        plan.model_era_id != era.get("model_era_id")
+        or plan.deployment_id
+        != (era.get("deployment") or {}).get("deployment_id")
+        or plan.model_version != (era.get("registry") or {}).get("model_version")
+    ):
+        raise MonitoringReportingError(
+            "Active deployment changed after report planning."
+        )
+
+
 def _acquire_lock(root: Path, run_id: str) -> Path:
     path = root / "state" / "report.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1460,6 +1686,7 @@ __all__ = [
     "load_alert_history",
     "load_monitoring_calibration",
     "load_monitoring_report",
+    "resolve_report_model_era",
     "load_monitoring_report_state",
     "plan_monitoring_report",
     "run_monitoring_report",

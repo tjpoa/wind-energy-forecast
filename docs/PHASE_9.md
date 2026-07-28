@@ -293,6 +293,7 @@ Run locally without provider calls:
   --activation-date YYYY-MM-DD `
   --source-store-root data\processed\v2\incremental_update `
   --model-bundle outputs\training\v2_reference_mlflow `
+  --deployment-root data\processed\v2\deployment `
   --dry-run
 ```
 
@@ -337,7 +338,9 @@ Then generate a report for one explicit Phase 8 batch manifest:
 .\venv\Scripts\python.exe .\scripts\run_monitoring_report.py `
   --source-run-manifest data\processed\v2\incremental_update\runs\<RUN_ID>\manifest.json `
   --monitoring-store-root data\processed\v2\monitoring `
+  --model-bundle outputs\training\v2_reference_mlflow `
   --calibration-dir data\processed\v2\monitoring\reporting\calibrations\<CALIBRATION_ID> `
+  --deployment-root data\processed\v2\deployment `
   --through-date YYYY-MM-DD `
   --dry-run
 ```
@@ -351,6 +354,11 @@ counter. Alert delivery is a local append-only event record; external delivery
 belongs to a later orchestration decision. Public loaders verify active alerts
 and return their causally ordered immutable history; a report date older than
 the derived alert state is rejected.
+
+Operational reports are scoped to the checksum-pinned active v2 deployment.
+The explicit bundle and calibration must match its pins and MLflow aliases.
+The 30/90-day samples and alert persistence never cross a `model_era_id`.
+V1 evidence is dual-read and never rewritten.
 
 The local acceptance calibration completed against the accepted v2 artifacts
 with reference ID
