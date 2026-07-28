@@ -42,7 +42,7 @@ each checkpoint was written. This file reflects the latest repository state.
 | V2 incremental updates | Implemented and synthetically validated | `wind_forecast.incremental`, batch-quality sidecars, Phase 8 docs and tests | Live REN/CDS refresh was not exercised by the repository test suite. |
 | Historical monitoring | Immutable quality, prediction evidence, drift, performance, reports, and local alerts implemented | `wind_forecast.monitoring`, `wind_forecast.monitoring_reporting`, Phase 9 CLIs/docs/tests | It is delayed historical hindcast monitoring, not live forecasting or external notification. |
 | Batch orchestration | Local CLI, Windows Task Scheduler, and Airflow 3.3.0 local stack implemented | `wind_forecast.orchestration`, `wind_forecast.airflow_orchestration`, `airflow/`, Phase 10 docs/tests | Airflow uses temporary synthetic fixtures for offline validation; a shared owner pointer and lease prevent both schedulers from executing concurrently. |
-| Controlled retraining | Contract, eligibility, backtesting, candidate registration, bootstrap, model-era monitoring, manual lifecycle, and recommendation-only monthly scheduling implemented | Controlled-retraining modules, manual/scheduled CLIs, Airflow DAGs, tests, and `docs/CONTROLLED_RETRAINING.md` | Bootstrap still requires the accepted Phase 9 ledger; training and every lifecycle transition require explicit operator action and exact evidence. |
+| Controlled retraining | Contract, eligibility, backtesting, candidate registration, bootstrap, model-era monitoring, manual lifecycle, recommendation-only monthly scheduling, and final synthetic lifecycle acceptance implemented | Controlled-retraining modules, manual/scheduled CLIs, Airflow DAGs, `tests/test_controlled_retraining_acceptance.py`, and `docs/CONTROLLED_RETRAINING.md` | Bootstrap still requires the accepted Phase 9 ledger; training and every lifecycle transition require explicit operator action and exact evidence. The final acceptance uses local synthetic evidence and an in-memory Registry boundary. |
 | Automated tests | Implemented | `tests/`, pytest and pytest-cov configuration | Coverage has a conservative baseline gate; source-ingestion and v2 modules still need deeper tests. |
 | Code quality | Implemented baseline | Ruff configuration in `pyproject.toml` | Ruff rule set is intentionally minimal. |
 | Prediction API | Implemented for local/container use | `wind_forecast.api`, `docs/PHASE_5.md`, API tests | The API is not deployed and depends on local mounted artifacts for full serving. |
@@ -82,6 +82,12 @@ The standard local validation commands are:
 .\venv\Scripts\python.exe -m pytest
 .\venv\Scripts\python.exe -m ruff check .
 ```
+
+The 2026-07-28 final controlled-retraining acceptance ran both complete
+bootstrap-to-stability and bootstrap-to-rollback paths. The dedicated suite
+passed `7` tests; the full backend suite passed `388` tests with `4` skipped
+and `70.74%` total coverage. It also pinned the tracked v1 raw data,
+model/scaler artifacts, and modelling notebook by SHA-256.
 
 The standard CI checks are:
 

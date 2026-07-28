@@ -6,8 +6,8 @@ Approved contract. The policy/evidence contracts, manual monthly eligibility
 evaluation, manual temporal backtesting, v2 candidate Registry action, and
 one-time deployment bootstrap, model-era monitoring, manual promotion,
 probation, stabilization and rollback, and recommendation-only monthly
-scheduling are implemented. Training and every lifecycle transition remain
-manual.
+scheduling are implemented and covered by a final synthetic lifecycle
+acceptance. Training and every lifecycle transition remain manual.
 
 The name "Stage 7 — Controlled Retraining" comes from the approved operational
 plan. It does not replace or renumber roadmap Phase 7, which remains GitHub
@@ -38,8 +38,11 @@ aliases point to the same version. No alias or lifecycle state changes
 automatically.
 
 The checksum-pinned local deployment pointer is the runtime source of truth.
-MLflow aliases are a required governance mirror. A disagreement must stop the
-batch rather than select either source silently.
+The active `champion` and `stable` MLflow aliases are its required runtime
+governance mirror. A disagreement must stop the batch rather than select either
+source silently. `candidate` is a staging alias that is never selected by the
+runtime; candidate registration and every lifecycle command still verify it
+against an explicit optimistic expectation.
 
 ## Policy
 
@@ -380,7 +383,8 @@ Implementation is split into separately reviewed PRs:
 4. bootstrap and deployment pointer (implemented);
 5. model-era monitoring (implemented);
 6. promotion, probation, stability, and rollback (implemented);
-7. monthly recommendation-only scheduling (implemented).
+7. monthly recommendation-only scheduling (implemented);
+8. final synthetic lifecycle acceptance (implemented).
 
 Each PR must leave the repository safe and usable. The next PR starts only
 after the previous PR has been reviewed and integrated.
@@ -389,9 +393,10 @@ after the previous PR has been reviewed and integrated.
 
 Every Phase 9 prediction batch, report, local coordinator run, and Airflow run
 now verifies the active deployment pointer, immutable state and receipt, the
-explicit bundle and calibration, and all expected MLflow aliases. Any
-disagreement fails closed, with verification repeated before derived pointers
-advance.
+explicit bundle and calibration, and the active `champion`/`stable` MLflow
+aliases. Any disagreement fails closed, with verification repeated before
+derived pointers advance. A staged `candidate` does not alter the runtime era
+or model selection.
 
 The append-only ledger stores a content-addressed model-era record containing
 deployment and Registry identities, fit/activation cutoffs, calibration and
@@ -471,3 +476,41 @@ monthly recommendation runners acquire the same environment lease before work.
 Owner mismatch and concurrent execution fail before pipeline mutation. Owner
 changes use generation/owner compare-and-set and are refused while a lease
 exists; abandoned leases require an explicit audited recovery command.
+
+## Final Synthetic Acceptance
+
+`tests/test_controlled_retraining_acceptance.py` runs the public deployment,
+batch, monitoring, Registry, and lifecycle APIs against temporary local
+artifacts and a deterministic in-memory MLflow/Registry boundary. It performs
+no network access, provider refresh, notebook execution, or mutation of tracked
+data/model artifacts.
+
+| Acceptance path | Verified result |
+| --- | --- |
+| V2 bootstrap | Dry-run is read-only; exact checksum-pinned manual approval creates generation one with `champion=stable=1` and no candidate. |
+| Batch and monitoring | Deployment preflight/postcheck bind the batch to one content-addressed model era; monitoring persists the same era identity. |
+| Candidate staging | Accepted candidate registration moves only `candidate`; batch/runtime continue using the unchanged champion without silent selection. |
+| Manual promotion | Exact pointer, aliases, receipt, bundle, calibration, and approval create generation-two probation with `champion=2`, `stable=1`, and a new monitoring era. |
+| Premature stability | Eighty-nine eligible observations fail before mutation; the pointer and aliases remain byte-for-byte unchanged. |
+| Manual stability | The fixed first 90 same-era observations, current healthy report, recommendation, and second approval move only `stable` to version 2. |
+| Manual rollback | An isolated full scenario uses the original promotion receipt and promotion-fixed state to restore only version 1 as champion and stable. |
+| Failure safety | Missing/modified approvals, state-hash or active-alias divergence, and failure before pointer commit fail closed; safe aliases are compensated and immutable reconciliation evidence remains. |
+| V1 isolation | The four tracked raw CSVs, six legacy model/scaler artifacts, and `notebooks/Modeling.ipynb` retain their accepted SHA-256 values. |
+
+Local acceptance on 2026-07-28 completed with:
+
+```powershell
+.\venv\Scripts\python.exe -m pytest tests\test_controlled_retraining_acceptance.py --no-cov -q
+# 7 passed
+
+.\venv\Scripts\python.exe -m pytest -q
+# 388 passed, 4 skipped; 70.74% total coverage
+
+.\venv\Scripts\python.exe -m ruff check .
+git diff --check
+```
+
+This evidence proves deterministic local lifecycle wiring and failure
+semantics. It does not claim a real provider refresh, remote Registry,
+cross-machine artifact round-trip, live forecasting, cloud deployment, or
+automatic model transition.
