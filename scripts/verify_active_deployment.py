@@ -18,7 +18,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         description="Verify pointer, MLflow aliases and explicit v2 artifacts."
     )
     parser.add_argument("--deployment-root", type=Path, required=True)
-    parser.add_argument("--model-bundle", type=Path, required=True)
+    parser.add_argument(
+        "--model-bundle",
+        type=Path,
+        help=(
+            "Optional for lifecycle state v2, which resolves its immutable "
+            "runtime bundle from the active pointer. Generation one requires it."
+        ),
+    )
     parser.add_argument("--calibration-dir", type=Path)
     return parser.parse_args(argv)
 

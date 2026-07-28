@@ -4,9 +4,9 @@
 
 Approved contract. The policy/evidence contracts, manual monthly eligibility
 evaluation, manual temporal backtesting, v2 candidate Registry action, and
-one-time deployment bootstrap and model-era monitoring are implemented.
-Promotion, stabilization, rollback, and automatic scheduling remain
-unimplemented until their separately reviewed PRs.
+one-time deployment bootstrap, model-era monitoring, and manual promotion,
+probation, stabilization, and rollback are implemented. Automatic scheduling
+remains unimplemented until its separately reviewed PR.
 
 The name "Stage 7 — Controlled Retraining" comes from the approved operational
 plan. It does not replace or renumber roadmap Phase 7, which remains GitHub
@@ -377,8 +377,8 @@ Implementation is split into separately reviewed PRs:
 3. temporal backtesting and v2 Registry (implemented);
 4. bootstrap and deployment pointer (implemented);
 5. model-era monitoring (implemented);
-6. promotion, probation, and rollback;
-7. stability and monthly scheduling.
+6. promotion, probation, stability, and rollback (implemented);
+7. monthly scheduling.
 
 Each PR must leave the repository safe and usable. The next PR starts only
 after the previous PR has been reviewed and integrated.
@@ -401,3 +401,52 @@ rewriting it. Before the first v2 pointer update, the exact checksum-pinned
 legacy state is sealed as immutable era evidence. Existing v1 reports remain
 byte-identical and are labelled `bootstrap_adopted` only when calibration and
 prediction lineage match; ambiguous history remains `legacy_unassociated`.
+
+## Manual Promotion, Probation, Stability, And Rollback
+
+Normal V2 transitions use `scripts/manage_v2_deployment.py`. Every subcommand
+requires the exact current pointer generation, state ID and pointer SHA-256,
+plus explicit expected `candidate`, `champion`, and `stable` versions (`none`
+means an absent alias). First run with `--dry-run`; it is read-only and prints
+a strict `wind_forecast.deployment_transition_approval.v1` template. An
+operator completes its descriptive fields, stores it outside the deployment
+root, calculates its SHA-256, and reruns without `--dry-run` using
+`--approval-path` and `--approval-sha256`.
+
+`promote` also requires the accepted candidate backtest bundle, its immutable
+Registry registration receipt, a candidate-specific calibration, the current
+incumbent bundle and calibration, and an explicit effective date. It moves
+`champion` to `candidate`, keeps the incumbent as `stable`, removes
+`candidate`, and creates a new probationary generation/model era. Both models'
+runtime evidence is materialized content-addressably so the fixed rollback
+target remains resolvable. Prepare the candidate calibration separately:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\calibrate_monitoring.py `
+  --retraining-candidate <accepted-backtest-directory> `
+  --policy config\monitoring_policy_v1.json `
+  --output-root <candidate-calibration-output>
+```
+
+`stabilize` requires the exact immutable report, the separate retraining and
+monitoring policies, and the observation cutoff. The retraining policy provides
+the fixed manual stability gates; the monitoring report must pin and embed the
+separately supplied monitoring policy exactly.
+It accepts only exactly 90 verified `scheduled` or `catch_up` as-issued
+observations from the probationary era, with current actuals and no quality
+exclusion, warning, critical breach, or active alert. It moves only `stable`
+to the champion and creates another generation/model era.
+
+`rollback` requires the original promotion receipt and exact rollback state ID
+fixed by that promotion. It can restore only that last stable model, never an
+arbitrary version. The restored model becomes both `champion` and `stable`;
+`candidate` remains absent.
+
+Receipts, states, runtime bundles, calibration sets, and reconciliation records
+are immutable and checksum-pinned. Alias changes are compensated only before
+publication and only while their observed values remain safe. The mutable
+`state/current.json` pointer is the commit point and is replaced atomically
+after a final optimistic-state check. After publication, failures never cause
+automatic alias or pointer rollback; immutable reconciliation evidence is
+written for manual action. There is no scheduler entrypoint and no promotion,
+stability, or rollback is automatic.

@@ -624,7 +624,109 @@ def load_verified_deployment_pointer(
     state_path = _resolve_relative_file(root, pointer.state_manifest_path)
     if sha256_file(state_path) != pointer.state_manifest_sha256:
         raise RetrainingDeploymentError("Deployment state checksum is invalid.")
-    state = _load_deployment_state(state_path)
+    raw_state = _read_json(state_path)
+    if raw_state.get("schema_version") == DEPLOYMENT_STATE_SCHEMA:
+        state = _load_deployment_state(state_path)
+    else:
+        from wind_forecast.retraining_lifecycle import (
+            STATE_SCHEMA as LIFECYCLE_STATE_SCHEMA,
+            load_deployment_state_v2,
+        )
+
+        if raw_state.get("schema_version") != LIFECYCLE_STATE_SCHEMA:
+            raise RetrainingDeploymentError(
+                "Unsupported deployment-state schema."
+            )
+        try:
+            state = load_deployment_state_v2(state_path)
+        except Exception as exc:
+            raise RetrainingDeploymentError(str(exc)) from exc
+        artifact_sets = [state.get("artifacts")]
+        rollback_target = state.get("rollback_target")
+        if isinstance(rollback_target, Mapping):
+            artifact_sets.append(rollback_target.get("artifacts"))
+        for artifacts in artifact_sets:
+            if artifacts is None:
+                continue
+            if not isinstance(artifacts, Mapping):
+                raise RetrainingDeploymentError(
+                    "Deployment runtime artifact references are invalid."
+                )
+            bundle = artifacts.get("bundle")
+            calibration = artifacts.get("calibration")
+            if (
+                not isinstance(bundle, Mapping)
+                or not isinstance(calibration, Mapping)
+            ):
+                raise RetrainingDeploymentError(
+                    "Deployment runtime bundle/calibration references are invalid."
+                )
+            bundle_relative = Path(str(bundle.get("path") or ""))
+            if (
+                bundle_relative.is_absolute()
+                or not bundle_relative.parts
+                or ".." in bundle_relative.parts
+            ):
+                raise RetrainingDeploymentError(
+                    "Deployment runtime bundle path is unsafe."
+                )
+            bundle_root = root / bundle_relative
+            candidate_manifest = bundle_root / "bundle_manifest.json"
+            if candidate_manifest.is_file():
+                verified_bundle_sha = sha256_file(
+                    _resolve_relative_file(
+                        root,
+                        (bundle_relative / "bundle_manifest.json").as_posix(),
+                    )
+                )
+            else:
+                try:
+                    verified_bundle_sha = load_exact_v2_bundle(
+                        bundle_root
+                    )["bundle_sha256"]
+                except RetrainingDeploymentError as exc:
+                    raise RetrainingDeploymentError(
+                        "Deployment runtime bundle is missing or corrupt."
+                    ) from exc
+            calibration_manifest = _resolve_relative_file(
+                root,
+                (
+                    Path(str(calibration.get("path") or ""))
+                    / "calibration.json"
+                ).as_posix(),
+            )
+            if (
+                verified_bundle_sha != bundle.get("manifest_sha256")
+                or sha256_file(calibration_manifest)
+                != calibration.get("sha256")
+            ):
+                raise RetrainingDeploymentError(
+                    "Deployment runtime artifact checksum is invalid."
+                )
+        for label in ("predecessor", "rollback_target"):
+            reference = state.get(label)
+            if reference is None:
+                continue
+            if not isinstance(reference, Mapping):
+                raise RetrainingDeploymentError(
+                    f"Deployment {label} reference is invalid."
+                )
+            referenced_path = _resolve_relative_file(root, reference["path"])
+            if (
+                sha256_file(referenced_path)
+                != reference["state_manifest_sha256"]
+            ):
+                raise RetrainingDeploymentError(
+                    f"Deployment {label} state checksum is invalid."
+                )
+            referenced_state = _read_json(referenced_path)
+            if (
+                referenced_state.get("deployment_state_id")
+                != reference["deployment_state_id"]
+            ):
+                raise RetrainingDeploymentError(
+                    f"Deployment {label} state identity differs."
+                )
     if (
         state["deployment_state_id"] != pointer.deployment_state_id
         or state["deployment_id"] != pointer.deployment_id
@@ -637,21 +739,42 @@ def load_verified_deployment_pointer(
     receipt_path = _resolve_relative_file(root, receipt_ref["path"])
     if sha256_file(receipt_path) != receipt_ref["sha256"]:
         raise RetrainingDeploymentError("Authorizing receipt checksum is invalid.")
-    receipt = load_bootstrap_receipt(receipt_path)
-    if (
-        receipt["bootstrap_receipt_id"] != receipt_ref["bootstrap_receipt_id"]
-        or receipt["deployment_id"] != state["deployment_id"]
-        or receipt["registered_model_name"]
-        != state["registry"]["registered_model_name"]
-        or receipt["model_version"] != state["registry"]["model_version"]
-        or receipt["run_id"] != state["registry"]["run_id"]
-        or receipt["model_uri"] != state["registry"]["model_uri"]
-        or receipt["pins"] != state["pins"]
-        or receipt["expected_aliases"] != state["expected_aliases"]
-    ):
-        raise RetrainingDeploymentError(
-            "Deployment state and authorizing receipt differ."
-        )
+    if state.get("schema_version") == DEPLOYMENT_STATE_SCHEMA:
+        receipt = load_bootstrap_receipt(receipt_path)
+        if (
+            receipt["bootstrap_receipt_id"] != receipt_ref["bootstrap_receipt_id"]
+            or receipt["deployment_id"] != state["deployment_id"]
+            or receipt["registered_model_name"]
+            != state["registry"]["registered_model_name"]
+            or receipt["model_version"] != state["registry"]["model_version"]
+            or receipt["run_id"] != state["registry"]["run_id"]
+            or receipt["model_uri"] != state["registry"]["model_uri"]
+            or receipt["pins"] != state["pins"]
+            or receipt["expected_aliases"] != state["expected_aliases"]
+        ):
+            raise RetrainingDeploymentError(
+                "Deployment state and authorizing receipt differ."
+            )
+    else:
+        from wind_forecast.retraining_lifecycle import load_transition_receipt
+
+        try:
+            receipt = load_transition_receipt(receipt_path)
+        except Exception as exc:
+            raise RetrainingDeploymentError(str(exc)) from exc
+        if (
+            receipt["transition_receipt_id"]
+            != receipt_ref["transition_receipt_id"]
+            or receipt["deployment_id"] != state["deployment_id"]
+            or receipt["generation"] != state["generation"]
+            or receipt["registered_model_name"]
+            != state["registry"]["registered_model_name"]
+            or receipt["expected_aliases"] != state["expected_aliases"]
+            or receipt["artifacts"] != state["artifacts"]
+        ):
+            raise RetrainingDeploymentError(
+                "Deployment state and transition receipt differ."
+            )
     if client is None:
         mlflow = mlflow_module or _load_mlflow()
         tracking_uri = state["registry"]["tracking_uri"]

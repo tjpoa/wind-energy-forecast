@@ -19,7 +19,7 @@ class DeploymentRuntimeError(RuntimeError):
 
 def verify_active_model_era(
     deployment_root: str | Path,
-    model_bundle: str | Path,
+    model_bundle: str | Path | None = None,
     *,
     calibration_dir: str | Path | None = None,
     client: Any | None = None,
@@ -38,11 +38,34 @@ def verify_active_model_era(
             client=client,
             mlflow_module=mlflow_module,
         )
-        bundle = load_exact_v2_bundle(model_bundle)
     except RetrainingDeploymentError as exc:
         raise DeploymentRuntimeError(str(exc)) from exc
 
     state = verified["state"]
+    lifecycle_artifacts = state.get("artifacts") or {}
+    if model_bundle is None:
+        bundle_ref = lifecycle_artifacts.get("bundle") or {}
+        relative = str(bundle_ref.get("path") or "")
+        if not relative:
+            raise DeploymentRuntimeError(
+                "Generation-one deployment requires an explicit model bundle."
+            )
+        model_bundle = Path(deployment_root) / relative
+    try:
+        if (Path(model_bundle) / "bundle_manifest.json").is_file():
+            from wind_forecast.monitoring import (
+                MonitoringError,
+                validate_monitoring_model_bundle,
+            )
+
+            try:
+                bundle = validate_monitoring_model_bundle(model_bundle)
+            except MonitoringError as exc:
+                raise DeploymentRuntimeError(str(exc)) from exc
+        else:
+            bundle = load_exact_v2_bundle(model_bundle)
+    except RetrainingDeploymentError as exc:
+        raise DeploymentRuntimeError(str(exc)) from exc
     pins = dict(state["pins"])
     observed = {
         "bundle_sha256": bundle["bundle_sha256"],
@@ -58,6 +81,11 @@ def verify_active_model_era(
                 f"Explicit model bundle {name} differs from active deployment."
             )
 
+    if calibration_dir is None:
+        calibration_ref = lifecycle_artifacts.get("calibration") or {}
+        relative = str(calibration_ref.get("path") or "")
+        if relative:
+            calibration_dir = Path(deployment_root) / relative
     calibration: Mapping[str, Any] | None = None
     if calibration_dir is not None:
         from wind_forecast.monitoring_reporting import (
