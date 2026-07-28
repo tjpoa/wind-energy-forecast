@@ -46,13 +46,27 @@ class RetrainingRegistrationConfig:
     registered_model_name: str
     expected_current_candidate_version: str | None
     output_root: Path
+    registry_lock_root: Path | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "backtest_bundle", Path(self.backtest_bundle))
         object.__setattr__(self, "output_root", Path(self.output_root))
+        object.__setattr__(
+            self,
+            "registry_lock_root",
+            (
+                Path(self.registry_lock_root)
+                if self.registry_lock_root is not None
+                else self.output_root
+            ),
+        )
         if _paths_overlap(self.output_root, self.backtest_bundle):
             raise RetrainingRegistryError(
                 "Registry output root must not overlap the backtest bundle."
+            )
+        if _paths_overlap(self.registry_lock_root, self.backtest_bundle):
+            raise RetrainingRegistryError(
+                "Registry lock root must not overlap the backtest bundle."
             )
         if (
             not isinstance(self.registered_model_name, str)
@@ -609,19 +623,27 @@ def _numeric_signature_type(item: Any) -> bool:
     }
 
 
-def _registry_lock_path(config: RetrainingRegistrationConfig) -> Path:
-    identity = sha256(config.registered_model_name.encode("utf-8")).hexdigest()
-    return config.output_root.resolve() / ".registry-locks" / f"{identity}.lock"
+def registry_lock_path(
+    lock_root: str | Path,
+    registered_model_name: str,
+) -> Path:
+    """Return the shared local lock path for one Registry model name."""
+    identity = sha256(registered_model_name.encode("utf-8")).hexdigest()
+    return Path(lock_root).resolve() / ".registry-locks" / f"{identity}.lock"
 
 
-def _acquire_registry_lock(config: RetrainingRegistrationConfig) -> Path:
-    path = _registry_lock_path(config)
+def acquire_registry_lock(
+    lock_root: str | Path,
+    registered_model_name: str,
+    owner: Mapping[str, Any],
+) -> Path:
+    """Acquire the cooperative Registry lock without replacing stale state."""
+    path = registry_lock_path(lock_root, registered_model_name)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema_version": "wind_forecast.retraining_registry_lock.v1",
-        "registered_model_name": config.registered_model_name,
-        "run_id": config.run_id,
-        "backtest_bundle": str(config.backtest_bundle.resolve()),
+        "registered_model_name": registered_model_name,
+        "owner": dict(owner),
     }
     try:
         with path.open("x", encoding="utf-8", newline="\n") as handle:
@@ -637,7 +659,8 @@ def _acquire_registry_lock(config: RetrainingRegistrationConfig) -> Path:
     return path
 
 
-def _release_registry_lock(path: Path) -> None:
+def release_registry_lock(path: Path) -> None:
+    """Release a lock created by :func:`acquire_registry_lock`."""
     try:
         path.unlink()
         path.parent.rmdir()
@@ -646,6 +669,30 @@ def _release_registry_lock(path: Path) -> None:
             raise RetrainingRegistryReconciliationError(
                 f"Registry lock could not be released: {path}."
             ) from exc
+
+
+def _registry_lock_path(config: RetrainingRegistrationConfig) -> Path:
+    """Backward-compatible test/support helper for the candidate CLI."""
+    return registry_lock_path(
+        config.registry_lock_root or config.output_root,
+        config.registered_model_name,
+    )
+
+
+def _acquire_registry_lock(config: RetrainingRegistrationConfig) -> Path:
+    return acquire_registry_lock(
+        config.registry_lock_root or config.output_root,
+        config.registered_model_name,
+        {
+            "action": "register_retraining_candidate",
+            "run_id": config.run_id,
+            "backtest_bundle": str(config.backtest_bundle.resolve()),
+        },
+    )
+
+
+def _release_registry_lock(path: Path) -> None:
+    release_registry_lock(path)
 
 
 def _write_recovery_evidence(
@@ -718,6 +765,9 @@ __all__ = [
     "RetrainingRegistrationReceipt",
     "RetrainingRegistryError",
     "RetrainingRegistryReconciliationError",
+    "acquire_registry_lock",
     "load_retraining_registration_receipt",
+    "registry_lock_path",
     "register_retraining_candidate",
+    "release_registry_lock",
 ]
