@@ -169,6 +169,120 @@ def test_no_performance_breach_rejects_missing_threshold_metric() -> None:
         evaluate_no_performance_breach(_metrics(), limits)
 
 
+@pytest.mark.parametrize(
+    ("schema_version", "include_era"),
+    [
+        ("wind_forecast.monthly_retraining_evaluation.v1", False),
+        ("wind_forecast.monthly_retraining_evaluation.v2", True),
+    ],
+)
+def test_backtest_pinned_input_preflight_accepts_v1_and_v2_evaluations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    schema_version: str,
+    include_era: bool,
+) -> None:
+    monitoring_root = tmp_path / "monitoring"
+    report_path = (
+        monitoring_root / "reporting" / "reports" / "report" / "report.json"
+    )
+    report_state_path = (
+        monitoring_root / "reporting" / "state" / "current.json"
+    )
+    ledger_path = monitoring_root / "state" / "current.json"
+    for path in (report_path, report_state_path, ledger_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("{}", encoding="utf-8")
+    report_state = {
+        "generation": 3,
+        "latest_report_id": "report",
+        "latest_through_date": "2026-06-30",
+    }
+    ledger = {
+        "generation": 4,
+        "model_snapshot_id": "model",
+        "active_model_era_id": "era",
+    }
+    report_state_path.write_text(json.dumps(report_state), encoding="utf-8")
+    ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+    policy_path = Path("config/retraining_policy_v1.json")
+    incumbent = {
+        "incumbent_id": "model",
+        **({"model_era_id": "era"} if include_era else {}),
+    }
+    evaluation = {
+        "schema_version": schema_version,
+        "policy": {
+            "sha256": backtesting.sha256_file(policy_path),
+            "schema_version": "wind_forecast.retraining_policy.v1",
+        },
+        "phase9_report": {
+            "path": str(report_path.resolve()),
+            "sha256": backtesting.sha256_file(report_path),
+            "report_id": "report",
+        },
+        "phase9_report_state": {
+            "path": str(report_state_path.resolve()),
+            "sha256": backtesting.sha256_file(report_state_path),
+            **report_state,
+        },
+        "phase9_ledger": {
+            "path": str(ledger_path.resolve()),
+            "sha256": backtesting.sha256_file(ledger_path),
+            "generation": 4,
+        },
+        "incumbent": incumbent,
+    }
+    monitoring_policy_sha = "b" * 64
+    report = {
+        "report_id": "report",
+        "reference": {
+            "policy_sha256": monitoring_policy_sha,
+            "calibration_id": "calibration",
+            "reference_id": "reference",
+        },
+    }
+    monkeypatch.setattr(
+        backtesting, "load_monitoring_report", lambda _path: report
+    )
+    monkeypatch.setattr(
+        backtesting,
+        "load_verified_monitoring_state",
+        lambda _root: ledger,
+    )
+    monkeypatch.setattr(
+        backtesting,
+        "load_monitoring_report_state",
+        lambda _root: report_state,
+    )
+    config = RetrainingBacktestConfig(
+        evaluation_path=tmp_path / "evaluation.json",
+        monitoring_store_root=monitoring_root,
+        incumbent_bundle=tmp_path / "bundle",
+        incumbent_base_dataset=tmp_path / "base.csv",
+        calibration_dir=tmp_path / "calibration",
+        policy_path=policy_path,
+        output_root=tmp_path / "output",
+    )
+    calibration = {
+        "policy_sha256": monitoring_policy_sha,
+        "calibration_id": "calibration",
+        "reference_id": "reference",
+        "_reference_manifest": {"model_sha256": SHA},
+    }
+    bundle = {"model_manifest": {"model_sha256": SHA}}
+    assert (
+        backtesting._verify_pinned_inputs(
+            config,
+            evaluation,
+            RetrainingPolicy.load(policy_path),
+            bundle,
+            calibration,
+        )
+        == ledger
+    )
+
+
 def test_folds_preserve_gaps_exclude_tail_and_prevent_future_training() -> None:
     days = pd.date_range("2026-01-01", periods=96, freq="D")
     days = days.delete([10, 40])

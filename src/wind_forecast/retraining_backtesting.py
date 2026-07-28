@@ -23,6 +23,7 @@ from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
 from wind_forecast.manifests import sha256_file
 from wind_forecast.monitoring import (
     MonitoringError,
+    load_model_era,
     load_prediction_evidence,
     load_verified_monitoring_state,
     validate_monitoring_model_bundle,
@@ -35,6 +36,7 @@ from wind_forecast.monitoring_reporting import (
 )
 from wind_forecast.monitoring_statistics import regression_metrics, threshold_severity
 from wind_forecast.retraining_evaluation import (
+    EVALUATION_SCHEMA_V2,
     RetrainingEvaluationError,
     load_monthly_retraining_evaluation,
 )
@@ -727,6 +729,11 @@ def _verify_pinned_inputs(
         raise RetrainingBacktestError("Evaluation and Phase 9 ledger generations differ.")
     if ledger.get("model_snapshot_id") != evaluation["incumbent"]["incumbent_id"]:
         raise RetrainingBacktestError("Evaluation and model snapshot IDs differ.")
+    if evaluation.get("schema_version") == EVALUATION_SCHEMA_V2 and (
+        ledger.get("active_model_era_id")
+        != evaluation["incumbent"].get("model_era_id")
+    ):
+        raise RetrainingBacktestError("Evaluation and active model-era IDs differ.")
     if (
         report_state.get("generation")
         != evaluation["phase9_report_state"]["generation"]
@@ -772,6 +779,21 @@ def _reconstruct_observations(
     if len(expected_by_date) != len(expected):
         raise RetrainingBacktestError("Evaluation contains duplicate target dates.")
     observations = []
+    model_era_id = evaluation["incumbent"].get("model_era_id")
+    adopted_prediction_ids: set[str] = set()
+    if model_era_id is not None:
+        try:
+            era = load_model_era(config.monitoring_store_root, model_era_id)
+        except MonitoringError as exc:
+            raise RetrainingBacktestError(str(exc)) from exc
+        adopted = era.get("_adopted_state") or {}
+        adopted_prediction_ids = {
+            str(value)
+            for value in (
+                list((adopted.get("as_issued") or {}).values())
+                + list((adopted.get("restated") or {}).values())
+            )
+        }
     for day, pinned in expected_by_date.items():
         prediction_id = (ledger.get("as_issued") or {}).get(day)
         actual_id = (ledger.get("actuals") or {}).get(day)
@@ -817,6 +839,11 @@ def _reconstruct_observations(
             or prediction.get("view") != "as_issued"
             or prediction.get("model_snapshot_id")
             != evaluation["incumbent"]["incumbent_id"]
+            or (
+                model_era_id is not None
+                and prediction.get("model_era_id") != model_era_id
+                and prediction_id not in adopted_prediction_ids
+            )
             or snapshot.get("feature_names") != bundle["feature_names"]
             or evidence["model_snapshot"].get("model", {}).get("model_sha256")
             != bundle["model_manifest"]["model_sha256"]

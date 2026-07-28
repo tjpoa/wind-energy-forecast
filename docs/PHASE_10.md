@@ -44,7 +44,17 @@ stages. Recovery is an identical rerun after correcting the cause.
 
 ## Local schedule
 
-Register the task only after validating all selected paths:
+Configure the environment owner first, then register the task only after
+validating all selected paths:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\manage_scheduler_owner.py configure `
+  --scheduler-root .\data\processed\v2\orchestration\scheduler `
+  --environment-id local `
+  --owner windows_task_scheduler `
+  --expected-generation 0 `
+  --expect-no-owner
+```
 
 ```powershell
 .\scripts\register_local_batch_task.ps1 `
@@ -53,6 +63,8 @@ Register the task only after validating all selected paths:
   -ModelBundle .\outputs\training\v2_reference_mlflow `
   -CalibrationDirectory .\data\processed\v2\monitoring\reporting\calibrations\<ID> `
   -DeploymentRoot .\data\processed\v2\deployment `
+  -SchedulerStateRoot .\data\processed\v2\orchestration\scheduler `
+  -EnvironmentId local `
   -ActivationDate YYYY-MM-DD `
   -WhatIf
 ```
@@ -61,6 +73,24 @@ Remove `-WhatIf` only after reviewing the generated action. The task runs daily
 at local 12:00, never overlaps itself, has a six-hour execution limit, and is
 retried twice at 30-minute intervals. It uses the current interactive Windows
 identity and stores no credential in the repository.
+
+Register the separate recommendation-only monthly task against the same owner
+and lease:
+
+```powershell
+.\scripts\register_local_monthly_governance_task.ps1 `
+  -PythonExecutable .\venv\Scripts\python.exe `
+  -RepositoryRoot $PWD `
+  -MonitoringStoreRoot .\data\processed\v2\monitoring `
+  -DeploymentRoot .\data\processed\v2\deployment `
+  -SchedulerStateRoot .\data\processed\v2\orchestration\scheduler `
+  -EnvironmentId local `
+  -WhatIf
+```
+
+It runs on day 8 at 13:00 local time and invokes only
+`run_monthly_governance.py`. Training, backtesting, Registry operations and
+deployment transitions are not scheduled.
 
 Model, calibration, and deployment paths may alternatively be supplied through
 `WIND_FORECAST_BATCH_MODEL_BUNDLE` and
@@ -73,11 +103,19 @@ Persisted evidence records no credential values.
 
 Copy `airflow/.env.example` to the ignored `airflow/.env` and replace every
 explicit artifact selection and blank local credential/database field. The
-example contains no functional passwords or connection string. Keep the
-Windows task disabled while Airflow is active so that only one scheduler owns
-the batch.
+example contains no functional passwords or connection string. Before starting
+Airflow, atomically change the same environment owner to `airflow`. The daily
+and monthly DAGs both fail closed if the owner or shared execution lease does
+not permit Airflow.
 
 ```powershell
+.\venv\Scripts\python.exe .\scripts\manage_scheduler_owner.py configure `
+  --scheduler-root .\data\processed\v2\orchestration\scheduler `
+  --environment-id local `
+  --owner airflow `
+  --expected-generation <CURRENT_GENERATION> `
+  --expected-owner windows_task_scheduler
+
 docker compose -f airflow/docker-compose.yml config --quiet
 docker compose -f airflow/docker-compose.yml build
 docker compose -f airflow/docker-compose.yml up airflow-init
@@ -95,11 +133,26 @@ from the API/dashboard Compose stack and is not a production deployment.
 graph:
 
 ```text
-availability_plan -> dataset_update -> predict_reconcile -> drift_publish
+scheduler_lease -> deployment_preflight -> availability_plan
+  -> dataset_update -> predict_reconcile -> drift_publish
+  -> deployment_postcheck -> scheduler_release
 ```
 
 Only compact status, paths and checksums cross task boundaries. Data, reports
 and evidence stay in the existing versioned stores.
+
+If a process terminates while holding the lease, inspect its immutable JSON
+first and recover only that exact `lease_id` with an operator identity and
+audit note:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\manage_scheduler_owner.py recover `
+  --scheduler-root .\data\processed\v2\orchestration\scheduler `
+  --environment-id local `
+  --lease-id <ABANDONED_LEASE_ID> `
+  --recovered-by <OPERATOR> `
+  --note "<WHY THE RUN IS CONFIRMED ABANDONED>"
+```
 
 For the required limited offline backfill, generate the temporary synthetic
 REN/ERA5 fixture inside the Airflow image, point the ignored `airflow/.env` at

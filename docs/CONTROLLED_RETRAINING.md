@@ -4,9 +4,10 @@
 
 Approved contract. The policy/evidence contracts, manual monthly eligibility
 evaluation, manual temporal backtesting, v2 candidate Registry action, and
-one-time deployment bootstrap, model-era monitoring, and manual promotion,
-probation, stabilization, and rollback are implemented. Automatic scheduling
-remains unimplemented until its separately reviewed PR.
+one-time deployment bootstrap, model-era monitoring, manual promotion,
+probation, stabilization and rollback, and recommendation-only monthly
+scheduling are implemented. Training and every lifecycle transition remain
+manual.
 
 The name "Stage 7 — Controlled Retraining" comes from the approved operational
 plan. It does not replace or renumber roadmap Phase 7, which remains GitHub
@@ -95,10 +96,11 @@ under
 An identical rerun is idempotent. Different evidence for an already sealed
 period fails closed.
 
-This step emits a recommendation only. It does not increment Phase 9
+The manual evaluator emits a recommendation only. It does not increment Phase 9
 persistence, train a candidate, write Registry state, promote or stabilize a
-model, mutate deployment state, roll back, call the network, or create a
-scheduler.
+model, mutate deployment state, roll back, or call the network. Its v1 records
+remain readable; the scheduler supplies an explicit `model_era_id` and emits
+the era-scoped v2 contract.
 
 ## Manual Temporal Backtest
 
@@ -378,7 +380,7 @@ Implementation is split into separately reviewed PRs:
 4. bootstrap and deployment pointer (implemented);
 5. model-era monitoring (implemented);
 6. promotion, probation, stability, and rollback (implemented);
-7. monthly scheduling.
+7. monthly recommendation-only scheduling (implemented).
 
 Each PR must leave the repository safe and usable. The next PR starts only
 after the previous PR has been reviewed and integrated.
@@ -428,14 +430,15 @@ target remains resolvable. Prepare the candidate calibration separately:
   --output-root <candidate-calibration-output>
 ```
 
-`stabilize` requires the exact immutable report, the separate retraining and
-monitoring policies, and the observation cutoff. The retraining policy provides
-the fixed manual stability gates; the monitoring report must pin and embed the
-separately supplied monitoring policy exactly.
-It accepts only exactly 90 verified `scheduled` or `catch_up` as-issued
-observations from the probationary era, with current actuals and no quality
-exclusion, warning, critical breach, or active alert. It moves only `stable`
-to the champion and creates another generation/model era.
+`stabilize` requires a sealed monthly recommendation with
+`ready_for_second_manual_approval`, the exact current immutable report, the
+separate retraining and monitoring policies, and the fixed observation cutoff.
+The first 90 verified `scheduled` or `catch_up` observations from the
+probationary era are pinned; later observations do not invalidate that window.
+The current report may be later than the 90th observation, but must remain free
+of quality exclusions, warning/critical breaches, and active alerts. A new
+dry-run and second manual approval are still required. The recommendation ID
+and checksum enter the approval and transition receipt; only `stable` moves.
 
 `rollback` requires the original promotion receipt and exact rollback state ID
 fixed by that promotion. It can restore only that last stable model, never an
@@ -448,5 +451,23 @@ publication and only while their observed values remain safe. The mutable
 `state/current.json` pointer is the commit point and is replaced atomically
 after a final optimistic-state check. After publication, failures never cause
 automatic alias or pointer rollback; immutable reconciliation evidence is
-written for manual action. There is no scheduler entrypoint and no promotion,
-stability, or rollback is automatic.
+written for manual action. The scheduler entrypoints emit recommendations only;
+no backtest, training, Registry mutation, promotion, stability transition, or
+rollback is automatic.
+
+## Monthly Scheduling And Scheduler Ownership
+
+On day 8 at 13:00 `Europe/Lisbon`, the monthly coordinator selects the newest
+verified report for the previous calendar month end and seals
+`wind_forecast.monthly_governance_recommendation.v1`. It evaluates retraining
+only for the active stable era and evaluates stability readiness only for a
+probationary champion. Retries reuse the canonical scheduled timestamp.
+
+Each environment has one ignored operational
+`wind_forecast.scheduler_ownership.v1` pointer under
+`data/processed/v2/orchestration/scheduler/<environment-id>/`. Configure it
+explicitly as `windows_task_scheduler` or `airflow`. Both the daily batch and
+monthly recommendation runners acquire the same environment lease before work.
+Owner mismatch and concurrent execution fail before pipeline mutation. Owner
+changes use generation/owner compare-and-set and are refused while a lease
+exists; abandoned leases require an explicit audited recovery command.

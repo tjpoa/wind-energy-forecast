@@ -58,6 +58,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     stabilize.add_argument("--monitoring-report", type=Path, required=True)
     stabilize.add_argument("--retraining-policy", type=Path, required=True)
     stabilize.add_argument("--monitoring-policy", type=Path, required=True)
+    stabilize.add_argument(
+        "--monthly-recommendation",
+        type=Path,
+        required=True,
+    )
     stabilize.add_argument("--observation-cutoff", required=True)
 
     rollback = actions.add_parser("rollback", parents=[common])
@@ -96,6 +101,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         monitoring_report=getattr(args, "monitoring_report", None),
         policy_path=getattr(args, "retraining_policy", None),
         monitoring_policy_path=getattr(args, "monitoring_policy", None),
+        monthly_recommendation=getattr(args, "monthly_recommendation", None),
         observation_cutoff=getattr(args, "observation_cutoff", None),
         promotion_receipt=getattr(args, "promotion_receipt", None),
         expected_rollback_state_id=getattr(

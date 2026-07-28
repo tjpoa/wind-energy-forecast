@@ -41,6 +41,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         required=True,
         help="Explicit transitional incumbent model_snapshot_id; not a champion alias.",
     )
+    parser.add_argument(
+        "--model-era-id",
+        help=(
+            "Explicit active model_era_id. When supplied, emit the era-scoped "
+            "v2 evaluation contract."
+        ),
+    )
     parser.add_argument("--incumbent-fit-cutoff", required=True)
     parser.add_argument(
         "--output-root",
@@ -69,6 +76,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             monitoring_report_path=args.monitoring_report_path,
             incumbent_id=args.incumbent_id,
             incumbent_fit_cutoff=args.incumbent_fit_cutoff,
+            model_era_id=args.model_era_id,
             output_root=args.output_root,
             evaluated_at_utc=args.evaluated_at_utc,
             dry_run=args.dry_run,

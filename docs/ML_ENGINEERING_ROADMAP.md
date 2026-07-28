@@ -498,8 +498,8 @@ Design a cloud deployment architecture for the mature project without forcing im
 
 ## Operational Extension — Controlled Retraining
 
-Status: the contract and policy are approved; operational implementation is
-split into separately reviewed increments.
+Status: implemented through the recommendation-only monthly scheduling
+increment. Training and lifecycle transitions remain manually approval-gated.
 
 This extension is also referred to as "Stage 7 — Controlled Retraining" in
 its approved delivery plan. It does not replace roadmap Phase 7, which remains

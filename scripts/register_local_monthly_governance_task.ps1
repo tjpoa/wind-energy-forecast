@@ -5,25 +5,24 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$RepositoryRoot,
     [Parameter(Mandatory = $true)]
-    [string]$ModelBundle,
-    [Parameter(Mandatory = $true)]
-    [string]$CalibrationDirectory,
+    [string]$MonitoringStoreRoot,
     [Parameter(Mandatory = $true)]
     [string]$DeploymentRoot,
     [Parameter(Mandatory = $true)]
     [string]$SchedulerStateRoot,
     [Parameter(Mandatory = $true)]
     [string]$EnvironmentId,
-    [string]$ActivationDate,
-    [string]$EnvFile,
-    [string]$TaskName = "WindForecastHistoricalBatch"
+    [string]$TaskName = "WindForecastMonthlyGovernance"
 )
 
 $ErrorActionPreference = "Stop"
 $repository = (Resolve-Path -LiteralPath $RepositoryRoot).Path
-$runner = Join-Path $repository "scripts\run_scheduled_batch.ps1"
+$runner = Join-Path $repository "scripts\run_scheduled_monthly_governance.ps1"
 if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) {
-    throw "Scheduled batch runner was not found: $runner"
+    throw "Scheduled monthly runner was not found: $runner"
+}
+if ([System.TimeZoneInfo]::Local.Id -ne "GMT Standard Time") {
+    throw "The local timezone must be GMT Standard Time (Europe/Lisbon contract)."
 }
 
 function Resolve-RepositoryPath([string]$Value) {
@@ -33,13 +32,17 @@ function Resolve-RepositoryPath([string]$Value) {
     }
     return (Resolve-Path -LiteralPath $candidate).Path
 }
+function Quote-TaskArgument([string]$Value) {
+    if ($Value.Contains('"')) {
+        throw "Task arguments must not contain quote characters."
+    }
+    return '"' + $Value + '"'
+}
 
 $python = Resolve-RepositoryPath $PythonExecutable
-$model = Resolve-RepositoryPath $ModelBundle
-$calibration = Resolve-RepositoryPath $CalibrationDirectory
+$monitoring = Resolve-RepositoryPath $MonitoringStoreRoot
 $deployment = Resolve-RepositoryPath $DeploymentRoot
 $schedulerState = Resolve-RepositoryPath $SchedulerStateRoot
-$environmentFile = if ($EnvFile) { Resolve-RepositoryPath $EnvFile } else { $null }
 $schedulerManager = Join-Path $repository "scripts\manage_scheduler_owner.py"
 & $python $schedulerManager verify `
     --scheduler-root $schedulerState `
@@ -48,65 +51,49 @@ $schedulerManager = Join-Path $repository "scripts\manage_scheduler_owner.py"
 if ($LASTEXITCODE -ne 0) {
     throw "Scheduler ownership is not configured for Windows Task Scheduler."
 }
-
-$timezone = [System.TimeZoneInfo]::Local.Id
-if ($timezone -ne "GMT Standard Time") {
-    throw "The local timezone must be GMT Standard Time (Europe/Lisbon contract); found $timezone."
-}
-
-function Quote-TaskArgument([string]$Value) {
-    if ($Value.Contains('"')) {
-        throw "Task arguments must not contain quote characters."
-    }
-    return '"' + $Value + '"'
-}
-
-$actionArguments = @(
+$arguments = @(
     "-NoProfile",
     "-NonInteractive",
     "-ExecutionPolicy", "Bypass",
     "-File", (Quote-TaskArgument $runner),
     "-PythonExecutable", (Quote-TaskArgument $python),
     "-RepositoryRoot", (Quote-TaskArgument $repository),
-    "-ModelBundle", (Quote-TaskArgument $model),
-    "-CalibrationDirectory", (Quote-TaskArgument $calibration),
+    "-MonitoringStoreRoot", (Quote-TaskArgument $monitoring),
     "-DeploymentRoot", (Quote-TaskArgument $deployment),
     "-SchedulerStateRoot", (Quote-TaskArgument $schedulerState),
     "-EnvironmentId", (Quote-TaskArgument $EnvironmentId)
 )
-if ($ActivationDate) {
-    $actionArguments += @("-ActivationDate", (Quote-TaskArgument $ActivationDate))
-}
-if ($environmentFile) {
-    $actionArguments += @("-EnvFile", (Quote-TaskArgument $environmentFile))
-}
-
-$actionArgumentText = $actionArguments -join " "
+$argumentText = $arguments -join " "
 if ($WhatIfPreference) {
     [pscustomobject]@{
         TaskName = $TaskName
         Executable = "powershell.exe"
-        Arguments = $actionArgumentText
-        Schedule = "Daily at 12:00 local time"
-        ExecutionTimeLimit = "06:00:00"
-        RestartCount = 2
-        RestartInterval = "00:30:00"
+        Arguments = $argumentText
+        Schedule = "Monthly on day 8 at 13:00 local time"
         MultipleInstances = "IgnoreNew"
-        LogonType = "Interactive"
+        StartWhenAvailable = $true
         SchedulerStateRoot = $schedulerState
         EnvironmentId = $EnvironmentId
     }
     return
 }
 
-$action = New-ScheduledTaskAction `
-    -Execute "powershell.exe" `
-    -Argument $actionArgumentText
-$trigger = New-ScheduledTaskTrigger -Daily -At "12:00"
+$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $argumentText
+$startBoundary = (Get-Date -Hour 13 -Minute 0 -Second 0).ToString("s")
+$trigger = New-CimInstance `
+    -ClassName "MSFT_TaskMonthlyTrigger" `
+    -Namespace "Root/Microsoft/Windows/TaskScheduler" `
+    -ClientOnly `
+    -Property @{
+        Enabled = $true
+        DaysOfMonth = [uint32]128
+        MonthsOfYear = [uint16]4095
+        StartBoundary = $startBoundary
+    }
 $settings = New-ScheduledTaskSettingsSet `
-    -ExecutionTimeLimit (New-TimeSpan -Hours 6) `
+    -ExecutionTimeLimit (New-TimeSpan -Hours 2) `
     -RestartCount 2 `
-    -RestartInterval (New-TimeSpan -Minutes 30) `
+    -RestartInterval (New-TimeSpan -Minutes 15) `
     -MultipleInstances IgnoreNew `
     -StartWhenAvailable
 $principal = New-ScheduledTaskPrincipal `
@@ -118,8 +105,7 @@ $task = New-ScheduledTask `
     -Trigger $trigger `
     -Settings $settings `
     -Principal $principal `
-    -Description "Owner-guarded daily D+5 historical wind-forecast batch at 12:00 local time."
-
+    -Description "Owner-guarded monthly retraining and stability recommendations only."
 if ($PSCmdlet.ShouldProcess($TaskName, "Register or replace scheduled task")) {
     Register-ScheduledTask -TaskName $TaskName -InputObject $task -Force | Out-Null
     Get-ScheduledTask -TaskName $TaskName

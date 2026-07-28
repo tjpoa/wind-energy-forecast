@@ -412,8 +412,10 @@ docker compose -f airflow\docker-compose.yml up -d
 The tracking URI sealed in the deployment must be reachable from every batch
 runtime, including from inside the Airflow container.
 
-Review `airflow/.env` before starting. Disable the Windows scheduled task while
-the Airflow DAG is active; the two schedulers must not run concurrently.
+Review `airflow/.env` before starting. Configure exactly one scheduler owner
+per environment with `scripts/manage_scheduler_owner.py`; the Windows runners
+and Airflow DAGs share a fail-closed execution lease and cannot run
+concurrently.
 
 Generate recent WeatherAPI feature data:
 
@@ -561,8 +563,9 @@ does not publish or deploy them.
   `artifacts/catalog.json`.
 - There is no cloud deployment.
 - There is no production environment or enterprise-scalability claim.
-- Monitoring is retrospective and local; there is no real-time data path,
-  scheduler, or external alert delivery.
+- Monitoring is retrospective and local; the only additional scheduler emits
+  monthly retraining/stability recommendations, with no real-time data path or
+  external alert delivery.
 - Airflow orchestration is local-only and is not a production deployment.
 - PySpark processing has not been implemented.
 - The FastAPI service is a local/container serving interface, not a deployed

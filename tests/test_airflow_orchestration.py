@@ -108,3 +108,27 @@ def test_dag_source_has_no_provider_or_dataset_access_at_import() -> None:
     assert "requests." not in source
     assert "read_csv(" not in source
     assert "open(" not in source
+    assert "scheduler_lease" in source
+    assert "scheduler_release" in source
+
+
+def test_monthly_dag_is_recommendation_only_and_owner_guarded() -> None:
+    source = (
+        Path(__file__).parents[1]
+        / "airflow"
+        / "dags"
+        / "wind_forecast_monthly_governance_v1.py"
+    ).read_text(encoding="utf-8")
+    compile(source, "wind_forecast_monthly_governance_v1.py", "exec")
+    assert '"0 13 8 * *"' in source
+    assert "max_active_runs=1" in source
+    assert "scheduler_lease" in source
+    assert "scheduler_release" in source
+    assert "run_monthly_governance" in source
+    for prohibited in (
+        "backtest_retraining_candidate",
+        "train_",
+        "register_retraining_candidate",
+        "execute_lifecycle_transition",
+    ):
+        assert prohibited not in source
