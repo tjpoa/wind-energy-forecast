@@ -2,11 +2,11 @@
 
 ## Status
 
-Approved contract. The policy/evidence contracts and manual monthly
-eligibility evaluation are implemented. Training, MLflow/Registry writes,
-deployment mutation, model-era monitoring, promotion, stabilization, rollback,
-and automatic scheduling remain unimplemented until their separately reviewed
-PRs.
+Approved contract. The policy/evidence contracts, manual monthly eligibility
+evaluation, manual temporal backtesting, and v2 candidate Registry action are
+implemented. Deployment mutation, model-era monitoring, promotion,
+stabilization, rollback, and automatic scheduling remain unimplemented until
+their separately reviewed PRs.
 
 The name "Stage 7 — Controlled Retraining" comes from the approved operational
 plan. It does not replace or renumber roadmap Phase 7, which remains GitHub
@@ -99,6 +99,137 @@ This step emits a recommendation only. It does not increment Phase 9
 persistence, train a candidate, write Registry state, promote or stabilize a
 model, mutate deployment state, roll back, call the network, or create a
 scheduler.
+
+## Manual Temporal Backtest
+
+PR 3 implements the separately invoked training and comparison step:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\backtest_retraining_candidate.py `
+  --evaluation-path <exact-evaluation.json> `
+  --monitoring-store-root <phase9-store> `
+  --incumbent-bundle <accepted-v2-bundle> `
+  --incumbent-base-dataset <exact-v2-csv> `
+  --calibration-dir <exact-calibration-directory> `
+  --policy-path .\config\retraining_policy_v1.json `
+  --output-root <operator-selected-backtest-root> `
+  --dry-run
+```
+
+The command accepts only an identity-verified
+`eligible_for_manual_backtest` evaluation. It verifies the evaluation's
+policy, report, report-state, ledger, calibration/reference, model snapshot,
+and evidence IDs and hashes. It reconstructs each observation from the
+immutable `as_issued` input snapshot and the current actual revision, recomputes
+the observation ID and lineage hash, preserves the recorded order and calendar
+gaps, and fails closed on any mismatch.
+
+The incumbent base dataset must match the accepted v2 bundle checksum and exact
+ordered schema. Only historical rows through `incumbent_fit_cutoff` enter the
+first training window. Each later fold adds only observations from earlier
+folds. The candidate recipe is the exact `get_params(deep=True)` mapping stored
+in the incumbent model manifest and is allowlisted to
+`ExtraTreesRegressor` or `RandomForestRegressor`; there is no family or
+hyperparameter search.
+
+Every comparator uses identical observation IDs. Each fold contains exactly 30
+eligible observations and at least three complete folds are required. The
+incomplete tail is excluded from comparison, but an accepted final model is
+refit through `data_snapshot_cutoff`. Candidate aggregate MAE must be strictly
+lower than both the frozen incumbent and `Wind_Production_Lag1`; candidate fold
+MAE must be no worse than either comparator in every fold.
+
+The no-performance-breach gate applies the exact incumbent calibration
+`thresholds.performance["30"]` leaves and the public Phase 9 directional
+threshold semantics to candidate `MAE`, `RMSE`, `MAPE_percent`, `R2`, and
+`absolute_bias` (derived from the absolute value of signed `bias`). A warning
+or critical result for any metric rejects the backtest.
+
+`--dry-run` performs all validation and in-memory modelling but creates no
+output directory. A non-dry run seals exactly one content-addressed result per
+evaluation period:
+
+```text
+<output-root>/<evaluation_period>/<backtest_id>/
+```
+
+The strict root `bundle_manifest.json` has schema
+`wind_forecast.retraining_backtest_bundle.v1`, embeds the
+`wind_forecast.retraining_backtest.v1` record, and contains the SHA-256 of every
+other file. The loader rejects undeclared files, directories, symbolic links,
+unsafe paths, or any file-set difference. Every bundle contains
+`backtest.json`, `predictions.csv`,
+`fold_metrics.json`, `aggregate_metrics.json`, `lineage.json`,
+`safeguards.json`, and `environment.json`. A rejected bundle deliberately has
+no final model. An accepted bundle additionally contains `model.joblib`,
+`model_manifest.json`, `dataset_manifest.json`, `reload_sample.csv`, and the
+complete `training_evidence.csv` used for Registry reload equivalence.
+The record distinguishes the IDs evaluated in complete folds from every
+candidate-snapshot observation ID used by the final refit, including an
+incomplete tail. The final-training identity hashes the base dataset, cutoffs,
+row counts, and all candidate observation IDs; separate hashes pin the exact
+final training table and serialized candidate model.
+Identical reruns are idempotent. Different evidence for an already sealed
+period fails closed.
+
+## Manual v2 Candidate Registration
+
+An accepted sealed bundle can be registered explicitly:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\register_retraining_candidate.py `
+  --backtest-bundle <accepted-backtest-directory> `
+  --run-id <finished-mlflow-run-id> `
+  --registered-model-name <explicit-v2-model-name> `
+  --expect-no-current-candidate `
+  --output-root <operator-selected-receipt-root>
+```
+
+Use `--expected-current-candidate-version <exact-version>` instead when a
+candidate already exists. One of these two optimistic state assertions is
+required. The v2 registered-model name is also required: an empty value and
+the legacy `DEFAULT_REGISTERED_MODEL_NAME` are rejected, and no v2 default is
+invented.
+
+Before mutation, the action validates the complete local accepted bundle,
+clean Git lineage, a `FINISHED` MLflow run pinned to the backtest, the exact
+run-artifact copy of `model.joblib`, logged model URI, ordered numeric input
+signature and numeric output, run identity, estimator class/parameters/features,
+and prediction equivalence over every row in the sealed
+`training_evidence.csv`. It then verifies the expected candidate state, snapshots
+`champion` and `stable`, creates and tags one version, rechecks all three aliases
+before moving only `candidate`, and verifies that `champion` and `stable`
+remain unchanged.
+
+PR 3 does not create or log that MLflow run. Before invoking registration, the
+operator must prepare the run through a separately controlled local MLflow
+logging step. Its parameters must include `logged_model_uri`, `backtest_id`,
+`git_sha`, `git_dirty=false`, and the safe run-relative
+`candidate_model_artifact_path` ending in `model.joblib`. The referenced run
+artifact must be byte-identical to the sealed candidate model, and the logged
+model must carry the required signature.
+
+Tags pin the evaluation/backtest/calibration/reference identities, policy,
+feature and incumbent hashes, temporal cutoffs, aggregate candidate metrics,
+source run, Git commit, candidate-model hash, and final-training dataset and
+identity hashes. A successful action writes one immutable
+content-addressed `wind_forecast.retraining_registration_receipt.v1` beneath
+the operator-selected receipt root. If an alias update or receipt write fails,
+the action restores the prior candidate alias when it can do so safely and
+raises a reconciliation error if compensation itself cannot be trusted. A
+created but unaliased Registry version is retained as audit evidence; this
+action never changes `champion`, `stable`, deployment state, promotion state,
+or batch serving.
+
+MLflow has no compare-and-set alias API. PR 3 therefore serializes cooperating
+local registration CLIs with an atomic exclusive lock at a canonical path
+derived from the operator-supplied receipt output root and registered-model
+name. The lock is acquired before the first alias read and held through the
+receipt and postchecks; contention fails closed. Every PR 3 Registry action for
+one registered model must use this CLI and the same canonical output root.
+This local protocol cannot serialize an unrelated external writer that bypasses
+the CLI, so aliases are also re-read immediately before and after mutation.
+Unsafe compensation emits recovery evidence for manual reconciliation.
 
 ## Temporal Cutoffs
 
@@ -194,7 +325,7 @@ Implementation is split into separately reviewed PRs:
 
 1. contracts and policy (implemented);
 2. monthly evaluation (implemented);
-3. temporal backtesting and v2 Registry;
+3. temporal backtesting and v2 Registry (implemented);
 4. bootstrap and deployment pointer;
 5. model-era monitoring;
 6. promotion, probation, and rollback;
