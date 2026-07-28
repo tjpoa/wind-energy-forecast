@@ -25,6 +25,19 @@ def main() -> None:
     module = _load_dag_module()
     root = Path(tempfile.mkdtemp(prefix="wind-airflow-smoke-"))
     created = {"source": set(), "prediction": set(), "report": set()}
+    deployment_checks: list[str | None] = []
+    model_era_id = "smoke-model-era"
+
+    def deployment(*, expected_model_era_id: str | None = None) -> dict:
+        if expected_model_era_id is not None:
+            assert expected_model_era_id == model_era_id
+        deployment_checks.append(expected_model_era_id)
+        return {
+            "status": "verified",
+            "model_era_id": model_era_id,
+            "deployment_id": "smoke-deployment",
+            "model_version": "1",
+        }
 
     def availability(*, through_date: str) -> dict:
         return {"status": "planned", "through_date": str(through_date)}
@@ -70,10 +83,12 @@ def main() -> None:
         return {"status": "succeeded", "report_path": source_manifest_path}
 
     dag = module.dag
+    dag.get_task("deployment_preflight").python_callable = deployment
     dag.get_task("availability_plan").python_callable = availability
     dag.get_task("dataset_update").python_callable = update
     dag.get_task("predict_reconcile").python_callable = predict
     dag.get_task("drift_publish").python_callable = report
+    dag.get_task("deployment_postcheck").python_callable = deployment
     for task in dag.tasks:
         task.retries = 0
         task.retry_delay = timedelta(0)
@@ -93,6 +108,14 @@ def main() -> None:
         "prediction": expected,
         "report": expected,
     }
+    assert deployment_checks == [
+        None,
+        model_era_id,
+        None,
+        model_era_id,
+        None,
+        model_era_id,
+    ]
 
     # The synthetic boundaries are idempotent: repeating the same selections
     # does not create another immutable source record.
