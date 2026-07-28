@@ -155,7 +155,9 @@ def same_model_era(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
 
 
 def _identifier(kind: str, body: Mapping[str, Any]) -> str:
-    return sha256(kind.encode("utf-8") + b":" + _canonical(body)).hexdigest()
+    return sha256(
+        _canonical({"record_type": kind, "payload": body})
+    ).hexdigest()
 
 
 def _canonical(value: Any) -> bytes:

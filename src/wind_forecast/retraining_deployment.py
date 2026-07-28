@@ -614,7 +614,7 @@ def load_verified_deployment_pointer(
     client: Any | None = None,
     mlflow_module: Any | None = None,
 ) -> dict[str, Any]:
-    """Verify pointer, state, receipt checksums/IDs, and Registry aliases."""
+    """Verify the pointer chain and active Registry deployment aliases."""
     root = Path(deployment_root)
     pointer_path = root / POINTER_RELATIVE_PATH
     try:
@@ -782,7 +782,12 @@ def load_verified_deployment_pointer(
             mlflow.set_tracking_uri(tracking_uri)
         client = mlflow.MlflowClient()
     name = state["registry"]["registered_model_name"]
-    for alias in ALIASES:
+    # ``candidate`` is a staging alias managed independently by candidate
+    # registration. It is never selected by the runtime and may legitimately
+    # differ from the immutable active-deployment state while awaiting a
+    # manual promotion decision. Lifecycle transitions separately compare all
+    # three aliases against their explicit optimistic expectations.
+    for alias in ("champion", "stable"):
         expected = state["expected_aliases"][alias]
         actual = _alias_version(client, name, alias)
         if actual != expected:
