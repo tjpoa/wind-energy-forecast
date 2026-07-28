@@ -521,6 +521,11 @@ Important compatibility choices:
   Git.
 - V2 data-source work uses separate `data/raw/v2/` and `data/processed/v2/`
   paths so the v1 baseline is not overwritten.
+- V2 deployment governance provides manual `promote`, `stabilize`, and
+  `rollback` subcommands in `scripts/manage_v2_deployment.py`. Each requires
+  expected pointer/alias state and checksum-pinned operator approval, emits
+  immutable evidence, and atomically publishes only the V2 pointer. It does
+  not alter the V1 API, promotion command, models, or scalers.
 
 ## Continuous integration
 

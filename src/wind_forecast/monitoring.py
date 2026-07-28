@@ -504,6 +504,8 @@ def list_model_eras(store_root: str | Path) -> list[dict[str, Any]]:
 
 
 def _validate_model_bundle(root: Path) -> dict[str, Any]:
+    if (root / "bundle_manifest.json").is_file():
+        return _validate_retraining_candidate_bundle(root)
     missing = [name for name in _MODEL_FILES if not (root / name).is_file()]
     if missing:
         raise MonitoringError(f"Model bundle is missing required files: {missing}.")
@@ -603,6 +605,81 @@ def _validate_model_bundle(root: Path) -> dict[str, Any]:
     }
 
 
+def _validate_retraining_candidate_bundle(root: Path) -> dict[str, Any]:
+    """Adapt one accepted retraining bundle to the monitoring runtime contract."""
+    from wind_forecast.retraining_backtesting import (
+        RetrainingBacktestError,
+        load_retraining_backtest,
+    )
+
+    try:
+        sealed = load_retraining_backtest(root)
+    except RetrainingBacktestError as exc:
+        raise MonitoringError(str(exc)) from exc
+    backtest = sealed["backtest"]
+    if backtest["outcome"] != "accepted":
+        raise MonitoringError("Monitoring requires an accepted retraining candidate.")
+    model = _read_json(root / "model_manifest.json")
+    dataset = _read_json(root / "dataset_manifest.json")
+    features = list(model.get("feature_names") or [])
+    if not features or model.get("feature_schema_sha256") != _hash_json(features):
+        raise MonitoringError("Retraining candidate feature schema is invalid.")
+    normalized_dataset = {
+        **dataset,
+        "dataset_version": f"retraining-{backtest['backtest_id'][:16]}",
+        "sha256": dataset["final_training_dataset_sha256"],
+        "target": TARGET_COLUMN,
+        "feature_names": features,
+        "transformation_version": TRANSFORMATION_VERSION,
+        "splits": {
+            "train": {"start": backtest["evaluation_period"] + "-01"},
+            "validation": {"end": dataset["candidate_fit_cutoff"]},
+            "row_counts": {"refit_train_validation": dataset["row_count"]},
+        },
+    }
+    normalized_model = {
+        **model,
+        "task": "daily_wind_production_historical_hindcast",
+        "reference_status": "selected_not_promoted",
+        "scaler_required": False,
+        "scaler": None,
+        "dataset_version": normalized_dataset["dataset_version"],
+        "dataset_sha256": normalized_dataset["sha256"],
+    }
+    files = {
+        name: {"sha256": sha256_file(root / name)}
+        for name in (
+            "model.joblib",
+            "model_manifest.json",
+            "dataset_manifest.json",
+            "environment.json",
+            "bundle_manifest.json",
+        )
+    }
+    environment = _read_json(root / "environment.json")
+    git = environment.get("git") or {}
+    environment = {
+        **environment,
+        "git_sha": git.get("git_sha"),
+        "git_dirty": git.get("git_dirty"),
+    }
+    return {
+        "root": root,
+        "files": files,
+        "model_manifest": normalized_model,
+        "dataset_manifest": normalized_dataset,
+        "decision": {
+            "accepted_as_reference": True,
+            "status": "selected_not_promoted",
+            "automatic_promotion": False,
+        },
+        "summary": {"accepted_as_reference": True},
+        "environment": environment,
+        "feature_names": features,
+        "bundle_sha256": sha256_file(root / "bundle_manifest.json"),
+    }
+
+
 def _resolve_activation(config: MonitoringConfig, *, write: bool) -> dict[str, Any]:
     root = config.monitoring_store_root / "activations"
     existing = []
@@ -691,7 +768,7 @@ def _sources_eligible(
 def _persist_model_snapshot(root: Path, bundle: Mapping[str, Any]) -> dict[str, Any]:
     record = _model_snapshot_record(bundle)
     snapshot_root = root / "model_snapshots" / record["model_snapshot_id"]
-    for name in _MODEL_FILES:
+    for name in bundle["files"]:
         destination = snapshot_root / name
         _immutable_copy(bundle["root"] / name, destination)
     _immutable_json(snapshot_root / "snapshot.json", record)

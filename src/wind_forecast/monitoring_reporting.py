@@ -77,10 +77,15 @@ class CalibrationConfig:
     policy_path: Path
     output_root: Path
     backtest_stride_days: int = 7
+    retraining_candidate: Path | None = None
 
     def __post_init__(self) -> None:
         for name in ("dataset_path", "model_bundle", "policy_path", "output_root"):
             object.__setattr__(self, name, Path(getattr(self, name)))
+        if self.retraining_candidate is not None:
+            object.__setattr__(
+                self, "retraining_candidate", Path(self.retraining_candidate)
+            )
         if self.backtest_stride_days < 1:
             raise ValueError("backtest_stride_days must be at least one.")
 
@@ -164,10 +169,61 @@ class MonitoringReportResult:
 def calibrate_monitoring_reference(config: CalibrationConfig) -> CalibrationResult:
     """Build the model-fit reference and resolve thresholds by historical backtest."""
     policy = MonitoringPolicy.load(config.policy_path)
-    bundle = validate_monitoring_model_bundle(config.model_bundle)
-    if sha256_file(config.dataset_path) != bundle["dataset_manifest"]["sha256"]:
-        raise MonitoringReportingError("Reference dataset checksum differs from the model bundle.")
-    frame = pd.read_csv(config.dataset_path)
+    candidate = None
+    if config.retraining_candidate is not None:
+        from wind_forecast.retraining_backtesting import (
+            RetrainingBacktestError,
+            load_retraining_backtest,
+        )
+
+        try:
+            candidate = load_retraining_backtest(config.retraining_candidate)
+        except RetrainingBacktestError as exc:
+            raise MonitoringReportingError(str(exc)) from exc
+        if candidate["backtest"]["outcome"] != "accepted":
+            raise MonitoringReportingError(
+                "Candidate-specific calibration requires an accepted backtest."
+            )
+        candidate_root = Path(config.retraining_candidate)
+        if candidate_root.is_file():
+            candidate_root = candidate_root.parent
+        model_manifest = _read_json(candidate_root / "model_manifest.json")
+        candidate_dataset = _read_json(candidate_root / "dataset_manifest.json")
+        frame = pd.read_csv(candidate_root / "training_evidence.csv").drop(
+            columns=["Expected_Prediction"]
+        )
+        bundle = {
+            "root": candidate_root,
+            "feature_names": list(model_manifest["feature_names"]),
+            "model_manifest": {
+                **model_manifest,
+                "task": "daily_wind_production_historical_hindcast",
+            },
+            "dataset_manifest": {
+                **candidate_dataset,
+                "sha256": candidate_dataset["final_training_dataset_sha256"],
+                "transformation_version": (
+                    candidate["backtest"]["identities"].get(
+                        "transformation_version"
+                    )
+                    or "ren_era5_land_daily_features_v2"
+                ),
+                "splits": {
+                    "train": {"start": str(frame[DATE_COLUMN].iloc[0])},
+                    "validation": {
+                        "end": candidate_dataset["candidate_fit_cutoff"]
+                    },
+                    "row_counts": {
+                        "refit_train_validation": len(frame)
+                    },
+                },
+            },
+        }
+    else:
+        bundle = validate_monitoring_model_bundle(config.model_bundle)
+        if sha256_file(config.dataset_path) != bundle["dataset_manifest"]["sha256"]:
+            raise MonitoringReportingError("Reference dataset checksum differs from the model bundle.")
+        frame = pd.read_csv(config.dataset_path)
     feature_names = list(bundle["feature_names"])
     expected_columns = [DATE_COLUMN, TARGET_COLUMN, *feature_names]
     if frame.columns.tolist() != expected_columns:
@@ -178,11 +234,16 @@ def calibrate_monitoring_reference(config: CalibrationConfig) -> CalibrationResu
     splits = bundle["dataset_manifest"]["splits"]
     expected_start = str(splits["train"]["start"])
     expected_end = str(splits["validation"]["end"])
-    if policy.reference_start != expected_start or policy.reference_end != expected_end:
+    if candidate is None and (
+        policy.reference_start != expected_start
+        or policy.reference_end != expected_end
+    ):
         raise MonitoringReportingError(
             "Monitoring reference boundaries must exactly match train.start and validation.end."
         )
-    mask = dates.between(policy.reference_start, policy.reference_end)
+    reference_start = expected_start if candidate is not None else policy.reference_start
+    reference_end = expected_end if candidate is not None else policy.reference_end
+    mask = dates.between(reference_start, reference_end)
     reference = frame.loc[mask].copy().reset_index(drop=True)
     expected_fit_rows = int(bundle["dataset_manifest"]["splits"]["row_counts"]["refit_train_validation"])
     if len(reference) != expected_fit_rows:
@@ -204,7 +265,7 @@ def calibrate_monitoring_reference(config: CalibrationConfig) -> CalibrationResu
         "model_sha256": bundle["model_manifest"]["model_sha256"],
         "feature_schema_sha256": bundle["model_manifest"]["feature_schema_sha256"],
         "transformation_version": bundle["dataset_manifest"]["transformation_version"],
-        "period": {"start": policy.reference_start, "end": policy.reference_end},
+        "period": {"start": reference_start, "end": reference_end},
         "row_count": len(reference),
         "feature_names": feature_names,
         "target": TARGET_COLUMN,
@@ -212,6 +273,14 @@ def calibrate_monitoring_reference(config: CalibrationConfig) -> CalibrationResu
         "reference_csv_sha256": reference_csv_sha,
         "prediction_role": "in_sample_distribution_reference_only",
         "performance_claim": False,
+        "calibration_subject": (
+            {
+                "kind": "accepted_retraining_candidate",
+                "backtest_id": candidate["backtest_id"],
+            }
+            if candidate is not None
+            else {"kind": "accepted_v2_reference"}
+        ),
     }
     reference_record = _with_id("monitoring_reference", "reference_id", reference_body)
     reference_dir = config.output_root / "references" / reference_record["reference_id"]
@@ -229,14 +298,23 @@ def calibrate_monitoring_reference(config: CalibrationConfig) -> CalibrationResu
         policy,
         stride=config.backtest_stride_days,
     )
-    performance_path = config.model_bundle / "test_predictions.csv"
-    _verify_bundle_artifact(config.model_bundle, performance_path.name)
-    performance_thresholds, performance_summary = _calibrate_performance_thresholds(
-        performance_path,
-        str(bundle["model_manifest"]["model_type"]),
-        policy,
-        mape_epsilon,
-    )
+    if candidate is None:
+        performance_path = config.model_bundle / "test_predictions.csv"
+        _verify_bundle_artifact(config.model_bundle, performance_path.name)
+        performance_thresholds, performance_summary = _calibrate_performance_thresholds(
+            performance_path,
+            str(bundle["model_manifest"]["model_type"]),
+            policy,
+            mape_epsilon,
+        )
+    else:
+        candidate_predictions = Path(bundle["root"]) / "predictions.csv"
+        performance_thresholds, performance_summary = _calibrate_performance_thresholds(
+            candidate_predictions,
+            "candidate",
+            policy,
+            mape_epsilon,
+        )
     thresholds["performance"] = performance_thresholds
     _apply_threshold_overrides(thresholds, policy.overrides)
     backtest_record = {

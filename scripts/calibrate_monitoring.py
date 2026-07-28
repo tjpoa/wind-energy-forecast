@@ -25,7 +25,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "data/processed/v2/ml_features/feature_ready_ren_era5_land_v2/feature_ready_daily.csv"
         ),
     )
-    parser.add_argument("--model-bundle", type=Path, required=True)
+    subject = parser.add_mutually_exclusive_group(required=True)
+    subject.add_argument("--model-bundle", type=Path)
+    subject.add_argument(
+        "--retraining-candidate",
+        type=Path,
+        help="Accepted sealed retraining backtest to calibrate independently.",
+    )
     parser.add_argument(
         "--policy",
         type=Path,
@@ -45,10 +51,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     result = calibrate_monitoring_reference(
         CalibrationConfig(
             dataset_path=args.dataset,
-            model_bundle=args.model_bundle,
+            model_bundle=args.model_bundle or args.retraining_candidate,
             policy_path=args.policy,
             output_root=args.output_root,
             backtest_stride_days=args.backtest_stride_days,
+            retraining_candidate=args.retraining_candidate,
         )
     )
     print(json.dumps(result.summary(), indent=2, sort_keys=True))
