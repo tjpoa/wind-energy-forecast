@@ -26,6 +26,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
     )
     parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument(
+        "--registry-lock-root",
+        type=Path,
+        help=(
+            "Shared local Registry-lock root. Defaults to --output-root for "
+            "backward compatibility."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -42,6 +50,7 @@ def main() -> None:
                 else args.expected_current_candidate_version
             ),
             output_root=args.output_root,
+            registry_lock_root=args.registry_lock_root,
         )
     )
     print(json.dumps(receipt.to_dict(), indent=2, sort_keys=True))

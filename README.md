@@ -355,6 +355,30 @@ alerts plus their causally ordered immutable history.
   --dry-run
 ```
 
+Plan the one-time, manually approved v2 deployment bootstrap without creating
+a lock, Registry version, aliases, or files:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\bootstrap_v2_deployment.py `
+  --model-bundle outputs\training\v2_reference_mlflow `
+  --calibration-dir data\processed\v2\monitoring\reporting\calibrations\<ID> `
+  --monitoring-store-root data\processed\v2\monitoring `
+  --deployment-root data\processed\v2\deployment `
+  --registry-lock-root data\processed\v2\registry-governance `
+  --registered-model-name <explicit-v2-model-name> `
+  --mlflow-tracking-uri http://127.0.0.1:5000 `
+  --expect-no-deployment-pointer `
+  --expect-no-v2-registry-state `
+  --dry-run
+```
+
+The output supplies the exact checksum-pinned approval template. A real
+bootstrap additionally requires its reviewed JSON through `--approval-path`
+and `--approval-sha256`. It initializes only `stable` and `champion`; it never
+sets `candidate`. The repository does not include the required accepted Phase
+9 ledger, so a real invocation currently fails before any mutation. See
+`docs/CONTROLLED_RETRAINING.md` for the full fail-closed and recovery contract.
+
 Plan the complete local historical batch without writes or provider calls:
 
 ```powershell

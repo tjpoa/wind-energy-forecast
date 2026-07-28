@@ -3,10 +3,10 @@
 ## Status
 
 Approved contract. The policy/evidence contracts, manual monthly eligibility
-evaluation, manual temporal backtesting, and v2 candidate Registry action are
-implemented. Deployment mutation, model-era monitoring, promotion,
-stabilization, rollback, and automatic scheduling remain unimplemented until
-their separately reviewed PRs.
+evaluation, manual temporal backtesting, v2 candidate Registry action, and
+one-time deployment bootstrap are implemented. Model-era monitoring,
+promotion, stabilization, rollback, and automatic scheduling remain
+unimplemented until their separately reviewed PRs.
 
 The name "Stage 7 — Controlled Retraining" comes from the approved operational
 plan. It does not replace or renumber roadmap Phase 7, which remains GitHub
@@ -221,12 +221,14 @@ created but unaliased Registry version is retained as audit evidence; this
 action never changes `champion`, `stable`, deployment state, promotion state,
 or batch serving.
 
-MLflow has no compare-and-set alias API. PR 3 therefore serializes cooperating
-local registration CLIs with an atomic exclusive lock at a canonical path
-derived from the operator-supplied receipt output root and registered-model
-name. The lock is acquired before the first alias read and held through the
-receipt and postchecks; contention fails closed. Every PR 3 Registry action for
-one registered model must use this CLI and the same canonical output root.
+MLflow has no compare-and-set alias API. Registry mutations therefore serialize
+cooperating local CLIs with an atomic exclusive lock at a canonical path
+derived from the explicit Registry-lock root and registered-model name.
+Candidate registration retains its receipt output root as the compatible
+default; operators using bootstrap and candidate registration for one model
+must pass the same `--registry-lock-root`. The lock is acquired before the
+first alias read and held through immutable evidence and postchecks; contention
+fails closed.
 This local protocol cannot serialize an unrelated external writer that bypasses
 the CLI, so aliases are also re-read immediately before and after mutation.
 Unsafe compensation emits recovery evidence for manual reconciliation.
@@ -298,12 +300,13 @@ The only mutable deployment file will be `state/current.json`:
 }
 ```
 
-It references an immutable `wind_forecast.deployment_state.v1` manifest.
-Later increments will persist its model version, expected aliases,
-bundle/calibration pins, monitoring era, fit and activation cutoffs, prior
-deployment, and authorizing receipt. Mutations will require the expected
-generation and deployment, write immutable evidence first, update the pointer
-atomically, and fail closed on checksum or alias disagreement.
+It references an immutable `wind_forecast.deployment_state.v1` manifest. The
+generation-one manifest persists its exact Registry version and expected
+aliases, bundle/model/dataset/schema checksums, calibration/reference,
+unchanged Phase 9 ledger and model snapshot, fit and activation cutoffs, null
+predecessor, and checksum-pinned authorizing receipt. The loader rejects
+absolute paths, traversal, symlinks, checksum mismatches, corrupt
+content-addressed IDs, or disagreement with Registry aliases.
 
 ## Bootstrap Exception
 
@@ -319,6 +322,52 @@ state exists. It requires manual approval and an immutable receipt with
 initial model era without rewriting it, and cannot be reused for another
 version. Bootstrap initializes governance; it is not a normal promotion.
 
+PR 4 implements that exception through one manual command. First run a dry
+plan; it performs all local and MLflow reads, creates no lock or output, and
+prints an approval payload template containing the observed checksum pins:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\bootstrap_v2_deployment.py `
+  --model-bundle outputs\training\v2_reference_mlflow `
+  --calibration-dir data\processed\v2\monitoring\reporting\calibrations\<ID> `
+  --monitoring-store-root data\processed\v2\monitoring `
+  --deployment-root data\processed\v2\deployment `
+  --registry-lock-root data\processed\v2\registry-governance `
+  --registered-model-name <explicit-v2-model-name> `
+  --mlflow-tracking-uri http://127.0.0.1:5000 `
+  --expect-no-deployment-pointer `
+  --expect-no-v2-registry-state `
+  --dry-run
+```
+
+An operator replaces only the three descriptive placeholders, stores the exact
+`wind_forecast.bootstrap_approval.v1` JSON outside the deployment output, and
+calculates its SHA-256. Remove `--dry-run` and add `--approval-path` plus
+`--approval-sha256` to execute. Both absence assertions remain mandatory.
+
+Before creating a version, the command verifies the exact accepted bundle file
+set and checksums, no scaler, historical-hindcast and
+`selected_not_promoted` contracts, raw and MLflow reload equivalence, local
+MLflow receipt, `FINISHED` run, tags/parameters and ordered numeric signature,
+calibration/reference, and the complete Phase 9 ledger chain. It rejects any
+existing pointer, registered model, v2 version, or `candidate`, `champion`, or
+`stable` alias.
+
+Under the shared Registry lock, it repeats absence checks, creates and tags one
+version, seals the content-addressed bootstrap receipt and deployment state,
+sets `stable` and then `champion`, confirms `candidate` is absent, and publishes
+`state/current.json` with atomic create-if-absent semantics. Failure before
+pointer publication removes only aliases that still point to the created
+version and preserves the orphan version plus immutable reconciliation
+evidence. Failure after pointer publication never removes the pointer
+automatically.
+
+The repository checkout deliberately does not include
+`data/processed/v2/monitoring/state/current.json`. Therefore the documented
+real invocation currently fails before taking a lock or mutating MLflow. The
+bootstrap must not be attempted until an operator supplies and verifies the
+accepted Phase 9 ledger.
+
 ## Delivery Sequence
 
 Implementation is split into separately reviewed PRs:
@@ -326,7 +375,7 @@ Implementation is split into separately reviewed PRs:
 1. contracts and policy (implemented);
 2. monthly evaluation (implemented);
 3. temporal backtesting and v2 Registry (implemented);
-4. bootstrap and deployment pointer;
+4. bootstrap and deployment pointer (implemented);
 5. model-era monitoring;
 6. promotion, probation, and rollback;
 7. stability and monthly scheduling.

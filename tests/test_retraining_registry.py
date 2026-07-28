@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -194,6 +195,15 @@ def test_registered_model_name_is_required_and_legacy_default_is_rejected(
         _config(tmp_path, name="")
     with pytest.raises(RetrainingRegistryError, match="legacy"):
         _config(tmp_path, name=DEFAULT_REGISTERED_MODEL_NAME)
+
+
+def test_registry_lock_root_cannot_overlap_sealed_bundle(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+
+    with pytest.raises(RetrainingRegistryError, match="lock root"):
+        replace(config, registry_lock_root=config.backtest_bundle)
 
 
 def test_registration_moves_only_candidate_and_writes_immutable_receipt(
