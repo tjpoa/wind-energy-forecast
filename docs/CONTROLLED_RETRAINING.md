@@ -7,7 +7,9 @@ evaluation, manual temporal backtesting, v2 candidate Registry action, and
 one-time deployment bootstrap, model-era monitoring, manual promotion,
 probation, stabilization and rollback, and recommendation-only monthly
 scheduling are implemented and covered by a final synthetic lifecycle
-acceptance. Training and every lifecycle transition remain manual.
+acceptance. The accepted historical bundle has also completed its one-time
+generation-one bootstrap in the governed local environment. Training and every
+subsequent lifecycle transition remain manual.
 
 The name "Stage 7 — Controlled Retraining" comes from the approved operational
 plan. It does not replace or renumber roadmap Phase 7, which remains GitHub
@@ -367,11 +369,39 @@ version and preserves the orphan version plus immutable reconciliation
 evidence. Failure after pointer publication never removes the pointer
 automatically.
 
-The repository checkout deliberately does not include
-`data/processed/v2/monitoring/state/current.json`. Therefore the documented
-real invocation currently fails before taking a lock or mutating MLflow. The
-bootstrap must not be attempted until an operator supplies and verifies the
-accepted Phase 9 ledger.
+The checkout deliberately does not track
+`data/processed/v2/monitoring/state/current.json`, deployment state, Registry
+state, or scheduler ownership. A clone therefore still requires separately
+authorized, checksum-pinned evidence and must pass every bootstrap gate; it
+must not infer operational readiness from the documentation.
+
+### Governed local bootstrap snapshot
+
+At 2026-07-30 00:25 `Europe/Lisbon`, the current machine's ignored operational
+state had passed the documented gates:
+
+- Phase 8 generation 1 manifest SHA-256
+  `ddb7f18098434f29ed3402a752f1edbfa10332a513d1bd880291fe78070181e2`
+  and Phase 9 generation 1 ledger SHA-256
+  `6471f9fd220cecaf5eb2d8a5bc1a2062e8d8160777fd9620b32f8b23be8ba10d`
+  were pinned through 2026-06-27;
+- dataset SHA-256
+  `d0d073748c5d963cba30212e6b0ab666ec2000197b8f61a5c439b4aaf786b2a6`
+  and calibration ID
+  `ff56dd507607a95aea81f76ab6ce694f1fd8eb51a97175f834bdb83c16b2fe58`
+  matched the deployment state;
+- deployment generation 1 loaded as `verified`;
+- `wind-forecast-v2-hindcast` version 1 was `READY`, with `champion=1`,
+  `stable=1`, and no `candidate`;
+- MLflow run `aaedd79348ee404880a4608760cebafd` was `FINISHED`. Its
+  administrative transition to `FINISHED` used the supported MLflow API under
+  explicit operator authorization after the complete bundle, ordered
+  signature, run receipt, reload equivalence, and hashes had been verified.
+
+This records a completed one-time bootstrap, not permission to re-bootstrap.
+The active pointer and Registry state cause the absence assertions above to
+fail closed. V1 models, aliases, API behaviour, and serving paths remain
+outside this deployment.
 
 ## Delivery Sequence
 
@@ -476,6 +506,18 @@ monthly recommendation runners acquire the same environment lease before work.
 Owner mismatch and concurrent execution fail before pipeline mutation. Owner
 changes use generation/owner compare-and-set and are refused while a lease
 exists; abandoned leases require an explicit audited recovery command.
+
+For the governed local environment, the 2026-07-30 00:25 `Europe/Lisbon`
+snapshot recorded owner `windows_task_scheduler`, generation 1. Its daily batch
+and monthly governance tasks were enabled and `Ready`, but had never executed;
+their next starts were 2026-07-30 12:00 and 2026-08-08 13:00. Airflow had
+passed synthetic acceptance but was inactive for that environment.
+
+The evidence horizon was 2026-06-27, so a governance dry-run for 2026-07 could
+not find the required 2026-06-30 report. The monthly Windows task was
+registered with an equivalent Task Scheduler COM fallback because this
+machine's CIM registration path was incompatible. MLflow must remain reachable
+for the deployment/alias checks performed by scheduled work.
 
 ## Final Synthetic Acceptance
 
