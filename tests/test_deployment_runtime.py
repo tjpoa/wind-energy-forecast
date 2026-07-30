@@ -6,8 +6,16 @@ import pytest
 
 import wind_forecast.retraining_deployment as deployment
 from wind_forecast.deployment_runtime import (
+    DeploymentRuntimeConflictError,
     DeploymentRuntimeError,
+    DeploymentRuntimeNotInitializedError,
+    DeploymentRuntimeUnavailableError,
     verify_active_model_era,
+)
+from wind_forecast.retraining_deployment import (
+    RetrainingDeploymentConflictError,
+    RetrainingDeploymentNotInitializedError,
+    RetrainingDeploymentUnavailableError,
 )
 
 
@@ -101,6 +109,44 @@ def test_runtime_snapshot_is_deterministic_and_complete(
     }
 
 
+def test_runtime_metadata_is_opt_in_and_does_not_change_model_era_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        deployment,
+        "load_verified_deployment_pointer",
+        lambda *_args, **_kwargs: _verified(tmp_path),
+    )
+    bundle = _bundle()
+    bundle["model_manifest"]["model_type"] = "RandomForestRegressor"
+    bundle["dataset_manifest"].update(
+        {
+            "dataset_version": "v2",
+            "transformation_version": "transform-v2",
+        }
+    )
+    monkeypatch.setattr(
+        deployment,
+        "load_exact_v2_bundle",
+        lambda *_args, **_kwargs: bundle,
+    )
+
+    regular = verify_active_model_era(tmp_path / "deployment", tmp_path / "bundle")
+    metadata = verify_active_model_era(
+        tmp_path / "deployment",
+        tmp_path / "bundle",
+        include_runtime_metadata=True,
+    )
+
+    assert "_runtime_metadata" not in regular
+    assert metadata["model_era_id"] == regular["model_era_id"]
+    assert metadata["_runtime_metadata"] == {
+        "model_type": "RandomForestRegressor",
+        "dataset_version": "v2",
+        "transformation_version": "transform-v2",
+    }
+
+
 def test_runtime_rejects_explicit_bundle_divergence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -119,3 +165,36 @@ def test_runtime_rejects_explicit_bundle_divergence(
 
     with pytest.raises(DeploymentRuntimeError, match="bundle_sha256"):
         verify_active_model_era(tmp_path / "deployment", tmp_path / "bundle")
+
+
+@pytest.mark.parametrize(
+    ("source_error", "runtime_error"),
+    (
+        (
+            RetrainingDeploymentNotInitializedError("not initialized"),
+            DeploymentRuntimeNotInitializedError,
+        ),
+        (
+            RetrainingDeploymentUnavailableError("unavailable"),
+            DeploymentRuntimeUnavailableError,
+        ),
+        (
+            RetrainingDeploymentConflictError("conflict"),
+            DeploymentRuntimeConflictError,
+        ),
+    ),
+)
+def test_runtime_preserves_deployment_error_classification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source_error: Exception,
+    runtime_error: type[Exception],
+) -> None:
+    monkeypatch.setattr(
+        deployment,
+        "load_verified_deployment_pointer",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(source_error),
+    )
+
+    with pytest.raises(runtime_error):
+        verify_active_model_era(tmp_path / "deployment")

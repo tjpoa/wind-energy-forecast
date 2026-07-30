@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
-import json
 from pathlib import Path
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
@@ -23,6 +22,7 @@ from wind_forecast.monitoring_reporting import (
     load_monitoring_calibration,
     load_monitoring_report,
     load_monitoring_report_state,
+    load_reporting_attempts,
     resolve_report_model_era,
 )
 
@@ -202,125 +202,7 @@ class MonitoringProjectionService:
             ) from exc
 
     def _runs(self) -> list[dict[str, Any]]:
-        self._validate_store_root()
-        root = self.store_root / "reporting" / "runs"
-        if not root.is_dir():
-            return []
-        runs = [self._load_run(path) for path in sorted(root.iterdir()) if path.is_dir()]
-        return sorted(
-            runs,
-            key=lambda item: (
-                str(item.get("attempted_at_utc") or ""),
-                str(item.get("run_id") or ""),
-            ),
-            reverse=True,
-        )
-
-    def _validate_store_root(self) -> None:
-        if self.store_root.exists() and not self.store_root.is_dir():
-            raise MonitoringReportingError(
-                "The configured monitoring store root is not a directory."
-            )
-
-    def _load_run(self, run_dir: Path) -> dict[str, Any]:
-        request = _read_object(run_dir / "request.json")
-        run_id = run_dir.name
-        plan = request.get("plan")
-        if (
-            request.get("schema_version")
-            not in {
-                "wind_forecast.monitoring_report_request.v1",
-                "wind_forecast.monitoring_report_request.v2",
-            }
-            or request.get("run_id") != run_id
-            or not isinstance(plan, dict)
-            or plan.get("status") != "planned"
-        ):
-            raise MonitoringReportingError("Invalid monitoring reporting request.")
-        attempted_at = _required_utc_text(request, "requested_at_utc")
-        through_date = _required_date_text(plan, "through_date")
-        source_run_id = _required_text(plan, "source_run_id")
-        source_status = _required_text(plan, "source_status")
-        calibration_id = _required_text(plan, "calibration_id")
-        result_path = run_dir / "result.json"
-        failure_path = run_dir / "failure.json"
-        if result_path.is_file() and failure_path.is_file():
-            raise MonitoringReportingError("Reporting run has conflicting outcomes.")
-        base = {
-            "run_id": run_id,
-            "attempted_at_utc": attempted_at,
-            "through_date": through_date,
-            "source_pipeline_run_id": source_run_id,
-            "source_pipeline_status": source_status,
-        }
-        if result_path.is_file():
-            result = _read_object(result_path)
-            report_id = str(result.get("report_id") or "")
-            active_alert_count = result.get("active_alert_count")
-            if (
-                result.get("run_id") != run_id
-                or result.get("status") != "succeeded"
-                or not report_id
-                or result.get("plan") != plan
-                or not isinstance(active_alert_count, int)
-                or active_alert_count < 0
-            ):
-                raise MonitoringReportingError("Invalid monitoring reporting result.")
-            report = load_monitoring_report(
-                self.store_root
-                / "reporting"
-                / "reports"
-                / report_id
-                / "report.json"
-            )
-            report_reference = report.get("reference") or {}
-            report_source = report.get("source_batch") or {}
-            if (
-                report.get("run_id") != run_id
-                or report.get("through_date") != through_date
-                or report_source.get("run_id") != source_run_id
-                or report_source.get("status") != source_status
-                or report_reference.get("calibration_id") != calibration_id
-                or len(report.get("active_alerts") or {}) != active_alert_count
-            ):
-                raise MonitoringReportingError(
-                    "Reporting request, result, and report lineage differ."
-                )
-            return {
-                **base,
-                "status": "succeeded",
-                "report_id": report_id,
-                "active_alert_count": active_alert_count,
-                "failure": None,
-            }
-        if failure_path.is_file():
-            failure = _read_object(failure_path)
-            if (
-                failure.get("schema_version")
-                != "wind_forecast.monitoring_report_failure.v1"
-                or failure.get("run_id") != run_id
-            ):
-                raise MonitoringReportingError("Invalid monitoring reporting failure.")
-            failed_at = _required_utc_text(failure, "failed_at_utc")
-            error_type = _required_text(failure, "error_type")
-            return {
-                **base,
-                "status": "failed",
-                "report_id": None,
-                "active_alert_count": 0,
-                "failure": {
-                    "failed_at_utc": failed_at,
-                    "error_type": error_type,
-                    "message": "The reporting attempt failed. Inspect local operator logs.",
-                },
-            }
-        return {
-            **base,
-            "status": "in_progress",
-            "report_id": None,
-            "active_alert_count": 0,
-            "failure": None,
-        }
+        return load_reporting_attempts(self.store_root)
 
     def _project_report(
         self, report: Mapping[str, Any], now: datetime
@@ -651,22 +533,6 @@ def _required_text(payload: Mapping[str, Any], field: str) -> str:
     return value
 
 
-def _required_date_text(payload: Mapping[str, Any], field: str) -> str:
-    value = _required_text(payload, field)
-    date.fromisoformat(value)
-    return value
-
-
-def _required_utc_text(payload: Mapping[str, Any], field: str) -> str:
-    value = _required_text(payload, field)
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        raise MonitoringReportingError(
-            f"Monitoring timestamp is not timezone-aware: {field}."
-        )
-    return value
-
-
 def _aware_utc(value: datetime | None) -> datetime:
     result = value or datetime.now(timezone.utc)
     if result.tzinfo is None:
@@ -676,16 +542,6 @@ def _aware_utc(value: datetime | None) -> datetime:
 
 def _utc_text(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _read_object(path: Path) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise MonitoringReportingError("Invalid monitoring run metadata.") from exc
-    if not isinstance(value, dict):
-        raise MonitoringReportingError("Invalid monitoring run metadata.")
-    return value
 
 
 __all__ = [

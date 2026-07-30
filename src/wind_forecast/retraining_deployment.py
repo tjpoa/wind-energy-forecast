@@ -67,6 +67,18 @@ class RetrainingDeploymentError(RuntimeError):
     """Raised when deployment bootstrap cannot safely proceed."""
 
 
+class RetrainingDeploymentNotInitializedError(RetrainingDeploymentError):
+    """Raised when no active deployment pointer has been initialized."""
+
+
+class RetrainingDeploymentUnavailableError(RetrainingDeploymentError):
+    """Raised when a required external deployment dependency is unavailable."""
+
+
+class RetrainingDeploymentConflictError(RetrainingDeploymentError):
+    """Raised when individually valid active-deployment sources disagree."""
+
+
 class RetrainingDeploymentReconciliationError(RuntimeError):
     """Raised when a post-mutation failure cannot be safely hidden or undone."""
 
@@ -617,6 +629,18 @@ def load_verified_deployment_pointer(
     """Verify the pointer chain and active Registry deployment aliases."""
     root = Path(deployment_root)
     pointer_path = root / POINTER_RELATIVE_PATH
+    if root.is_symlink() or (root.exists() and not root.is_dir()):
+        raise RetrainingDeploymentError(
+            "The deployment root must be a real directory."
+        )
+    if pointer_path.is_symlink():
+        raise RetrainingDeploymentError(
+            "The active deployment pointer must be a regular non-symlink file."
+        )
+    if not pointer_path.exists():
+        raise RetrainingDeploymentNotInitializedError(
+            "No active deployment pointer is initialized."
+        )
     try:
         pointer = ActiveDeploymentPointer.from_dict(_read_json(pointer_path))
     except RetrainingContractError as exc:
@@ -732,7 +756,7 @@ def load_verified_deployment_pointer(
         or state["deployment_id"] != pointer.deployment_id
         or state["generation"] != pointer.generation
     ):
-        raise RetrainingDeploymentError(
+        raise RetrainingDeploymentConflictError(
             "Deployment pointer and immutable state identities differ."
         )
     receipt_ref = state["authorizing_receipt"]
@@ -752,7 +776,7 @@ def load_verified_deployment_pointer(
             or receipt["pins"] != state["pins"]
             or receipt["expected_aliases"] != state["expected_aliases"]
         ):
-            raise RetrainingDeploymentError(
+            raise RetrainingDeploymentConflictError(
                 "Deployment state and authorizing receipt differ."
             )
     else:
@@ -772,15 +796,20 @@ def load_verified_deployment_pointer(
             or receipt["expected_aliases"] != state["expected_aliases"]
             or receipt["artifacts"] != state["artifacts"]
         ):
-            raise RetrainingDeploymentError(
+            raise RetrainingDeploymentConflictError(
                 "Deployment state and transition receipt differ."
             )
     if client is None:
-        mlflow = mlflow_module or _load_mlflow()
-        tracking_uri = state["registry"]["tracking_uri"]
-        if hasattr(mlflow, "set_tracking_uri"):
-            mlflow.set_tracking_uri(tracking_uri)
-        client = mlflow.MlflowClient()
+        try:
+            mlflow = mlflow_module or _load_mlflow()
+            tracking_uri = state["registry"]["tracking_uri"]
+            if hasattr(mlflow, "set_tracking_uri"):
+                mlflow.set_tracking_uri(tracking_uri)
+            client = mlflow.MlflowClient()
+        except Exception as exc:
+            raise RetrainingDeploymentUnavailableError(
+                "The active Registry binding is unavailable."
+            ) from exc
     name = state["registry"]["registered_model_name"]
     # ``candidate`` is a staging alias managed independently by candidate
     # registration. It is never selected by the runtime and may legitimately
@@ -789,9 +818,14 @@ def load_verified_deployment_pointer(
     # three aliases against their explicit optimistic expectations.
     for alias in ("champion", "stable"):
         expected = state["expected_aliases"][alias]
-        actual = _alias_version(client, name, alias)
+        try:
+            actual = _alias_version(client, name, alias)
+        except Exception as exc:
+            raise RetrainingDeploymentUnavailableError(
+                "The active Registry binding is unavailable."
+            ) from exc
         if actual != expected:
-            raise RetrainingDeploymentError(
+            raise RetrainingDeploymentConflictError(
                 f"Registry alias {alias} differs from deployment state."
             )
     return {
@@ -1844,7 +1878,10 @@ __all__ = [
     "DeploymentBootstrapPlan",
     "DeploymentBootstrapResult",
     "RetrainingDeploymentError",
+    "RetrainingDeploymentConflictError",
+    "RetrainingDeploymentNotInitializedError",
     "RetrainingDeploymentReconciliationError",
+    "RetrainingDeploymentUnavailableError",
     "bootstrap_v2_deployment",
     "load_bootstrap_approval",
     "load_bootstrap_receipt",
