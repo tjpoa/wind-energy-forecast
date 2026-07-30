@@ -319,16 +319,32 @@ class OperationalAnswer(StrictModel):
 
     @model_validator(mode="after")
     def validate_answer_integrity(self) -> "OperationalAnswer":
-        failure_states = {
-            AnswerStatus.REFUSED,
-            AnswerStatus.UNAUTHORIZED,
-            AnswerStatus.UNAVAILABLE,
-            AnswerStatus.CORRUPT,
-            AnswerStatus.CONFLICT,
-            AnswerStatus.TIMEOUT,
+        failure_evidence = {
+            AnswerStatus.REFUSED: EvidenceState.UNSUPPORTED,
+            AnswerStatus.UNAUTHORIZED: EvidenceState.UNAUTHORIZED,
+            AnswerStatus.UNAVAILABLE: EvidenceState.UNAVAILABLE,
+            AnswerStatus.CORRUPT: EvidenceState.CORRUPT,
+            AnswerStatus.CONFLICT: EvidenceState.CONFLICT,
+            AnswerStatus.TIMEOUT: EvidenceState.TIMEOUT,
         }
-        if (self.status in failure_states) != (self.failure is not None):
+        if (self.status in failure_evidence) != (self.failure is not None):
             raise ValueError("failure must match terminal failure status")
+        if (
+            self.failure is not None
+            and self.failure.evidence_state != failure_evidence[self.status]
+        ):
+            raise ValueError("failure evidence state must match answer status")
+        if self.status == AnswerStatus.ANSWERED and (
+            not self.facts or not self.evidence or not self.summary
+        ):
+            raise ValueError("answered results require facts, evidence, and summary")
+        if self.status in {AnswerStatus.EMPTY, AnswerStatus.NOT_FOUND} and (
+            self.facts or self.evidence or self.summary is not None
+        ):
+            raise ValueError("absence results contain no facts or evidence")
+        fact_ids = [item.fact_id for item in self.facts]
+        if len(fact_ids) != len(set(fact_ids)):
+            raise ValueError("fact IDs must be unique")
         evidence_ids = [item.evidence_id for item in self.evidence]
         if len(evidence_ids) != len(set(evidence_ids)):
             raise ValueError("evidence IDs must be unique")

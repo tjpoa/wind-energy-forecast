@@ -104,8 +104,11 @@ Selectors are explicit and bounded:
   identifiers are invalid.
 - Date intervals, where accepted for alert history, are inclusive ISO calendar
   dates and must have start less than or equal to end.
-- Reporting-run pagination retains the current default `20` and maximum `100`.
-  Alert pagination retains the current default `50` and maximum `200`.
+- The existing monitoring projection retains reporting-run pagination with
+  default `20` and maximum `100`. The operational query layer exposes no
+  reporting-run listing: `reporting_run` accepts only an exact run or report
+  identifier.
+- Alert pagination retains the current default `50` and maximum `200`.
 - Every query has a finite caller-supplied or service-configured deadline.
 
 Questions outside this table are refused. In particular, the product cannot:
@@ -342,10 +345,12 @@ This contract is additive. It creates no current public API or persisted schema.
 
 ## Explicit Non-goals
 
-This decision does not authorize or implement:
+This implemented increment remains intentionally limited. It does not
+authorize or implement:
 
-- Python or TypeScript code, executable Pydantic schemas, dependencies,
-  configuration, endpoints, frontend changes, tools, prompts, or an LLM;
+- TypeScript code, new dependencies, configuration, endpoints, frontend
+  changes, tools, prompts, or an LLM; the only executable scope is the Python
+  query layer and Pydantic schemas described below;
 - Copilot, MCP, RAG, embeddings, a document corpus, PostgreSQL, `pgvector`, a
   relational projection, observability, staging, cloud, or CI/CD;
 - authentication beyond the accepted trusted-local expectation;
@@ -368,9 +373,13 @@ accepted question kinds.
 The service is a Python library only. It requires an injected trusted-local
 authorization policy and denies by default. Deployment questions additionally
 require an injected Registry client with a declared finite timeout no greater
-than the remaining cooperative deadline. It creates no API route, CLI,
-background worker, cache, telemetry, persisted query record, or alternative
-operational parser.
+than the remaining cooperative deadline.
+`TimeoutAwareMlflowRegistryClient` adapts the existing MLflow REST client to
+GET-only alias reads with per-call request/retry timeouts and zero retries;
+non-REST Registry backends are refused as unavailable because their deadline
+cannot be bounded by this increment. It creates no API route, CLI, background
+worker, cache, telemetry, persisted query record, or alternative operational
+parser.
 
 Reporting-attempt verification now lives in the reporting domain and the
 existing monitoring projection delegates to that public loader without

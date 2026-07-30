@@ -241,8 +241,12 @@ def verified_sources(monkeypatch: pytest.MonkeyPatch) -> None:
         operational,
         "load_monitoring_report_state",
         lambda _root: {
+            "schema_version": "wind_forecast.monitoring_report_state.v2",
             "latest_report_id": REPORT_ID,
             "latest_through_date": "2026-07-29",
+            "active_alerts": {
+                "feature_drift:wind_speed:30:global": ALERT_ID
+            },
         },
     )
     monkeypatch.setattr(operational, "load_monitoring_report", lambda _path: _report())
@@ -339,6 +343,20 @@ def test_closed_allowlist_returns_cited_deterministic_answers(
         and len(citation.sha256) == 64
         for citation in first.evidence
     )
+    if query_kind == "operational_summary":
+        latest = next(
+            fact for fact in first.facts
+            if fact.name == "monitoring.latest_report_id"
+        )
+        source_kinds = {
+            citation.source_kind
+            for citation in first.evidence
+            if citation.evidence_id in latest.evidence_ids
+        }
+        assert source_kinds == {
+            "load_monitoring_report",
+            "load_monitoring_report_state",
+        }
     assert "models:/" not in first.model_dump_json()
 
 
@@ -528,10 +546,19 @@ def test_operational_summary_without_report_is_empty(
     assert not answer.evidence
 
 
-def test_registry_client_requires_finite_timeout_and_budget() -> None:
+def test_registry_client_requires_finite_timeout_and_propagates_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     with pytest.raises(ValueError, match="finite positive timeout"):
         _service(registry_client=object(), registry_timeout_seconds=None)
 
+    observed: list[float] = []
+
+    def verify(*_args, **kwargs):
+        observed.append(kwargs["registry_timeout_seconds"])
+        return _era()
+
+    monkeypatch.setattr(operational, "verify_active_model_era", verify)
     answer = _service(
         registry_client=object(),
         registry_timeout_seconds=60.0,
@@ -539,7 +566,67 @@ def test_registry_client_requires_finite_timeout_and_budget() -> None:
         _query("active_deployment"),
         AuthorizationContext(principal="operator", trusted_local=True),
     )
-    assert answer.status == AnswerStatus.UNAVAILABLE
+    assert answer.status == AnswerStatus.ANSWERED
+    assert observed == [30.0, 30.0]
+
+
+@pytest.mark.parametrize(
+    "query_kind", ("active_deployment", "active_model_metadata")
+)
+def test_deployment_queries_detect_model_era_change(
+    query_kind: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    eras = [_era(), {**_era(), "model_era_id": "f" * 64}]
+    monkeypatch.setattr(
+        operational, "verify_active_model_era", lambda *_a, **_k: eras.pop(0)
+    )
+
+    answer = _service().answer(
+        _query(query_kind),
+        AuthorizationContext(principal="operator", trusted_local=True),
+    )
+
+    assert answer.status == AnswerStatus.CONFLICT
+    assert not answer.facts
+
+
+def test_active_deployment_returns_complete_checksum_pins() -> None:
+    answer = _service().answer(
+        _query("active_deployment"),
+        AuthorizationContext(principal="operator", trusted_local=True),
+    )
+
+    fact = next(
+        item for item in answer.facts
+        if item.name == "deployment.checksum_pins"
+    )
+    assert set(fact.value) == {
+        "pointer_sha256",
+        "state_manifest_sha256",
+        "authorizing_receipt_sha256",
+        "bundle_sha256",
+        "model_sha256",
+        "dataset_sha256",
+        "feature_schema_sha256",
+        "calibration_sha256",
+        "ledger_sha256",
+    }
+    assert fact.evidence_ids
+
+
+def test_operational_summary_rejects_active_alert_disagreement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(operational, "load_active_alerts", lambda _root: {})
+
+    answer = _service().answer(
+        _query("operational_summary"),
+        AuthorizationContext(principal="operator", trusted_local=True),
+    )
+
+    assert answer.status == AnswerStatus.CONFLICT
+    assert not answer.facts
 
 
 def test_report_without_requested_window_is_empty() -> None:
@@ -675,6 +762,52 @@ def test_missing_report_file_is_unavailable_not_uninitialized(
     )
 
     answer = _service().answer(
+        _query("data_quality"),
+        AuthorizationContext(principal="operator", trusted_local=True),
+    )
+
+    assert answer.status == AnswerStatus.UNAVAILABLE
+    assert answer.failure.evidence_state == EvidenceState.UNAVAILABLE
+
+
+def test_broken_latest_report_reference_is_corrupt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        operational,
+        "load_monitoring_report",
+        monitoring_reporting.load_monitoring_report,
+    )
+
+    answer = _service(monitoring_store_root=tmp_path).answer(
+        _query("data_quality"),
+        AuthorizationContext(principal="operator", trusted_local=True),
+    )
+
+    assert answer.status == AnswerStatus.CORRUPT
+    assert answer.failure.evidence_state == EvidenceState.CORRUPT
+
+
+def test_reporting_read_permission_failure_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        operational,
+        "load_monitoring_report",
+        monitoring_reporting.load_monitoring_report,
+    )
+    original_read_text = Path.read_text
+
+    def denied(path: Path, *args, **kwargs):
+        if path.name == "report.json":
+            raise PermissionError("denied")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", denied)
+
+    answer = _service(monitoring_store_root=tmp_path).answer(
         _query("data_quality"),
         AuthorizationContext(principal="operator", trusted_local=True),
     )
@@ -880,6 +1013,64 @@ def test_reporting_query_does_not_modify_verified_store(
                 "identifier": RUN_ID,
             },
         ),
+        AuthorizationContext(principal="operator", trusted_local=True),
+    )
+    after = snapshot()
+
+    assert answer.status == AnswerStatus.ANSWERED
+    assert before == after
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        _query("operational_summary"),
+        _query("active_deployment"),
+        _query("data_quality"),
+        _query("monitoring_performance", window_days=30),
+        _query("monitoring_drift", window_days=30),
+        _query("monitoring_alerts"),
+        _query("active_model_metadata"),
+        _query(
+            "reporting_run",
+            selector={
+                "kind": "exact_id",
+                "id_type": "reporting_run_id",
+                "identifier": RUN_ID,
+            },
+        ),
+    ),
+)
+def test_every_query_kind_preserves_operational_store_bytes_and_metadata(
+    payload: dict,
+    tmp_path: Path,
+) -> None:
+    deployment_root = tmp_path / "deployment"
+    monitoring_root = tmp_path / "monitoring"
+    for root, name in (
+        (deployment_root, "deployment-state.json"),
+        (monitoring_root, "monitoring-state.json"),
+    ):
+        root.mkdir()
+        (root / name).write_text(f"{name}\n", encoding="utf-8")
+
+    def snapshot() -> dict[str, tuple[bytes, int, int]]:
+        return {
+            path.relative_to(tmp_path).as_posix(): (
+                path.read_bytes(),
+                path.stat().st_size,
+                path.stat().st_mtime_ns,
+            )
+            for path in sorted(tmp_path.rglob("*"))
+            if path.is_file()
+        }
+
+    before = snapshot()
+    answer = _service(
+        deployment_root=deployment_root,
+        monitoring_store_root=monitoring_root,
+    ).answer(
+        payload,
         AuthorizationContext(principal="operator", trusted_local=True),
     )
     after = snapshot()

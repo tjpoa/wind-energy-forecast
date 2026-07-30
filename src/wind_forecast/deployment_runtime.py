@@ -37,6 +37,7 @@ def verify_active_model_era(
     client: Any | None = None,
     mlflow_module: Any | None = None,
     include_runtime_metadata: bool = False,
+    registry_timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Verify pointer, aliases and explicit artifacts, then describe one era."""
     from wind_forecast.retraining_deployment import (
@@ -53,6 +54,7 @@ def verify_active_model_era(
             deployment_root,
             client=client,
             mlflow_module=mlflow_module,
+            registry_timeout_seconds=registry_timeout_seconds,
         )
     except RetrainingDeploymentNotInitializedError as exc:
         raise DeploymentRuntimeNotInitializedError(str(exc)) from exc

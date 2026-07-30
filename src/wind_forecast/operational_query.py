@@ -26,6 +26,7 @@ from wind_forecast.monitoring import MonitoringError
 from wind_forecast.monitoring_reporting import (
     MonitoringReportingConflictError,
     MonitoringReportingError,
+    MonitoringReportingUnavailableError,
     load_active_alerts,
     load_alert_history,
     load_monitoring_calibration,
@@ -56,6 +57,10 @@ from wind_forecast.operational_query_models import (
 
 
 TARGET_SCALE = "sum_of_15_minute_MW_observations"
+MAX_PUBLIC_FACTS = 1_000
+MAX_PUBLIC_COLLECTION_ITEMS = 1_000
+MAX_PUBLIC_MAPPING_ITEMS = 256
+MAX_PUBLIC_STRING_LENGTH = 2_048
 AuthorizationPolicy = Callable[[AuthorizationContext, QueryKind], bool]
 
 
@@ -281,7 +286,7 @@ class OperationalQueryService:
                 retryable=True,
                 evidence_state=EvidenceState.UNAVAILABLE,
             )
-        except OSError:
+        except (MonitoringReportingUnavailableError, OSError):
             return self._failure_answer(
                 query_kind=query.query_kind,
                 correlation_id=query.correlation_id,
@@ -334,16 +339,16 @@ class OperationalQueryService:
                 "A timeout-bounded Registry client is required."
             )
         remaining = (query.deadline - self._now()).total_seconds()
-        if self.registry_timeout_seconds > remaining:
-            raise DeploymentRuntimeUnavailableError(
-                "Registry timeout exceeds the remaining query budget."
-            )
+        effective_timeout = min(self.registry_timeout_seconds, remaining)
+        if effective_timeout <= 0:
+            raise _QueryTimeout
         era = verify_active_model_era(
             self.deployment_root,
             self.model_bundle,
             calibration_dir=self.calibration_dir,
             client=self.registry_client,
             include_runtime_metadata=include_runtime_metadata,
+            registry_timeout_seconds=effective_timeout,
         )
         self._check_deadline(query)
         return era
@@ -369,8 +374,27 @@ class OperationalQueryService:
                 or report.get("report_id") != state.get("latest_report_id")
             ):
                 raise _QueryConflict
+            active_before = load_active_alerts(self.monitoring_store_root)
+            self._check_deadline(query)
+            if (
+                active_before != (state.get("active_alerts") or {})
+                or active_before != (report.get("active_alerts") or {})
+            ):
+                raise _QueryConflict
+            state_key, state_citation = _report_state_citation(
+                state, self._now()
+            )
             report_key, report_citation = _report_citation(report)
-            citations.append((report_key, report_citation))
+            active_key, active_citation = _active_alert_citation(
+                active_before, self._now()
+            )
+            citations.extend(
+                [
+                    (state_key, state_citation),
+                    (report_key, report_citation),
+                    (active_key, active_citation),
+                ]
+            )
             through = str(report["through_date"])
             quality = report.get("quality") or {}
             freshness = quality.get("freshness") or {}
@@ -382,7 +406,7 @@ class OperationalQueryService:
                         str(report["report_id"]),
                         "not_applicable",
                         through,
-                        (report_key,),
+                        (state_key, report_key),
                     ),
                     _Fact(
                         "monitoring.freshness",
@@ -406,14 +430,15 @@ class OperationalQueryService:
                     ),
                     _Fact(
                         "monitoring.active_alert_count",
-                        len(report.get("active_alerts") or {}),
+                        len(active_before),
                         "count",
                         through,
-                        (report_key,),
+                        (report_key, active_key),
                     ),
                 ]
             )
             self._assert_latest_report_unchanged(query, report)
+            self._assert_active_alerts_unchanged(query, active_before)
         verified_again = self._verify_era(query)
         if not same_model_era(era, verified_again):
             raise _QueryConflict
@@ -427,6 +452,9 @@ class OperationalQueryService:
     def _active_deployment(self, query: OperationalQuery) -> _Result:
         era = self._verify_era(query)
         facts, citations = self._deployment_facts(era, query, metadata=False)
+        verified_again = self._verify_era(query)
+        if not same_model_era(era, verified_again):
+            raise _QueryConflict
         return _Result(
             AnswerStatus.ANSWERED,
             tuple(facts),
@@ -440,6 +468,9 @@ class OperationalQueryService:
     def _active_model_metadata(self, query: OperationalQuery) -> _Result:
         era = self._verify_era(query, include_runtime_metadata=True)
         facts, citations = self._deployment_facts(era, query, metadata=True)
+        verified_again = self._verify_era(query)
+        if not same_model_era(era, verified_again):
+            raise _QueryConflict
         return _Result(
             AnswerStatus.ANSWERED,
             tuple(facts),
@@ -542,6 +573,34 @@ class OperationalQueryService:
                 "deployment.cutoffs",
                 {str(key): str(value) for key, value in era["cutoffs"].items()},
                 "ISO_date",
+                as_of,
+                (deployment_key,),
+            ),
+            _Fact(
+                "deployment.checksum_pins",
+                {
+                    "pointer_sha256": str(deployment["pointer_sha256"]),
+                    "state_manifest_sha256": str(
+                        deployment["state_manifest_sha256"]
+                    ),
+                    "authorizing_receipt_sha256": str(
+                        deployment["authorizing_receipt_sha256"]
+                    ),
+                    **{
+                        str(key): str(value)
+                        for key, value in era["pins"].items()
+                        if key
+                        in {
+                            "bundle_sha256",
+                            "model_sha256",
+                            "dataset_sha256",
+                            "feature_schema_sha256",
+                            "calibration_sha256",
+                            "ledger_sha256",
+                        }
+                    },
+                },
+                "SHA-256",
                 as_of,
                 (deployment_key,),
             ),
@@ -1212,6 +1271,8 @@ class OperationalQueryService:
             result.facts,
             key=lambda item: (item.name, _canonical_text(item.value)),
         )
+        if len(ordered_facts) > MAX_PUBLIC_FACTS:
+            raise ValueError("Operational answer exceeds the public fact limit.")
         facts = tuple(
             GroundedFact(
                 fact_id=f"f{index}",
@@ -1363,6 +1424,25 @@ def _active_alert_citation(
     )
 
 
+def _report_state_citation(
+    state: Mapping[str, Any], observed_at_utc: datetime
+) -> tuple[str, _Citation]:
+    digest = _digest(state)
+    observed = observed_at_utc.astimezone(timezone.utc)
+    return (
+        f"report-state:{digest}",
+        _Citation(
+            EvidenceDomain.MONITORING_REPORT,
+            "load_monitoring_report_state",
+            str(state["schema_version"]),
+            digest,
+            digest,
+            str(state["latest_through_date"]),
+            observed,
+        ),
+    )
+
+
 def _safe_correlation(value: Any) -> str:
     if (
         isinstance(value, str)
@@ -1375,11 +1455,15 @@ def _safe_correlation(value: Any) -> str:
 
 def _validate_public_value(value: Any) -> None:
     if isinstance(value, Mapping):
+        if len(value) > MAX_PUBLIC_MAPPING_ITEMS:
+            raise ValueError("Operational answer mapping exceeds the public limit.")
         for key, item in value.items():
             _validate_public_value(key)
             _validate_public_value(item)
         return
     if isinstance(value, (list, tuple)):
+        if len(value) > MAX_PUBLIC_COLLECTION_ITEMS:
+            raise ValueError("Operational answer collection exceeds the public limit.")
         for item in value:
             _validate_public_value(item)
         return
@@ -1387,7 +1471,9 @@ def _validate_public_value(value: Any) -> None:
         return
     lowered = value.lower()
     if (
-        "\\" in value
+        len(value) > MAX_PUBLIC_STRING_LENGTH
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+        or "\\" in value
         or value.startswith("/")
         or re.match(r"^[a-zA-Z]:[/\\]", value)
         or "://" in lowered

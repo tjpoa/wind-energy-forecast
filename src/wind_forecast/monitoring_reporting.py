@@ -68,6 +68,10 @@ class MonitoringReportingError(RuntimeError):
     """Raised when reporting evidence is absent, incompatible, or corrupt."""
 
 
+class MonitoringReportingUnavailableError(MonitoringReportingError):
+    """Raised when required reporting evidence cannot be read."""
+
+
 class MonitoringReportingConflictError(MonitoringReportingError):
     """Raised when individually readable reporting records disagree."""
 
@@ -1836,7 +1840,13 @@ def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
 def _read_json(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except FileNotFoundError as exc:
+        raise MonitoringReportingError(f"Invalid JSON artifact: {path}.") from exc
+    except OSError as exc:
+        raise MonitoringReportingUnavailableError(
+            f"JSON artifact is unavailable: {path}."
+        ) from exc
+    except json.JSONDecodeError as exc:
         raise MonitoringReportingError(f"Invalid JSON artifact: {path}.") from exc
     if not isinstance(payload, dict):
         raise MonitoringReportingError(f"JSON artifact must contain an object: {path}.")
@@ -1945,6 +1955,7 @@ __all__ = [
     "MonitoringReportResult",
     "MonitoringReportingConflictError",
     "MonitoringReportingError",
+    "MonitoringReportingUnavailableError",
     "calibrate_monitoring_reference",
     "load_active_alerts",
     "load_alert_history",

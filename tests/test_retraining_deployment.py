@@ -20,6 +20,7 @@ from wind_forecast.retraining_deployment import (
     RetrainingDeploymentNotInitializedError,
     RetrainingDeploymentReconciliationError,
     RetrainingDeploymentUnavailableError,
+    TimeoutAwareMlflowRegistryClient,
     bootstrap_v2_deployment,
     load_bootstrap_approval,
     load_verified_deployment_pointer,
@@ -70,6 +71,8 @@ class Client:
         self.aliases: dict[str, str] = {}
         self.tags: dict[str, str] = {}
         self.register_calls = 0
+        self.alias_timeouts: list[float | None] = []
+        self.registry_mutations = 0
 
     def get_registered_model(self, name: str):
         if not self.model_exists:
@@ -81,7 +84,14 @@ class Client:
             return []
         return [SimpleNamespace(name="wind-v2", version="1")]
 
-    def get_model_version_by_alias(self, name: str, alias: str):
+    def get_model_version_by_alias(
+        self,
+        name: str,
+        alias: str,
+        *,
+        timeout_seconds: float | None = None,
+    ):
+        self.alias_timeouts.append(timeout_seconds)
         if not self.model_exists or alias not in self.aliases:
             raise LookupError(alias)
         return SimpleNamespace(version=self.aliases[alias])
@@ -111,9 +121,11 @@ class Client:
         alias: str,
         version: str,
     ) -> None:
+        self.registry_mutations += 1
         self.aliases[alias] = str(version)
 
     def delete_registered_model_alias(self, name: str, alias: str) -> None:
+        self.registry_mutations += 1
         self.aliases.pop(alias, None)
 
     def get_run(self, run_id: str):
@@ -345,6 +357,85 @@ def test_bootstrap_initializes_only_stable_and_champion_and_verifies_chain(
     )
     assert _input_bytes(config) == inputs_before
     assert "candidate" not in client.aliases
+
+
+def test_pointer_loader_propagates_timeout_without_registry_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_verified_inputs(monkeypatch)
+    client = Client()
+    mlflow = Mlflow(client)
+    dry = _config(tmp_path)
+    plan = bootstrap_v2_deployment(
+        dry,
+        client=client,
+        mlflow_module=mlflow,
+    ).plan
+    approval_path, approval_sha = _approval_for(tmp_path, plan)
+    config = replace(
+        dry,
+        dry_run=False,
+        approval_path=approval_path,
+        approval_sha256=approval_sha,
+    )
+    bootstrap_v2_deployment(config, client=client, mlflow_module=mlflow)
+    mutations_before = client.registry_mutations
+    client.alias_timeouts.clear()
+
+    load_verified_deployment_pointer(
+        config.deployment_root,
+        client=client,
+        registry_timeout_seconds=3.25,
+    )
+
+    assert client.alias_timeouts == [3.25, 3.25]
+    assert client.registry_mutations == mutations_before
+
+
+def test_timeout_adapter_uses_real_mlflow_rest_client_with_get_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mlflow import MlflowClient
+    from mlflow.utils import rest_utils
+
+    calls: list[dict] = []
+
+    def fake_http_request(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            status_code=200,
+            reason="OK",
+            text=json.dumps(
+                {
+                    "model_version": {
+                        "name": "wind-v2",
+                        "version": "11",
+                    }
+                }
+            ),
+        )
+
+    monkeypatch.setattr(rest_utils, "http_request", fake_http_request)
+    client = MlflowClient(
+        tracking_uri="http://mlflow.invalid",
+        registry_uri="http://mlflow.invalid",
+    )
+    adapter = TimeoutAwareMlflowRegistryClient(client)
+
+    version = adapter.get_model_version_by_alias(
+        "wind-v2",
+        "champion",
+        timeout_seconds=2.5,
+    )
+
+    assert version.name == "wind-v2"
+    assert version.version == "11"
+    assert len(calls) == 1
+    assert calls[0]["method"] == "GET"
+    assert calls[0]["timeout"] == 2.5
+    assert calls[0]["retry_timeout_seconds"] == 2.5
+    assert calls[0]["max_retries"] == 0
 
 
 def test_pointer_loader_classifies_registry_conflict_and_unavailability(
