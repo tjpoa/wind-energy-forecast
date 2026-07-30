@@ -531,7 +531,7 @@ automatic model replacement remain out of scope.
 
 ## Operational Extension — Operational Read-only Copilot
 
-Status: planned; not implemented.
+Status: product contract and ADR accepted; implementation not started.
 
 This future extension must consume verified operational evidence through
 read-only contracts. It must not mutate Phase 8/9 stores, MLflow, deployment
@@ -549,7 +549,8 @@ the existing checksum-pinned loaders as the source of truth.
 
 1. Define the product contract and ADR: permitted questions, evidence and
    citation rules, read-only boundary, authentication expectations, failure
-   semantics, and explicit non-goals.
+   semantics, and explicit non-goals. Accepted as the documentation-only
+   [`operational_read_only_copilot_v1`](OPERATIONAL_COPILOT.md) contract.
 2. Build a typed operational query layer over existing verified loaders, with
    deterministic inputs/outputs, explicit errors, timeouts, and synthetic-store
    tests.
@@ -577,3 +578,6 @@ the existing checksum-pinned loaders as the source of truth.
 Each item is an independent, reviewable increment. No item authorizes automatic
 training, lifecycle transitions, external notifications, live forecasting, or
 Airflow activation in an environment owned by Windows Task Scheduler.
+Only item 1 is accepted. The typed query layer, API, evaluation harness,
+relational projection, observability, Copilot, MCP, RAG, and cloud design
+remain unimplemented.
