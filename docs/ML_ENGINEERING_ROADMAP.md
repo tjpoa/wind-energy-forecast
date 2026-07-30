@@ -23,6 +23,7 @@ The existing modelling workflow must remain usable throughout the roadmap. Curre
 | 10 | Batch orchestration with Apache Airflow | Batch workflows are scheduled and observable. |
 | 11 | PySpark data-processing implementation | Scalable feature processing mirrors the pandas pipeline. |
 | 12 | Azure and Databricks deployment design | A cloud deployment architecture is specified. |
+| Operational extension | Operational Read-only Copilot | Planned outcome: grounded operational queries would be exposed through reviewable read-only layers. |
 
 ## Phase 0 — Repository audit, security and baseline
 
@@ -386,9 +387,10 @@ Monitor whether live inputs and predictions remain aligned with the training bas
 
 ## Phase 10 — Batch orchestration with Apache Airflow
 
-Status: Part 1 is implemented. The separate Airflow 3.3.0, PostgreSQL and
-LocalExecutor candidate passes structural and synthetic DAG checks but remains
-open pending the required real-artifact, three-date offline backfill.
+Status: implemented locally. The separate Airflow 3.3.0, PostgreSQL and
+LocalExecutor stack passed structural checks and the required three-date
+real-CLI backfill over generated synthetic evidence. It is not active in the
+governed `local` environment, whose owner is Windows Task Scheduler.
 
 ### Objective
 Schedule and observe the batch data-processing and prediction workflow.
@@ -526,3 +528,52 @@ or rolling back a model.
 The full accepted decision is recorded in
 [`CONTROLLED_RETRAINING.md`](CONTROLLED_RETRAINING.md). The legacy v1 API and
 automatic model replacement remain out of scope.
+
+## Operational Extension — Operational Read-only Copilot
+
+Status: planned; not implemented.
+
+This future extension must consume verified operational evidence through
+read-only contracts. It must not mutate Phase 8/9 stores, MLflow, deployment
+state, scheduler ownership, aliases, models, V1 artifacts, or API-serving
+semantics. Technology choices listed later in the sequence are design targets,
+not current repository capabilities.
+
+### Objective
+
+Allow operators to ask bounded questions about verified deployment,
+monitoring, quality, drift, performance, and model metadata while preserving
+the existing checksum-pinned loaders as the source of truth.
+
+### Delivery sequence
+
+1. Define the product contract and ADR: permitted questions, evidence and
+   citation rules, read-only boundary, authentication expectations, failure
+   semantics, and explicit non-goals.
+2. Build a typed operational query layer over existing verified loaders, with
+   deterministic inputs/outputs, explicit errors, timeouts, and synthetic-store
+   tests.
+3. Expose only that query layer through separately reviewed read-only API
+   endpoints.
+4. Create a versioned evaluation dataset and harness for correctness,
+   groundedness, tool selection, refusal behaviour, and evidence attribution.
+5. Design and implement a relational projection only if query requirements
+   justify it. PostgreSQL would be a derived projection; immutable files remain
+   authoritative.
+6. Add local observability for requests and tool calls, including structured
+   logs, correlation IDs, metrics, tracing, health checks, and secret/data
+   sanitization.
+7. Introduce a Copilot restricted to a small set of deterministic read-only
+   tools and require the evaluation gates before broader use.
+8. Add an MCP adapter over the same service contracts without creating a
+   second business-logic or authorization path.
+9. Add document-only RAG, with a small versioned corpus and optional
+   `pgvector`, only when deterministic operational tools cannot answer the
+   documentary question.
+10. Design staging and cloud deployment separately, including identity,
+    secrets, managed storage, network controls, CI/CD, rollback, and cost
+    boundaries.
+
+Each item is an independent, reviewable increment. No item authorizes automatic
+training, lifecycle transitions, external notifications, live forecasting, or
+Airflow activation in an environment owned by Windows Task Scheduler.

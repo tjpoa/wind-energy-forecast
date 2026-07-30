@@ -38,10 +38,12 @@ orchestration, or registry-based serving.
 - Dockerfile for running the FastAPI app in a non-root container with a health
   check.
 - MLflow runs, artifacts, dataset lineage, and a local SQLite-backed Model
-  Registry with explicit `candidate`/`champion` governance.
+  Registry with explicit `candidate`/`champion`/`stable` governance.
 - Delayed historical-batch monitoring with immutable quality evidence,
   calibrated 30/90-day drift, as-issued performance, and persistent local
   alerts.
+- A checksum-pinned local v2 hindcast deployment operated by Windows Task
+  Scheduler, separate from the legacy v1 API-serving path.
 
 ## Architecture
 
@@ -334,7 +336,7 @@ Promotion is always explicit and optimistic-concurrency checked:
 ```
 
 Calibrate the Phase 9 reference and thresholds from the accepted v2 dataset and
-unpromoted model bundle (no training or network calls):
+historical-hindcast model bundle (no training or network calls):
 
 ```powershell
 .\venv\Scripts\python.exe .\scripts\calibrate_monitoring.py `
@@ -377,9 +379,38 @@ a lock, Registry version, aliases, or files:
 The output supplies the exact checksum-pinned approval template. A real
 bootstrap additionally requires its reviewed JSON through `--approval-path`
 and `--approval-sha256`. It initializes only `stable` and `champion`; it never
-sets `candidate`. The repository does not include the required accepted Phase
-9 ledger, so a real invocation currently fails before any mutation. See
+sets `candidate`. This is a one-time command: do not rerun it in an environment
+that already has a deployment pointer or v2 Registry state. See
 `docs/CONTROLLED_RETRAINING.md` for the full fail-closed and recovery contract.
+
+### Verified local v2 operating snapshot
+
+At 2026-07-30 00:25 `Europe/Lisbon`, the ignored local operational state was
+verified as follows:
+
+- the Phase 8 store and Phase 9 historical ledger are checksum-pinned through
+  2026-06-27;
+- deployment generation 1 is `verified`;
+- MLflow model `wind-forecast-v2-hindcast` version 1 is `READY`, with
+  `champion=1`, `stable=1`, and no `candidate`;
+- run `aaedd79348ee404880a4608760cebafd` is `FINISHED`; its administrative
+  transition to `FINISHED` used the supported MLflow API under explicit
+  operator authorization after the complete bundle, signature, receipt, and
+  reload evidence had been verified;
+- scheduler owner `local` is `windows_task_scheduler`, generation 1;
+- `WindForecastHistoricalBatch` and `WindForecastMonthlyGovernance` are
+  enabled and `Ready`, but had never run at the snapshot time. Their next
+  scheduled starts were 2026-07-30 12:00 and 2026-08-08 13:00 local time.
+
+This snapshot is local evidence, not repository content. Deployment,
+monitoring, scheduler, and MLflow state are ignored by Git and do not accompany
+a clone. The v2 model remains a retrospective hindcast ending on 2026-06-27,
+not a D+1 forecast. The 2026-07 monthly-governance dry-run could not select the
+required 2026-06-30 report because that report is outside the available
+hindcast. The monthly task was registered through an equivalent Windows Task
+Scheduler COM fallback after the script's CIM registration path proved
+incompatible on this machine. The local MLflow service must be reachable for
+deployment verification and scheduled operation.
 
 Plan the complete local historical batch without writes or provider calls:
 
@@ -415,7 +446,9 @@ runtime, including from inside the Airflow container.
 Review `airflow/.env` before starting. Configure exactly one scheduler owner
 per environment with `scripts/manage_scheduler_owner.py`; the Windows runners
 and Airflow DAGs share a fail-closed execution lease and cannot run
-concurrently.
+concurrently. Airflow is implemented and synthetically validated, but it is
+inactive in the governed `local` environment described above. Do not start its
+DAGs while that environment is owned by `windows_task_scheduler`.
 
 Generate recent WeatherAPI feature data:
 
@@ -556,8 +589,9 @@ does not publish or deploy them.
 
 - Full tuned model training is still notebook-based in
   `notebooks/Modeling.ipynb`; the CLI covers a lightweight baseline.
-- The MLflow Registry is local and is not consumed by the FastAPI service;
-  serving continues to use the existing Keras/scaler paths.
+- The MLflow Registry and active v2 deployment are local and are not consumed
+  by the FastAPI service; serving continues to use the existing v1
+  Keras/scaler paths.
 - The first public artifact release remains blocked until source, licence,
   attribution, and redistribution permission are approved in
   `artifacts/catalog.json`.
@@ -581,9 +615,12 @@ does not publish or deploy them.
    clone before claiming cross-machine reproducibility.
 3. Extend the baseline training CLI toward the tuned notebook workflow while
    preserving the existing contracts.
-4. Add interactive prediction only after a reviewed UI/API contract, then
-   progress through orchestration and cloud deployment design as explicit
-   future phases.
+4. Define the planned Operational Read-only Copilot contract and ADR, then
+   build its typed read-only query layer and evaluation harness as separate,
+   reviewable increments; no Copilot, MCP, RAG, relational projection, or cloud
+   implementation exists yet.
+5. Add interactive prediction only after a reviewed UI/API contract, then
+   progress through cloud deployment design as an explicit future phase.
 
 See `docs/DEMO.md` for the full-stack demonstration,
 `docs/README.md` for the documentation index,

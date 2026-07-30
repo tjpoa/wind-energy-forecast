@@ -2,11 +2,11 @@
 
 ## Status
 
-Phase 10 Part 1 implements the approved local-first batch contract. Part 2 has
-an implementation candidate for a separate local Apache Airflow 3.3.0 stack
-after Part 1 was reviewed and merged as PR #19. It remains open until the real
-three-date offline backfill gate passes. Both operating modes call the same
-stable CLIs and remain available for validation.
+Phase 10 Part 1 implements the approved local-first batch contract. Part 2
+implements a separate local Apache Airflow 3.3.0 stack after Part 1 was
+reviewed and merged as PR #19. Its required synthetic three-date real-CLI
+offline backfill gate passed. Both operating modes call the same stable CLIs,
+but only one scheduler may own an environment.
 
 The operating mode remains the Phase 9 delayed historical hindcast. This work
 does not introduce D+1 forecasting, retraining, model promotion, external
@@ -41,6 +41,11 @@ Every real attempt writes an append-only
 `data/processed/v2/orchestration/runs/`. The only mutable coordinator artifact
 is the atomic `state/current.json` pointer. A failed stage blocks all downstream
 stages. Recovery is an identical rerun after correcting the cause.
+
+Deployment verification and batch execution require the tracking URI sealed in
+the active deployment to be reachable. For the governed local environment this
+means keeping the local MLflow service available; do not silently substitute a
+different Registry or tracking backend.
 
 ## Local schedule
 
@@ -92,6 +97,26 @@ It runs on day 8 at 13:00 local time and invokes only
 `run_monthly_governance.py`. Training, backtesting, Registry operations and
 deployment transitions are not scheduled.
 
+### Verified local scheduler snapshot
+
+At 2026-07-30 00:25 `Europe/Lisbon`, the ignored `local` scheduler state was
+verified at generation 1 with owner `windows_task_scheduler`. The tasks
+`WindForecastHistoricalBatch` and `WindForecastMonthlyGovernance` were enabled
+and `Ready`, but neither had run. Their next scheduled starts were
+2026-07-30 12:00 and 2026-08-08 13:00 local time.
+
+The monthly registration script's CIM path was incompatible with this Windows
+installation. The monthly task was therefore registered through the equivalent
+Task Scheduler COM definition and then inspected against the intended action,
+trigger, account, overlap, retry, and execution-limit contract. A future
+re-registration on this machine must either use the same reviewed fallback or
+first correct and validate the CIM incompatibility.
+
+The v2 store currently ends on 2026-06-27. Consequently, the governance
+dry-run for evaluation period 2026-07 could not select the required report
+dated 2026-06-30. This is an expected data-availability warning, not evidence
+that the monthly task has run successfully.
+
 Model, calibration, and deployment paths may alternatively be supplied through
 `WIND_FORECAST_BATCH_MODEL_BUNDLE` and
 `WIND_FORECAST_BATCH_CALIBRATION_DIR`, and
@@ -100,6 +125,11 @@ user's environment, an explicitly selected ignored `.env`, or `.cdsapirc`.
 Persisted evidence records no credential values.
 
 ## Apache Airflow operation
+
+Airflow is implemented and synthetically validated, but it is inactive in the
+governed `local` environment above. Do not start its DAGs while the owner is
+`windows_task_scheduler`. Switching owners is an explicit operational change,
+not a second concurrent schedule.
 
 Copy `airflow/.env.example` to the ignored `airflow/.env` and replace every
 explicit artifact selection and blank local credential/database field. The
@@ -199,6 +229,9 @@ fixtures. Never use this validation command with live REN/CDS access.
 - the local `GET /api/v1/monitoring/latest` projection returned HTTP 200 for
   the resulting immutable evidence.
 
-No live provider refresh is part of this evidence. A real three-day backfill
-remains an explicit local operation; the observations and generated evidence
-are temporary ignored artifacts, not committed demonstration data.
+No live provider refresh is part of this evidence. The accepted three-date
+backfill exercised the real CLIs over a generated synthetic fixture; its
+observations and evidence were temporary ignored artifacts, not committed
+demonstration data. A live-provider backfill remains a separate, explicitly
+authorized operation and is not required to close the synthetic Phase 10
+acceptance gate.
