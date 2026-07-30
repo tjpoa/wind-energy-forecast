@@ -615,10 +615,10 @@ does not publish or deploy them.
    clone before claiming cross-machine reproducibility.
 3. Extend the baseline training CLI toward the tuned notebook workflow while
    preserving the existing contracts.
-4. Implement the accepted Operational Read-only Copilot contract through a
-   typed read-only query layer, then an evaluation harness, as separate,
-   reviewable increments; no query layer, Copilot, MCP, RAG, relational
-   projection, observability, or cloud implementation exists yet.
+4. Expose the implemented typed Operational Read-only query layer only through
+   a separately reviewed read-only API increment, then add the versioned
+   evaluation harness; no Copilot, MCP, RAG, relational projection,
+   observability, production authentication, or cloud implementation exists.
 5. Add interactive prediction only after a reviewed UI/API contract, then
    progress through cloud deployment design as an explicit future phase.
 

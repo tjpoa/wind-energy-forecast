@@ -531,7 +531,8 @@ automatic model replacement remain out of scope.
 
 ## Operational Extension — Operational Read-only Copilot
 
-Status: product contract and ADR accepted; implementation not started.
+Status: product contract, ADR, and typed operational query layer implemented;
+API and later product increments not started.
 
 This future extension must consume verified operational evidence through
 read-only contracts. It must not mutate Phase 8/9 stores, MLflow, deployment
@@ -553,7 +554,9 @@ the existing checksum-pinned loaders as the source of truth.
    [`operational_read_only_copilot_v1`](OPERATIONAL_COPILOT.md) contract.
 2. Build a typed operational query layer over existing verified loaders, with
    deterministic inputs/outputs, explicit errors, timeouts, and synthetic-store
-   tests.
+   tests. Implemented through `wind_forecast.operational_query_models`,
+   `wind_forecast.operational_query`, verified reporting-attempt loaders, and
+   dedicated zero-write acceptance tests.
 3. Expose only that query layer through separately reviewed read-only API
    endpoints.
 4. Create a versioned evaluation dataset and harness for correctness,
@@ -578,6 +581,6 @@ the existing checksum-pinned loaders as the source of truth.
 Each item is an independent, reviewable increment. No item authorizes automatic
 training, lifecycle transitions, external notifications, live forecasting, or
 Airflow activation in an environment owned by Windows Task Scheduler.
-Only item 1 is accepted. The typed query layer, API, evaluation harness,
-relational projection, observability, Copilot, MCP, RAG, and cloud design
-remain unimplemented.
+Items 1 and 2 are implemented. The API, evaluation harness, relational
+projection, observability, Copilot, MCP, RAG, and cloud design remain
+unimplemented and require separate reviewed increments.

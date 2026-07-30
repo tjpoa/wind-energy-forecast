@@ -10,7 +10,7 @@
 | Contract version | `operational_read_only_copilot_v1` |
 | Audience | One authorized operator in a trusted local environment |
 | Operating mode | `retrospective_historical_batch_not_real_time` |
-| Implementation status | Documentation only; no query layer, API, Copilot, tool, MCP, RAG, database, authentication implementation, or deployment exists |
+| Implementation status | Typed read-only Python query layer implemented and locally validated; no API, Copilot, MCP, RAG, database, production authentication, observability, or deployment exists |
 
 ## Objective
 
@@ -25,9 +25,9 @@ system may answer deterministic questions about:
 - checksum-pinned model, dataset, transformation, and calibration metadata;
 - identified monitoring reports and reporting attempts.
 
-This record is the first item in the roadmap delivery sequence. It authorizes
-no implementation. The next increment may build a typed query layer only after
-a separately reviewed plan.
+This record was the first item in the roadmap delivery sequence. The separately
+reviewed second increment implements the typed query layer while preserving
+this contract. It does not authorize an API or any later delivery item.
 
 ## Preserved Behavior
 
@@ -140,7 +140,7 @@ derived projection and never replaces the immutable evidence.
 
 ### Authorized Loader Boundary
 
-The future query layer may compose only verified read interfaces, including:
+The query layer composes only verified read interfaces, including:
 
 - `load_verified_deployment_pointer` and `verify_active_model_era` for the
   active v2 deployment, exact artifacts, calibration, and live aliases;
@@ -149,6 +149,8 @@ The future query layer may compose only verified read interfaces, including:
 - `load_monitoring_report_state`, `load_monitoring_report`,
   `load_monitoring_calibration`, `resolve_report_model_era`,
   `load_active_alerts`, and `load_alert_history` for reporting evidence;
+- `load_reporting_attempt` and `load_reporting_attempts` for verified,
+  sanitized reporting-attempt evidence;
 - the existing sanitized monitoring projection only where its output contract
   fully satisfies the requested product fact.
 
@@ -356,10 +358,37 @@ This decision does not authorize or implement:
   multi-day forecasting;
 - a claim that the project is a production system or that the Copilot exists.
 
+## Typed Query Layer Implementation
+
+`wind_forecast.operational_query_models` publishes the strict, frozen,
+extra-forbid executable schemas. `wind_forecast.operational_query` publishes
+`OperationalQueryService` as the only business-logic entry point for the eight
+accepted question kinds.
+
+The service is a Python library only. It requires an injected trusted-local
+authorization policy and denies by default. Deployment questions additionally
+require an injected Registry client with a declared finite timeout no greater
+than the remaining cooperative deadline. It creates no API route, CLI,
+background worker, cache, telemetry, persisted query record, or alternative
+operational parser.
+
+Reporting-attempt verification now lives in the reporting domain and the
+existing monitoring projection delegates to that public loader without
+changing its API response contract. Deployment verification exposes additive
+read-only error subclasses for uninitialized, unavailable, and conflicting
+evidence while preserving the existing base exceptions.
+
+`tests/test_operational_query.py` uses synthetic evidence and dependency
+doubles to cover the closed allowlist, strict selectors, authorization,
+deadlines, all terminal states, citations, sanitization, alert-state and
+model-era consistency, zero-write snapshots, and import-time side effects.
+Existing deployment, monitoring projection, and API tests remain the
+compatibility boundary.
+
 ## Required Tests For Future Increments
 
-The typed query layer must use synthetic stores and controlled dependency
-doubles. Its acceptance suite must cover:
+The implemented typed query layer uses synthetic stores and controlled
+dependency doubles. Its acceptance suite covers:
 
 - a valid complete deployment/report/alert chain and correctly cited facts;
 - a valid empty store distinct from unavailable or corrupt state;
@@ -398,9 +427,9 @@ evaluation gates are accepted.
 - Historical hindcast, target scale, model-era, and alias semantics are
   preserved.
 - No current API, store, model, scheduler, or artifact contract changes.
-- The roadmap continues to show the query layer, API, evaluation, relational
-  projection, observability, Copilot, MCP, RAG, and cloud as separate future
-  increments.
+- The roadmap shows the query layer as implemented and keeps API, evaluation,
+  relational projection, observability, Copilot, MCP, RAG, and cloud as
+  separate future increments.
 - Repository status does not describe any Copilot implementation as current.
 
 ## Risks And Controls
@@ -415,7 +444,7 @@ evaluation gates are accepted.
 | A future adapter creates another business-logic or authorization path | One query layer is mandatory for API, Copilot, and MCP |
 | A relational projection becomes authoritative | Immutable checksum-pinned files remain the source of truth; projections are rebuildable |
 | A read-only query changes operational state | No write-capable dependencies and explicit zero-write acceptance tests |
-| Product-contract acceptance is mistaken for implementation | Status and roadmap state that only the documentation exists |
+| Query-layer acceptance is mistaken for a Copilot or API | Status and roadmap distinguish the implemented Python layer from every later interface and product increment |
 
 ## Rollback
 
@@ -434,7 +463,7 @@ The remaining delivery sequence is unchanged and each item requires a separate
 reviewed increment:
 
 1. Product contract and ADR: accepted by this record.
-2. Typed operational query layer.
+2. Typed operational query layer: implemented and locally validated.
 3. Separately reviewed read-only API endpoints.
 4. Versioned evaluation dataset and harness.
 5. Relational projection only if requirements justify it.
@@ -448,8 +477,8 @@ No later item may be started implicitly while delivering an earlier one.
 
 ## Stop Gate
 
-This increment stops at an accepted documentation-only product contract and
-ADR. It does not authorize the typed query layer or any later delivery item.
+This increment stops at the typed operational query layer. It does not
+authorize read-only API endpoints or any later delivery item.
 
 Future work must stop and return for review if it needs:
 
