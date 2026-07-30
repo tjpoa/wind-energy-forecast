@@ -340,6 +340,29 @@ def test_latest_ignores_orphan_report_without_current_pointer(
     assert result["latest_attempt"]["status"] == "in_progress"
 
 
+def test_reporting_runs_delegate_to_verified_public_loader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected = [
+        {
+            "run_id": "verified-run",
+            "attempted_at_utc": "2026-07-30T12:00:00Z",
+            "through_date": "2026-07-29",
+            "source_pipeline_run_id": "source-run",
+            "source_pipeline_status": "succeeded",
+            "status": "in_progress",
+            "report_id": None,
+            "active_alert_count": 0,
+            "failure": None,
+        }
+    ]
+    monkeypatch.setattr(
+        projection, "load_reporting_attempts", lambda _root: expected
+    )
+
+    assert MonitoringProjectionService(tmp_path)._runs() == expected
+
+
 def test_freshness_is_unknown_without_verified_source_watermark() -> None:
     report = _report()
     report["quality"] = {"status": "not_available", "issues": []}

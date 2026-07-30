@@ -17,6 +17,18 @@ class DeploymentRuntimeError(RuntimeError):
     """Raised when runtime artifacts do not match the active deployment."""
 
 
+class DeploymentRuntimeNotInitializedError(DeploymentRuntimeError):
+    """Raised when no active deployment pointer exists."""
+
+
+class DeploymentRuntimeUnavailableError(DeploymentRuntimeError):
+    """Raised when a required runtime dependency cannot be checked."""
+
+
+class DeploymentRuntimeConflictError(DeploymentRuntimeError):
+    """Raised when verified runtime sources disagree."""
+
+
 def verify_active_model_era(
     deployment_root: str | Path,
     model_bundle: str | Path | None = None,
@@ -24,10 +36,15 @@ def verify_active_model_era(
     calibration_dir: str | Path | None = None,
     client: Any | None = None,
     mlflow_module: Any | None = None,
+    include_runtime_metadata: bool = False,
+    registry_timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Verify pointer, aliases and explicit artifacts, then describe one era."""
     from wind_forecast.retraining_deployment import (
+        RetrainingDeploymentConflictError,
         RetrainingDeploymentError,
+        RetrainingDeploymentNotInitializedError,
+        RetrainingDeploymentUnavailableError,
         load_exact_v2_bundle,
         load_verified_deployment_pointer,
     )
@@ -37,7 +54,14 @@ def verify_active_model_era(
             deployment_root,
             client=client,
             mlflow_module=mlflow_module,
+            registry_timeout_seconds=registry_timeout_seconds,
         )
+    except RetrainingDeploymentNotInitializedError as exc:
+        raise DeploymentRuntimeNotInitializedError(str(exc)) from exc
+    except RetrainingDeploymentUnavailableError as exc:
+        raise DeploymentRuntimeUnavailableError(str(exc)) from exc
+    except RetrainingDeploymentConflictError as exc:
+        raise DeploymentRuntimeConflictError(str(exc)) from exc
     except RetrainingDeploymentError as exc:
         raise DeploymentRuntimeError(str(exc)) from exc
 
@@ -77,7 +101,7 @@ def verify_active_model_era(
     }
     for name, value in observed.items():
         if pins.get(name) != value:
-            raise DeploymentRuntimeError(
+            raise DeploymentRuntimeConflictError(
                 f"Explicit model bundle {name} differs from active deployment."
             )
 
@@ -100,7 +124,7 @@ def verify_active_model_era(
             raise DeploymentRuntimeError(str(exc)) from exc
         calibration_sha = sha256_file(calibration_path / "calibration.json")
         if pins.get("calibration_sha256") != calibration_sha:
-            raise DeploymentRuntimeError(
+            raise DeploymentRuntimeConflictError(
                 "Explicit monitoring calibration differs from active deployment."
             )
         expected_calibration = state["calibration"]
@@ -110,7 +134,7 @@ def verify_active_model_era(
             or calibration.get("reference_id")
             != expected_calibration["reference_id"]
         ):
-            raise DeploymentRuntimeError(
+            raise DeploymentRuntimeConflictError(
                 "Calibration/reference identities differ from active deployment."
             )
 
@@ -141,7 +165,16 @@ def verify_active_model_era(
         "monitoring": dict(state["monitoring"]),
     }
     era_id = _identifier("monitoring_model_era", body)
-    return {"model_era_id": era_id, **body}
+    result = {"model_era_id": era_id, **body}
+    if include_runtime_metadata:
+        result["_runtime_metadata"] = {
+            "model_type": str(bundle["model_manifest"].get("model_type") or ""),
+            "dataset_version": str(bundle["dataset_manifest"]["dataset_version"]),
+            "transformation_version": str(
+                bundle["dataset_manifest"]["transformation_version"]
+            ),
+        }
+    return result
 
 
 def same_model_era(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
@@ -172,6 +205,9 @@ def _canonical(value: Any) -> bytes:
 
 __all__ = [
     "DeploymentRuntimeError",
+    "DeploymentRuntimeConflictError",
+    "DeploymentRuntimeNotInitializedError",
+    "DeploymentRuntimeUnavailableError",
     "MODEL_ERA_SCHEMA",
     "same_model_era",
     "verify_active_model_era",

@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -67,8 +68,79 @@ class RetrainingDeploymentError(RuntimeError):
     """Raised when deployment bootstrap cannot safely proceed."""
 
 
+class RetrainingDeploymentNotInitializedError(RetrainingDeploymentError):
+    """Raised when no active deployment pointer has been initialized."""
+
+
+class RetrainingDeploymentUnavailableError(RetrainingDeploymentError):
+    """Raised when a required external deployment dependency is unavailable."""
+
+
+class RetrainingDeploymentConflictError(RetrainingDeploymentError):
+    """Raised when individually valid active-deployment sources disagree."""
+
+
 class RetrainingDeploymentReconciliationError(RuntimeError):
     """Raised when a post-mutation failure cannot be safely hidden or undone."""
+
+
+@dataclass(frozen=True)
+class TimeoutAwareMlflowRegistryClient:
+    """Read-only adapter that gives MLflow REST alias reads a finite timeout."""
+
+    client: Any
+
+    def get_model_version_by_alias(
+        self,
+        name: str,
+        alias: str,
+        *,
+        timeout_seconds: float,
+    ) -> Any:
+        if (
+            not isinstance(timeout_seconds, (int, float))
+            or not math.isfinite(timeout_seconds)
+            or timeout_seconds <= 0
+        ):
+            raise ValueError("timeout_seconds must be finite and positive")
+        from mlflow.entities.model_registry import ModelVersion
+        from mlflow.protos.model_registry_pb2 import GetModelVersionByAlias
+        from mlflow.store.model_registry.rest_store import RestStore
+        from mlflow.utils.proto_json_utils import message_to_json, parse_dict
+        from mlflow.utils.rest_utils import (
+            http_request,
+            verify_rest_response,
+        )
+
+        registry = self.client._get_registry_client()
+        store = registry.store
+        if not isinstance(store, RestStore):
+            raise RetrainingDeploymentUnavailableError(
+                "The Registry backend does not support bounded REST reads."
+            )
+        request_body = message_to_json(
+            GetModelVersionByAlias(name=name, alias=alias)
+        )
+        endpoint, method = store._get_endpoint_from_method(
+            GetModelVersionByAlias
+        )
+        if method != "GET":
+            raise RetrainingDeploymentUnavailableError(
+                "The Registry alias read is not a GET operation."
+            )
+        response = http_request(
+            host_creds=store.get_host_creds(),
+            endpoint=endpoint,
+            method=method,
+            params=json.loads(request_body),
+            timeout=float(timeout_seconds),
+            retry_timeout_seconds=float(timeout_seconds),
+            max_retries=0,
+        )
+        verify_rest_response(response, endpoint)
+        response_proto = GetModelVersionByAlias.Response()
+        parse_dict(json.loads(response.text), response_proto)
+        return ModelVersion.from_proto(response_proto.model_version)
 
 
 class _PointerPublishedCleanupError(RuntimeError):
@@ -613,10 +685,23 @@ def load_verified_deployment_pointer(
     *,
     client: Any | None = None,
     mlflow_module: Any | None = None,
+    registry_timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Verify the pointer chain and active Registry deployment aliases."""
     root = Path(deployment_root)
     pointer_path = root / POINTER_RELATIVE_PATH
+    if root.is_symlink() or (root.exists() and not root.is_dir()):
+        raise RetrainingDeploymentError(
+            "The deployment root must be a real directory."
+        )
+    if pointer_path.is_symlink():
+        raise RetrainingDeploymentError(
+            "The active deployment pointer must be a regular non-symlink file."
+        )
+    if not pointer_path.exists():
+        raise RetrainingDeploymentNotInitializedError(
+            "No active deployment pointer is initialized."
+        )
     try:
         pointer = ActiveDeploymentPointer.from_dict(_read_json(pointer_path))
     except RetrainingContractError as exc:
@@ -732,7 +817,7 @@ def load_verified_deployment_pointer(
         or state["deployment_id"] != pointer.deployment_id
         or state["generation"] != pointer.generation
     ):
-        raise RetrainingDeploymentError(
+        raise RetrainingDeploymentConflictError(
             "Deployment pointer and immutable state identities differ."
         )
     receipt_ref = state["authorizing_receipt"]
@@ -752,7 +837,7 @@ def load_verified_deployment_pointer(
             or receipt["pins"] != state["pins"]
             or receipt["expected_aliases"] != state["expected_aliases"]
         ):
-            raise RetrainingDeploymentError(
+            raise RetrainingDeploymentConflictError(
                 "Deployment state and authorizing receipt differ."
             )
     else:
@@ -772,15 +857,20 @@ def load_verified_deployment_pointer(
             or receipt["expected_aliases"] != state["expected_aliases"]
             or receipt["artifacts"] != state["artifacts"]
         ):
-            raise RetrainingDeploymentError(
+            raise RetrainingDeploymentConflictError(
                 "Deployment state and transition receipt differ."
             )
     if client is None:
-        mlflow = mlflow_module or _load_mlflow()
-        tracking_uri = state["registry"]["tracking_uri"]
-        if hasattr(mlflow, "set_tracking_uri"):
-            mlflow.set_tracking_uri(tracking_uri)
-        client = mlflow.MlflowClient()
+        try:
+            mlflow = mlflow_module or _load_mlflow()
+            tracking_uri = state["registry"]["tracking_uri"]
+            if hasattr(mlflow, "set_tracking_uri"):
+                mlflow.set_tracking_uri(tracking_uri)
+            client = mlflow.MlflowClient()
+        except Exception as exc:
+            raise RetrainingDeploymentUnavailableError(
+                "The active Registry binding is unavailable."
+            ) from exc
     name = state["registry"]["registered_model_name"]
     # ``candidate`` is a staging alias managed independently by candidate
     # registration. It is never selected by the runtime and may legitimately
@@ -789,9 +879,19 @@ def load_verified_deployment_pointer(
     # three aliases against their explicit optimistic expectations.
     for alias in ("champion", "stable"):
         expected = state["expected_aliases"][alias]
-        actual = _alias_version(client, name, alias)
+        try:
+            actual = _alias_version(
+                client,
+                name,
+                alias,
+                timeout_seconds=registry_timeout_seconds,
+            )
+        except Exception as exc:
+            raise RetrainingDeploymentUnavailableError(
+                "The active Registry binding is unavailable."
+            ) from exc
         if actual != expected:
-            raise RetrainingDeploymentError(
+            raise RetrainingDeploymentConflictError(
                 f"Registry alias {alias} differs from deployment state."
             )
     return {
@@ -1126,9 +1226,22 @@ def _search_model_versions(client: Any) -> list[Any]:
         raise
 
 
-def _alias_version(client: Any, name: str, alias: str) -> str | None:
+def _alias_version(
+    client: Any,
+    name: str,
+    alias: str,
+    *,
+    timeout_seconds: float | None = None,
+) -> str | None:
     try:
-        value = client.get_model_version_by_alias(name, alias)
+        if timeout_seconds is None:
+            value = client.get_model_version_by_alias(name, alias)
+        else:
+            value = client.get_model_version_by_alias(
+                name,
+                alias,
+                timeout_seconds=timeout_seconds,
+            )
     except Exception as exc:
         if _is_missing_resource(exc):
             return None
@@ -1844,7 +1957,11 @@ __all__ = [
     "DeploymentBootstrapPlan",
     "DeploymentBootstrapResult",
     "RetrainingDeploymentError",
+    "RetrainingDeploymentConflictError",
+    "RetrainingDeploymentNotInitializedError",
     "RetrainingDeploymentReconciliationError",
+    "RetrainingDeploymentUnavailableError",
+    "TimeoutAwareMlflowRegistryClient",
     "bootstrap_v2_deployment",
     "load_bootstrap_approval",
     "load_bootstrap_receipt",

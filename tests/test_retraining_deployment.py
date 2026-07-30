@@ -15,8 +15,12 @@ import wind_forecast.retraining_deployment as deployment
 from wind_forecast.manifests import sha256_file
 from wind_forecast.retraining_deployment import (
     DeploymentBootstrapConfig,
+    RetrainingDeploymentConflictError,
     RetrainingDeploymentError,
+    RetrainingDeploymentNotInitializedError,
     RetrainingDeploymentReconciliationError,
+    RetrainingDeploymentUnavailableError,
+    TimeoutAwareMlflowRegistryClient,
     bootstrap_v2_deployment,
     load_bootstrap_approval,
     load_verified_deployment_pointer,
@@ -27,12 +31,48 @@ SHA = "a" * 64
 NOW = datetime(2026, 7, 28, 12, 0, tzinfo=timezone.utc)
 
 
+def test_pointer_loader_classifies_uninitialized_store(tmp_path: Path) -> None:
+    with pytest.raises(RetrainingDeploymentNotInitializedError):
+        load_verified_deployment_pointer(tmp_path / "missing", client=Client())
+
+
+def test_pointer_loader_does_not_classify_invalid_root_as_uninitialized(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "deployment"
+    root.write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(RetrainingDeploymentError) as captured:
+        load_verified_deployment_pointer(root, client=Client())
+
+    assert not isinstance(captured.value, RetrainingDeploymentNotInitializedError)
+
+
+def test_pointer_loader_does_not_classify_broken_symlink_as_uninitialized(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "deployment"
+    pointer = root / "state" / "current.json"
+    pointer.parent.mkdir(parents=True)
+    try:
+        pointer.symlink_to(root / "missing-pointer.json")
+    except OSError:
+        pytest.skip("Symlink creation is unavailable on this platform.")
+
+    with pytest.raises(RetrainingDeploymentError) as captured:
+        load_verified_deployment_pointer(root, client=Client())
+
+    assert not isinstance(captured.value, RetrainingDeploymentNotInitializedError)
+
+
 class Client:
     def __init__(self) -> None:
         self.model_exists = False
         self.aliases: dict[str, str] = {}
         self.tags: dict[str, str] = {}
         self.register_calls = 0
+        self.alias_timeouts: list[float | None] = []
+        self.registry_mutations = 0
 
     def get_registered_model(self, name: str):
         if not self.model_exists:
@@ -44,7 +84,14 @@ class Client:
             return []
         return [SimpleNamespace(name="wind-v2", version="1")]
 
-    def get_model_version_by_alias(self, name: str, alias: str):
+    def get_model_version_by_alias(
+        self,
+        name: str,
+        alias: str,
+        *,
+        timeout_seconds: float | None = None,
+    ):
+        self.alias_timeouts.append(timeout_seconds)
         if not self.model_exists or alias not in self.aliases:
             raise LookupError(alias)
         return SimpleNamespace(version=self.aliases[alias])
@@ -74,9 +121,11 @@ class Client:
         alias: str,
         version: str,
     ) -> None:
+        self.registry_mutations += 1
         self.aliases[alias] = str(version)
 
     def delete_registered_model_alias(self, name: str, alias: str) -> None:
+        self.registry_mutations += 1
         self.aliases.pop(alias, None)
 
     def get_run(self, run_id: str):
@@ -308,6 +357,126 @@ def test_bootstrap_initializes_only_stable_and_champion_and_verifies_chain(
     )
     assert _input_bytes(config) == inputs_before
     assert "candidate" not in client.aliases
+
+
+def test_pointer_loader_propagates_timeout_without_registry_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_verified_inputs(monkeypatch)
+    client = Client()
+    mlflow = Mlflow(client)
+    dry = _config(tmp_path)
+    plan = bootstrap_v2_deployment(
+        dry,
+        client=client,
+        mlflow_module=mlflow,
+    ).plan
+    approval_path, approval_sha = _approval_for(tmp_path, plan)
+    config = replace(
+        dry,
+        dry_run=False,
+        approval_path=approval_path,
+        approval_sha256=approval_sha,
+    )
+    bootstrap_v2_deployment(config, client=client, mlflow_module=mlflow)
+    mutations_before = client.registry_mutations
+    client.alias_timeouts.clear()
+
+    load_verified_deployment_pointer(
+        config.deployment_root,
+        client=client,
+        registry_timeout_seconds=3.25,
+    )
+
+    assert client.alias_timeouts == [3.25, 3.25]
+    assert client.registry_mutations == mutations_before
+
+
+def test_timeout_adapter_uses_real_mlflow_rest_client_with_get_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mlflow import MlflowClient
+    from mlflow.utils import rest_utils
+
+    calls: list[dict] = []
+
+    def fake_http_request(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            status_code=200,
+            reason="OK",
+            text=json.dumps(
+                {
+                    "model_version": {
+                        "name": "wind-v2",
+                        "version": "11",
+                    }
+                }
+            ),
+        )
+
+    monkeypatch.setattr(rest_utils, "http_request", fake_http_request)
+    client = MlflowClient(
+        tracking_uri="http://mlflow.invalid",
+        registry_uri="http://mlflow.invalid",
+    )
+    adapter = TimeoutAwareMlflowRegistryClient(client)
+
+    version = adapter.get_model_version_by_alias(
+        "wind-v2",
+        "champion",
+        timeout_seconds=2.5,
+    )
+
+    assert version.name == "wind-v2"
+    assert version.version == "11"
+    assert len(calls) == 1
+    assert calls[0]["method"] == "GET"
+    assert calls[0]["timeout"] == 2.5
+    assert calls[0]["retry_timeout_seconds"] == 2.5
+    assert calls[0]["max_retries"] == 0
+
+
+def test_pointer_loader_classifies_registry_conflict_and_unavailability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_verified_inputs(monkeypatch)
+
+    class FlakyClient(Client):
+        unavailable = False
+
+        def get_model_version_by_alias(self, name: str, alias: str):
+            if self.unavailable:
+                raise ConnectionError("registry unavailable")
+            return super().get_model_version_by_alias(name, alias)
+
+    client = FlakyClient()
+    mlflow = Mlflow(client)
+    dry = _config(tmp_path)
+    plan = bootstrap_v2_deployment(
+        dry,
+        client=client,
+        mlflow_module=mlflow,
+    ).plan
+    approval_path, approval_sha = _approval_for(tmp_path, plan)
+    config = replace(
+        dry,
+        dry_run=False,
+        approval_path=approval_path,
+        approval_sha256=approval_sha,
+    )
+    bootstrap_v2_deployment(config, client=client, mlflow_module=mlflow)
+
+    client.aliases["champion"] = "99"
+    with pytest.raises(RetrainingDeploymentConflictError):
+        load_verified_deployment_pointer(config.deployment_root, client=client)
+
+    client.aliases["champion"] = "1"
+    client.unavailable = True
+    with pytest.raises(RetrainingDeploymentUnavailableError):
+        load_verified_deployment_pointer(config.deployment_root, client=client)
 
 
 def test_existing_pointer_fails_before_registry_mutation(

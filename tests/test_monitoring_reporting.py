@@ -20,6 +20,8 @@ from wind_forecast.monitoring_reporting import (
     load_active_alerts,
     load_monitoring_calibration,
     load_monitoring_report,
+    load_reporting_attempt,
+    load_reporting_attempts,
     plan_monitoring_report,
     run_monitoring_report,
 )
@@ -389,6 +391,51 @@ def test_quality_only_report_is_immutable_and_opens_immediate_alert(tmp_path, mo
     alert_path.write_text("{}", encoding="utf-8")
     with pytest.raises(reporting.MonitoringReportingError, match="content-addressed"):
         load_alert_history(store)
+
+
+def test_reporting_attempt_loader_is_verified_ordered_and_sanitized(
+    tmp_path: Path,
+) -> None:
+    runs_root = tmp_path / "reporting" / "runs"
+    run_id = "20260730T120000000000Z-abcdef123456"
+    run_root = runs_root / run_id
+    run_root.mkdir(parents=True)
+    request = {
+        "schema_version": "wind_forecast.monitoring_report_request.v2",
+        "run_id": run_id,
+        "requested_at_utc": "2026-07-30T12:00:00Z",
+        "plan": {
+            "status": "planned",
+            "through_date": "2026-07-29",
+            "source_run_id": "source-run",
+            "source_status": "failed",
+            "calibration_id": "calibration-id",
+        },
+    }
+    (run_root / "request.json").write_text(json.dumps(request), encoding="utf-8")
+    (run_root / "failure.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "wind_forecast.monitoring_report_failure.v1",
+                "run_id": run_id,
+                "failed_at_utc": "2026-07-30T12:01:00Z",
+                "error_type": "PrivateFailure",
+                "error": "C:\\private\\secret.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    attempts = load_reporting_attempts(tmp_path)
+    exact = load_reporting_attempt(tmp_path, reporting_run_id=run_id)
+
+    assert attempts == [exact]
+    assert exact["status"] == "failed"
+    assert exact["failure"]["error_type"] == "PrivateFailure"
+    assert exact["failure"]["message"] == (
+        "The reporting attempt failed. Inspect local operator logs."
+    )
+    assert "secret.json" not in json.dumps(exact).lower()
 
 
 def test_statistical_alert_requires_three_distinct_report_dates() -> None:
