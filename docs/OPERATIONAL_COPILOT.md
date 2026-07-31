@@ -10,7 +10,7 @@
 | Contract version | `operational_read_only_copilot_v1` |
 | Audience | One authorized operator in a trusted local environment |
 | Operating mode | `retrospective_historical_batch_not_real_time` |
-| Implementation status | Typed read-only Python query layer, local-only HTTP adapter, and versioned offline evaluation dataset/harness implemented and locally validated; no Copilot or candidate has been evaluated, and no MCP, RAG, database, production authentication, observability, or deployment exists |
+| Implementation status | Typed read-only Python query layer, local-only HTTP adapter, and versioned offline evaluation dataset/harness implemented and locally validated; the separate PostgreSQL projection contract is accepted, but no database, schema, migrations, projector, benchmark, or query integration exists; no Copilot or candidate has been evaluated, and no MCP, RAG, production authentication, observability, or deployment exists |
 
 ## Objective
 
@@ -138,9 +138,12 @@ MCP adapter may translate requests to that layer and render its result, but may
 not read operational stores directly, weaken validation, implement a separate
 authorization path, or add business logic.
 
-Immutable local files remain authoritative. A future relational store, if
-approved because measured query requirements justify it, is a rebuildable
-derived projection and never replaces the immutable evidence.
+Immutable local files remain authoritative. The separately accepted
+[`operational_postgres_projection_v1`](OPERATIONAL_POSTGRES_PROJECTION.md)
+contract defines a rebuildable derived PostgreSQL projection and a measured
+readiness gate. Its schema, migrations, projector, benchmark, and query
+integration remain unimplemented; the contract never replaces immutable
+evidence.
 
 ### Authorized Loader Boundary
 
@@ -351,8 +354,10 @@ authorize or implement:
 
 - TypeScript code, new dependencies, frontend changes, additional endpoints,
   tools, prompts, or an LLM;
-- Copilot, MCP, RAG, embeddings, a document corpus, PostgreSQL, `pgvector`, a
-  relational projection, observability, staging, cloud, or CI/CD;
+- Copilot, MCP, RAG, embeddings, a document corpus, `pgvector`, observability,
+  staging, cloud, or CI/CD; the separate PostgreSQL projection contract is
+  accepted, but this increment does not authorize or implement its schema,
+  migrations, projector, benchmark, or query integration;
 - authentication beyond the accepted trusted-local expectation;
 - data/model/scaler changes, artifact generation, notebook execution,
   ingestion, provider calls, training, retraining, lifecycle transitions,
@@ -540,8 +545,9 @@ schema-valid response set and passes these evaluation gates.
   preserved.
 - No current API, store, model, scheduler, or artifact contract changes.
 - The roadmap shows the query layer, local-only API, and offline evaluation
-  harness as implemented and keeps relational projection, observability,
-  Copilot, MCP, RAG, and cloud as separate future increments.
+  harness as implemented, the relational-projection contract as separately
+  accepted with runtime work pending, and observability, Copilot, MCP, RAG,
+  and cloud as separate future increments.
 - Repository status does not describe any Copilot implementation as current.
 
 ## Risks And Controls
@@ -581,7 +587,9 @@ reviewed increment:
    validated.
 4. Versioned evaluation dataset and harness: implemented and locally
    validated; no Copilot candidate evaluated.
-5. Relational projection only if requirements justify it.
+5. PostgreSQL operational projection contract: separately accepted; dedicated
+   foundation/migrations, projector, benchmark, and optional query integration
+   remain four separately reviewed and authorization-gated plans.
 6. Local observability with sanitization.
 7. Copilot restricted to accepted deterministic tools.
 8. MCP adapter over the same contracts.
@@ -593,8 +601,11 @@ No later item may be started implicitly while delivering an earlier one.
 ## Stop Gate
 
 This increment stops at the versioned offline evaluation dataset and harness.
-It does not authorize a relational projection, observability, Copilot, MCP,
-RAG, staging, cloud work, or any other later delivery item.
+It does not authorize implementation of the separately contracted PostgreSQL
+projection, observability, Copilot, MCP, RAG, staging, cloud work, or any other
+later delivery item. PostgreSQL implementation authority comes only from the
+separate plan sequence in
+[`operational_postgres_projection_v1`](OPERATIONAL_POSTGRES_PROJECTION.md).
 
 Future work must stop and return for review if it needs:
 
