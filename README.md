@@ -28,7 +28,7 @@ orchestration, or registry-based serving.
 - Backward-compatible batch scripts for API data processing and saved-model
   inference.
 - FastAPI service for health checks, historical evaluation results, model
-  artifact inspection, and prediction.
+  artifact inspection, prediction, and bounded local-only operational queries.
 - Responsive React and TypeScript dashboard for historical forecast performance.
 - Pytest coverage for schemas, configuration, features, validation, tracking,
   and API behavior.
@@ -525,6 +525,22 @@ train models, fit scalers, or replace the batch scripts.
   not used by the dashboard.
 - `POST /predict`: prediction endpoint for feature-ready records; not used by
   the dashboard.
+- `POST /api/v1/operational-query`: local-only typed questions over verified
+  deployment and retrospective monitoring evidence. It accepts no prompt or
+  free text and calls only the deterministic operational query layer.
+
+The operational route accepts at most 64 KiB, generates its own correlation
+ID/time/deadline, trusts only exact numeric `127.0.0.1` or `::1` socket
+addresses, ignores forwarding headers, and returns the existing cited
+`OperationalAnswer` contract. Its timeout defaults to and cannot exceed five
+seconds. Configure sources with `WIND_FORECAST_DEPLOYMENT_ROOT` and
+`WIND_FORECAST_MONITORING_STORE_ROOT`; only an HTTP(S)
+`MLFLOW_TRACKING_URI` with an exact numeric loopback host is eligible for
+bounded GET-only Registry verification, with redirects disabled. The
+adapter also bypasses environment proxies. The five-second deadline is
+cooperative and bounds dependency timeouts rather than adding pre-emptive
+cancellation around existing loaders. This is not production authentication
+and the route must not be exposed through a proxy or remote port mapping.
 
 The performance response contains `interval`, `observation_count`, `metrics`,
 optional `result` provenance, and `observations`. Metrics are recalculated for
@@ -589,9 +605,9 @@ does not publish or deploy them.
 
 - Full tuned model training is still notebook-based in
   `notebooks/Modeling.ipynb`; the CLI covers a lightweight baseline.
-- The MLflow Registry and active v2 deployment are local and are not consumed
-  by the FastAPI service; serving continues to use the existing v1
-  Keras/scaler paths.
+- The MLflow Registry and active v2 deployment are local. The local-only
+  operational-query route verifies their read-only evidence, while prediction
+  serving continues to use the existing v1 Keras/scaler paths.
 - The first public artifact release remains blocked until source, licence,
   attribution, and redistribution permission are approved in
   `artifacts/catalog.json`.
@@ -615,10 +631,10 @@ does not publish or deploy them.
    clone before claiming cross-machine reproducibility.
 3. Extend the baseline training CLI toward the tuned notebook workflow while
    preserving the existing contracts.
-4. Expose the implemented typed Operational Read-only query layer only through
-   a separately reviewed read-only API increment, then add the versioned
-   evaluation harness; no Copilot, MCP, RAG, relational projection,
-   observability, production authentication, or cloud implementation exists.
+4. Add the versioned evaluation harness for the implemented typed Operational
+   Read-only query layer and local-only API; no Copilot, MCP, RAG, relational
+   projection, observability, production authentication, remote exposure, or
+   cloud implementation exists.
 5. Add interactive prediction only after a reviewed UI/API contract, then
    progress through cloud deployment design as an explicit future phase.
 

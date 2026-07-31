@@ -59,6 +59,62 @@ docker run --rm -p 8000:8000 `
 - `GET /model-info`: reports saved model, scaler, and feature-reference
   artifact readiness without loading TensorFlow models.
 - `POST /predict`: predicts with the selected saved model.
+- `POST /api/v1/operational-query`: exposes the accepted typed read-only
+  operational query layer to an operator on the exact loopback socket.
+
+## Local read-only operational query
+
+`POST /api/v1/operational-query` accepts no prompt or free text. Its public
+body contains only the accepted contract version, one of the eight typed
+`query_kind` values, a compatible selector, and optional bounded
+`window_days`/`pagination`:
+
+```json
+{
+  "contract_version": "operational_read_only_copilot_v1",
+  "query_kind": "monitoring_performance",
+  "selector": {"kind": "latest"},
+  "window_days": 30,
+  "pagination": null
+}
+```
+
+The server supplies `requested_at_utc`, an opaque correlation ID, and a
+deadline. Client attempts to supply those fields, unknown fields, invalid JSON,
+incompatible selectors, or bodies above 64 KiB are refused. The response is
+the existing `OperationalAnswer`, including cited facts, evidence digests,
+limitations, sanitized failures, `served_at_utc`, and `correlation_id`.
+
+Answer statuses map to HTTP as follows: `answered`/`empty` use `200`,
+`refused` uses `400`, `unauthorized` uses `403`, `not_found` uses `404`,
+`unavailable`/`corrupt`/`conflict` use `503`, and `timeout` uses `504`.
+
+This route has no production authentication. It trusts only an ASGI socket
+address exactly equal to `127.0.0.1` or `::1`; hostnames, missing client data,
+proxy addresses, and non-loopback addresses are unauthorized. Forwarding
+headers are ignored and CORS is not authentication. Do not expose this route
+through the current container port mapping or a proxy.
+
+Configuration:
+
+- `WIND_FORECAST_DEPLOYMENT_ROOT`, default
+  `data/processed/v2/deployment`;
+- `WIND_FORECAST_MONITORING_STORE_ROOT`, default
+  `data/processed/v2/monitoring`;
+- `WIND_FORECAST_OPERATIONAL_QUERY_TIMEOUT_SECONDS`, default `5`, finite and
+  greater than zero with maximum `5`;
+- `MLFLOW_TRACKING_URI`, eligible for bounded Registry reads only for an
+  HTTP(S) URI whose exact numeric host is `127.0.0.1` or `::1`; redirects are
+  disabled and environment proxies are bypassed.
+
+Stores do not need to exist at application startup. Missing or unverifiable
+evidence is reported through the domain status contract. Non-REST, hostname,
+file, database, or remote Registry URIs are never called by this route and
+deployment questions fail closed as `unavailable`. The adapter calls only
+`OperationalQueryService.answer()` and performs no operational writes.
+The five-second deadline is cooperative and bounds dependency timeouts; it is
+not a new pre-emptive wall-clock cancellation layer around the existing
+verified loaders.
 
 ## Phase 5B — Historical performance endpoint
 

@@ -16,7 +16,7 @@ This folder keeps project documentation organized by purpose and roadmap phase.
 | [Demo Guide](DEMO.md) | Full-stack local demo for preparing evaluation artifacts, running React with FastAPI, using Docker Compose, and validating the project. |
 | [Reproducibility Guide](REPRODUCIBILITY.md) | MLflow Registry workflow and immutable artifact-bundle recovery. |
 | [Controlled Retraining](CONTROLLED_RETRAINING.md) | Approved post-monitoring lifecycle contract, policy, cutoffs, deployment semantics, and staged delivery plan. |
-| [Operational Read-only Copilot](OPERATIONAL_COPILOT.md) | Accepted product contract and ADR for bounded, grounded, read-only operational questions; implementation remains future work. |
+| [Operational Read-only Copilot](OPERATIONAL_COPILOT.md) | Accepted product contract, typed query layer, and local-only HTTP API for bounded, grounded, read-only operational questions. |
 
 ## Phase Documents
 
@@ -26,7 +26,7 @@ This folder keeps project documentation organized by purpose and roadmap phase.
 | 1 | [PHASE_1.md](PHASE_1.md) | Modularization closure summary and compatibility notes. |
 | 2 | [PHASE_2.md](PHASE_2.md) | Data-source assessment, v2 data contracts, REN/ERA5-Land backfill records, and acceptance checks. |
 | 4 | [PHASE_4.md](PHASE_4.md) | Baseline training CLI, model card, data card, and local experiment-tracking context. |
-| 5 | [PHASE_5.md](PHASE_5.md) | FastAPI prediction API documentation. |
+| 5 | [PHASE_5.md](PHASE_5.md) | FastAPI prediction, historical evidence, and local operational-query API documentation. |
 | 8 | [PHASE_8.md](PHASE_8.md) | Transactional, idempotent v2 dataset updates, revision policy, observability, and recovery. |
 | 9 | [PHASE_9.md](PHASE_9.md) | Delayed historical batch contract, immutable evidence, calibrated drift/performance reports, and local alerts. |
 | 10 | [PHASE_10.md](PHASE_10.md) | Stable local/Task Scheduler orchestration plus the separate Airflow 3.3.0 DAG and recovery workflow. |
