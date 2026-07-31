@@ -531,8 +531,9 @@ automatic model replacement remain out of scope.
 
 ## Operational Extension — Operational Read-only Copilot
 
-Status: product contract, ADR, typed operational query layer, and local-only
-read-only API implemented; later product increments not started.
+Status: product contract, ADR, typed operational query layer, local-only
+read-only API, and versioned offline evaluation dataset/harness implemented;
+later product increments not started.
 
 This future extension must consume verified operational evidence through
 read-only contracts. It must not mutate Phase 8/9 stores, MLflow, deployment
@@ -565,6 +566,8 @@ the existing checksum-pinned loaders as the source of truth.
    mapping.
 4. Create a versioned evaluation dataset and harness for correctness,
    groundedness, tool selection, refusal behaviour, and evidence attribution.
+   Implemented offline with 88 synthetic English cases, deterministic scoring,
+   sanitized stdout-only reports, and no Copilot candidate evaluated.
 5. Design and implement a relational projection only if query requirements
    justify it. PostgreSQL would be a derived projection; immutable files remain
    authoritative.
@@ -585,6 +588,6 @@ the existing checksum-pinned loaders as the source of truth.
 Each item is an independent, reviewable increment. No item authorizes automatic
 training, lifecycle transitions, external notifications, live forecasting, or
 Airflow activation in an environment owned by Windows Task Scheduler.
-Items 1 through 3 are implemented. The evaluation harness, relational
-projection, observability, Copilot, MCP, RAG, and cloud design remain
-unimplemented and require separate reviewed increments.
+Items 1 through 4 are implemented. The relational projection, observability,
+Copilot, MCP, RAG, and cloud design remain unimplemented and require separate
+reviewed increments.

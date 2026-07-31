@@ -10,7 +10,7 @@
 | Contract version | `operational_read_only_copilot_v1` |
 | Audience | One authorized operator in a trusted local environment |
 | Operating mode | `retrospective_historical_batch_not_real_time` |
-| Implementation status | Typed read-only Python query layer and local-only HTTP adapter implemented and locally validated; no Copilot, MCP, RAG, database, production authentication, observability, or deployment exists |
+| Implementation status | Typed read-only Python query layer, local-only HTTP adapter, and versioned offline evaluation dataset/harness implemented and locally validated; no Copilot or candidate has been evaluated, and no MCP, RAG, database, production authentication, observability, or deployment exists |
 
 ## Objective
 
@@ -443,7 +443,7 @@ and startup zero-write behavior.
 Existing deployment, monitoring projection, and API tests remain the
 compatibility boundary.
 
-## Acceptance Tests And Future Evaluation
+## Acceptance Tests And Evaluation
 
 The implemented typed query layer uses synthetic stores and controlled
 dependency doubles. Its acceptance suite covers:
@@ -467,11 +467,65 @@ dependency doubles. Its acceptance suite covers:
 - regression tests for all existing API endpoints and monitoring projection
   behavior.
 
-The evaluation-harness increment must separately test groundedness, correct
-query/tool selection, refusal behavior, evidence attribution, adversarial
-prompt handling, and deterministic rendering against a versioned dataset. No
-Copilot may pass its introduction gate until both the typed query layer and
-evaluation gates are accepted.
+### Versioned offline evaluation harness
+
+The fourth delivery increment adds the immutable English dataset
+`operational_read_only_copilot_eval_en_v1` under
+`evaluation/operational_read_only_copilot/v1/`. Its manifest pins the accepted
+contract, source commit, case count, case-file SHA-256, distribution, expected
+facts, evidence source kinds, failure semantics, and gate policy.
+
+The 88 cases comprise 20 canonical supported request shapes, 20 benign English
+paraphrases, 16 absence/evidence-failure scenarios, 24 refusals, and 8
+adversarial authorization, tool-substitution, privacy, traversal, citation,
+and stale-fallback cases. All identifiers and evidence values are synthetic.
+The symbolic expected tool is always `operational_query`, with exactly the
+five public fields accepted by `OperationalHttpRequest`; it does not represent
+a new tool or a Copilot implementation.
+
+`wind_forecast.operational_evaluation` loads and checksum-verifies the dataset
+and scores externally produced `CandidateTrace` JSONL. It never invokes an
+LLM, the API, the query service, verified loaders, Registry, network, or an
+operational store. The runner is stdout-only:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\evaluate_operational_copilot.py `
+  --dataset .\evaluation\operational_read_only_copilot\v1\manifest.json `
+  --responses <candidate-results.jsonl>
+```
+
+Exit `0` means every critical gate passed, exit `1` means a schema-valid
+candidate failed a gate, and exit `2` means the dataset or response set was
+invalid. Reports contain only dataset/response digests, metrics, case IDs, and
+sanitized failure codes. Candidate payloads and validation details are never
+echoed.
+
+Authorization, refusal, canonical tool selection, factual correctness,
+grounding, citations, privacy, evidence-state distinctions, and zero-write
+checks require 100%. Benign paraphrase recognition requires 95%; the only
+permitted miss is one safe refusal with no tool, facts, evidence, or summary.
+A wrong tool, wrong arguments, or an inaccurate/ungrounded answer always fails
+a critical gate.
+
+The acceptance tests bind all 20 canonical goldens back to
+`OperationalQueryService.answer()` using temporary synthetic evidence, a fixed
+clock, and a controlled Registry boundary. They compare fact values and order,
+summary, limitations, failure fields, and complete citation domain, schema,
+record, digest, effective time, and mutable-state observation time. Mutation
+tests cover fabricated citations, missing facts, stale facts in failure states,
+weakened failures, alias observation time, private paths/secrets, and safe
+abstention.
+
+The existing query/API suites prove refusal before operational reads and zero
+operational writes. The evaluation tests additionally replace the query
+service and verified loaders with forbidden sentinels while replay scoring and
+compare byte/size/mtime snapshots. Candidate JSONL itself is only observable
+trace evidence and is never treated as proof of a candidate's internal
+read/write behavior.
+
+The current state is exactly `harness accepted; no Copilot evaluated`. No
+Copilot may pass its introduction gate until it supplies one complete,
+schema-valid response set and passes these evaluation gates.
 
 ## Acceptance Criteria
 
@@ -485,9 +539,9 @@ evaluation gates are accepted.
 - Historical hindcast, target scale, model-era, and alias semantics are
   preserved.
 - No current API, store, model, scheduler, or artifact contract changes.
-- The roadmap shows the query layer and local-only API as implemented and keeps
-  evaluation, relational projection, observability, Copilot, MCP, RAG, and cloud as
-  separate future increments.
+- The roadmap shows the query layer, local-only API, and offline evaluation
+  harness as implemented and keeps relational projection, observability,
+  Copilot, MCP, RAG, and cloud as separate future increments.
 - Repository status does not describe any Copilot implementation as current.
 
 ## Risks And Controls
@@ -503,6 +557,7 @@ evaluation gates are accepted.
 | A relational projection becomes authoritative | Immutable checksum-pinned files remain the source of truth; projections are rebuildable |
 | A read-only query changes operational state | No write-capable dependencies and explicit zero-write acceptance tests |
 | Query/API acceptance is mistaken for a Copilot or production service | Status and roadmap distinguish the implemented local HTTP adapter from every later product and deployment increment |
+| Harness acceptance is mistaken for candidate acceptance | Reports state `harness accepted; no Copilot evaluated` until an external candidate supplies a complete response set and passes every gate |
 
 ## Rollback
 
@@ -524,7 +579,8 @@ reviewed increment:
 2. Typed operational query layer: implemented and locally validated.
 3. Separately reviewed read-only API endpoint: implemented and locally
    validated.
-4. Versioned evaluation dataset and harness.
+4. Versioned evaluation dataset and harness: implemented and locally
+   validated; no Copilot candidate evaluated.
 5. Relational projection only if requirements justify it.
 6. Local observability with sanitization.
 7. Copilot restricted to accepted deterministic tools.
@@ -536,8 +592,9 @@ No later item may be started implicitly while delivering an earlier one.
 
 ## Stop Gate
 
-This increment stops at the local-only read-only API. It does not authorize
-the evaluation harness or any later delivery item.
+This increment stops at the versioned offline evaluation dataset and harness.
+It does not authorize a relational projection, observability, Copilot, MCP,
+RAG, staging, cloud work, or any other later delivery item.
 
 Future work must stop and return for review if it needs:
 
