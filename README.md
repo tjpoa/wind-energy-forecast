@@ -631,8 +631,9 @@ does not publish or deploy them.
    clone before claiming cross-machine reproducibility.
 3. Extend the baseline training CLI toward the tuned notebook workflow while
    preserving the existing contracts.
-4. Add the versioned evaluation harness for the implemented typed Operational
-   Read-only query layer and local-only API; no Copilot, MCP, RAG, relational
+4. Use the versioned offline evaluation harness as a mandatory gate for any
+   separately approved future Operational Read-only Copilot candidate. No
+   candidate has been evaluated, and no Copilot, MCP, RAG, relational
    projection, observability, production authentication, remote exposure, or
    cloud implementation exists.
 5. Add interactive prediction only after a reviewed UI/API contract, then

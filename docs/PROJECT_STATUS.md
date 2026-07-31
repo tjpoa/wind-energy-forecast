@@ -54,7 +54,7 @@ each checkpoint was written. This file reflects the latest repository state.
 | Prediction API | Implemented for local/container use | `wind_forecast.api`, `docs/PHASE_5.md`, API tests | The API is not deployed and depends on local mounted artifacts for full serving. |
 | Historical performance API | Implemented and consumed by the dashboard | `GET /api/v1/performance`, `wind_forecast.performance`, backend contract tests | It reads explicitly selected local evaluation artifacts; it is not live monitoring. |
 | Historical monitoring API | Implemented as a read-only verified projection | `GET /api/v1/monitoring/latest`, `/history`, `/runs/{run_id}`, `wind_forecast.monitoring_projection` | It projects immutable local batch evidence; it is not real time and performs no writes. |
-| Operational Read-only Copilot | Typed deterministic query layer and local-only read-only API implemented; no Copilot | `POST /api/v1/operational-query`, `wind_forecast.operational_query`, `wind_forecast.operational_api`, dedicated tests, `docs/OPERATIONAL_COPILOT.md` | Evaluation harness, Copilot, MCP, RAG, relational projection, observability, production authentication, remote exposure, and cloud design remain future work. |
+| Operational Read-only Copilot | Typed deterministic query layer, local-only read-only API, and versioned offline evaluation harness implemented; no Copilot evaluated | `POST /api/v1/operational-query`, `wind_forecast.operational_query`, `wind_forecast.operational_evaluation`, 88-case synthetic dataset, dedicated tests, `docs/OPERATIONAL_COPILOT.md` | Copilot, MCP, RAG, relational projection, observability, production authentication, remote exposure, and cloud design remain future work. |
 | React dashboard | Implemented for local/container demonstration | `frontend/`, frontend tests, `docs/DEMO.md` | It shows retrospective monitoring and historical holdout performance; it does not call `/predict`. |
 | Training CLIs | V1 baseline preserved; first v2 reference accepted and bootstrapped locally | `wind_forecast.training`, `wind_forecast.v2_training`, dedicated scripts, and `docs/PHASE_4.md` | The v2 result is a historical hindcast used by the local batch, not by API serving; tuned ANN/Optuna remains notebook-based. |
 | Docker support | Implemented baseline with runtime hardening | Backend and frontend Dockerfiles, Compose stack, CI image builds, and backend smoke test | No image publishing, digest pinning, or production deployment workflow yet. |
@@ -237,9 +237,10 @@ This repository demonstrates:
 3. Extend the baseline training CLI toward the tuned notebook workflow while
    preserving the current contracts.
 4. Raise test coverage as source-ingestion and v2 modules mature.
-5. Build the versioned evaluation harness for the implemented typed
-   operational query layer and local-only read-only API. Copilot, MCP, RAG,
-   relational projection, observability, production authentication, remote
-   exposure, and cloud stages are not implemented.
+5. Use the accepted offline evaluation harness as a mandatory gate for any
+   separately approved future Copilot candidate. No candidate has been
+   evaluated; Copilot, MCP, RAG, relational projection, observability,
+   production authentication, remote exposure, and cloud stages are not
+   implemented.
 6. Define and review an interactive-prediction UI/API contract separately,
    then address production deployment as a later roadmap phase.
