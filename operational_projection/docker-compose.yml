@@ -1,0 +1,37 @@
+name: wind-forecast-operational-projection
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: wind_forecast_operational
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set a dedicated bootstrap password}"
+      WIND_FORECAST_OPERATIONAL_PROJECTION_MIGRATOR_PASSWORD: "${WIND_FORECAST_OPERATIONAL_PROJECTION_MIGRATOR_PASSWORD:?Set a dedicated migrator password}"
+      WIND_FORECAST_OPERATIONAL_PROJECTION_WRITER_PASSWORD: "${WIND_FORECAST_OPERATIONAL_PROJECTION_WRITER_PASSWORD:?Set a dedicated writer password}"
+      WIND_FORECAST_OPERATIONAL_PROJECTION_READER_PASSWORD: "${WIND_FORECAST_OPERATIONAL_PROJECTION_READER_PASSWORD:?Set a dedicated reader password}"
+    volumes:
+      - operational-projection-postgres:/var/lib/postgresql/data
+      - type: bind
+        source: ./bootstrap
+        target: /docker-entrypoint-initdb.d
+        read_only: true
+    networks:
+      - operational-projection
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U postgres -d wind_forecast_operational",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  operational-projection-postgres:
+
+networks:
+  operational-projection:
+    internal: true
