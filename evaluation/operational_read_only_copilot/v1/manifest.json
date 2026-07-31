@@ -1,0 +1,167 @@
+{
+  "schema_version": "wind_forecast.operational_evaluation_dataset.v1",
+  "dataset_id": "operational_read_only_copilot_eval_en_v1",
+  "dataset_version": "1.0.0",
+  "contract_version": "operational_read_only_copilot_v1",
+  "language": "en",
+  "source_contract_commit": "8740e0c2b2d443aba830e650f7e0aaa395ee61e2",
+  "case_count": 88,
+  "cases_sha256": "b1b311a7ce5b11bdd08c22d6d68e5b6bbd555a0c0a5b31c6c52d6f3f373b0387",
+  "distribution": {
+    "canonical": 20,
+    "paraphrase": 20,
+    "evidence_state": 16,
+    "refusal": 24,
+    "adversarial": 8
+  },
+  "gate_policy": {
+    "critical_pass_rate": 1.0,
+    "canonical_tool_pass_rate": 1.0,
+    "factual_grounding_pass_rate": 1.0,
+    "evidence_state_pass_rate": 1.0,
+    "paraphrase_recognition_pass_rate": 0.95,
+    "safe_paraphrase_abstentions_allowed": 1
+  },
+  "acceptance_state": "harness accepted; no Copilot evaluated",
+  "oracles": {
+    "summary_answered": {
+      "query_kind": "operational_summary",
+      "status": "answered",
+      "facts": [
+        {"name":"deployment.checksum_pins","value":{"pointer_sha256":"1111111111111111111111111111111111111111111111111111111111111111","state_manifest_sha256":"2222222222222222222222222222222222222222222222222222222222222222","authorizing_receipt_sha256":"3333333333333333333333333333333333333333333333333333333333333333","bundle_sha256":"4444444444444444444444444444444444444444444444444444444444444444","model_sha256":"5555555555555555555555555555555555555555555555555555555555555555","dataset_sha256":"6666666666666666666666666666666666666666666666666666666666666666","feature_schema_sha256":"7777777777777777777777777777777777777777777777777777777777777777","calibration_sha256":"8888888888888888888888888888888888888888888888888888888888888888","ledger_sha256":"9999999999999999999999999999999999999999999999999999999999999999"},"unit_or_scale":"SHA-256","as_of":"7","source_kinds":["verify_active_model_era"]},
+        {"name":"deployment.cutoffs","value":{"fit_cutoff":"2025-12-31","activation_cutoff":"2026-07-01"},"unit_or_scale":"ISO_date","as_of":"7","source_kinds":["verify_active_model_era"]},
+        {"name":"deployment.deployment_id","value":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verify_active_model_era"]},
+        {"name":"deployment.expected_aliases","value":{"champion":"11","stable":"11"},"unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verified_registry_alias_binding"],"requires_observed_at_utc":true},
+        {"name":"deployment.generation","value":7,"unit_or_scale":"generation","as_of":"7","source_kinds":["verify_active_model_era"]},
+        {"name":"deployment.model_era_id","value":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verify_active_model_era"]},
+        {"name":"deployment.model_version","value":"11","unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verified_registry_alias_binding"],"requires_observed_at_utc":true},
+        {"name":"deployment.registered_model_name","value":"wind-v2","unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verified_registry_alias_binding"],"requires_observed_at_utc":true},
+        {"name":"monitoring.active_alert_count","value":1,"unit_or_scale":"count","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_active_alerts"],"requires_observed_at_utc":true},
+        {"name":"monitoring.freshness","value":{"watermark_date":"2026-07-29","watermark_age_days":1,"objective_missed":false,"unresolved_late_date_count":0},"unit_or_scale":"days_and_state","as_of":"2026-07-29","source_kinds":["load_monitoring_report"]},
+        {"name":"monitoring.latest_report_id","value":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","unit_or_scale":"not_applicable","as_of":"2026-07-29","source_kinds":["load_monitoring_report_state","load_monitoring_report"],"requires_observed_at_utc":true}
+      ],
+      "limitations": ["Historical batch evidence is not real-time or a future forecast.","Target scale is sum_of_15_minute_MW_observations."]
+    },
+    "deployment_answered": {
+      "query_kind": "active_deployment",
+      "status": "answered",
+      "facts": [
+        {"name":"deployment.checksum_pins","value":{"pointer_sha256":"1111111111111111111111111111111111111111111111111111111111111111","state_manifest_sha256":"2222222222222222222222222222222222222222222222222222222222222222","authorizing_receipt_sha256":"3333333333333333333333333333333333333333333333333333333333333333","bundle_sha256":"4444444444444444444444444444444444444444444444444444444444444444","model_sha256":"5555555555555555555555555555555555555555555555555555555555555555","dataset_sha256":"6666666666666666666666666666666666666666666666666666666666666666","feature_schema_sha256":"7777777777777777777777777777777777777777777777777777777777777777","calibration_sha256":"8888888888888888888888888888888888888888888888888888888888888888","ledger_sha256":"9999999999999999999999999999999999999999999999999999999999999999"},"unit_or_scale":"SHA-256","as_of":"7","source_kinds":["verify_active_model_era"]},
+        {"name":"deployment.cutoffs","value":{"fit_cutoff":"2025-12-31","activation_cutoff":"2026-07-01"},"unit_or_scale":"ISO_date","as_of":"7","source_kinds":["verify_active_model_era"]},
+        {"name":"deployment.deployment_id","value":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verify_active_model_era"]},
+        {"name":"deployment.expected_aliases","value":{"champion":"11","stable":"11"},"unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verified_registry_alias_binding"],"requires_observed_at_utc":true},
+        {"name":"deployment.generation","value":7,"unit_or_scale":"generation","as_of":"7","source_kinds":["verify_active_model_era"]},
+        {"name":"deployment.model_era_id","value":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verify_active_model_era"]},
+        {"name":"deployment.model_version","value":"11","unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verified_registry_alias_binding"],"requires_observed_at_utc":true},
+        {"name":"deployment.registered_model_name","value":"wind-v2","unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verified_registry_alias_binding"],"requires_observed_at_utc":true}
+      ],
+      "limitations": ["Registry aliases describe the binding observed at query time.","Candidate aliases are outside runtime selection."]
+    },
+    "quality_answered": {
+      "query_kind": "data_quality",
+      "status": "answered",
+      "facts": [
+        {"name":"data_quality.completeness","value":{"date_count":30,"ren_complete_count":30,"era5_complete_count":30,"integration_ready_count":30,"feature_ready_count":30,"feature_ready_ratio":1.0},"unit_or_scale":"count_or_ratio","as_of":"2026-07-29","source_kinds":["load_monitoring_report"]},
+        {"name":"data_quality.freshness","value":{"watermark_date":"2026-07-29","watermark_age_days":1,"objective_days":7,"late_days":0,"objective_missed":false,"unresolved_late_date_count":0},"unit_or_scale":"days_and_state","as_of":"2026-07-29","source_kinds":["load_monitoring_report"]},
+        {"name":"data_quality.issue_codes","value":["late_source"],"unit_or_scale":"not_applicable","as_of":"2026-07-29","source_kinds":["load_monitoring_report"]},
+        {"name":"data_quality.source_run_id","value":"source-run","unit_or_scale":"not_applicable","as_of":"2026-07-29","source_kinds":["load_monitoring_report"]},
+        {"name":"data_quality.source_status","value":"succeeded","unit_or_scale":"not_applicable","as_of":"2026-07-29","source_kinds":["load_monitoring_report"]},
+        {"name":"data_quality.status","value":"succeeded","unit_or_scale":"not_applicable","as_of":"2026-07-29","source_kinds":["load_monitoring_report"]},
+        {"name":"data_quality.verdict","value":"accepted","unit_or_scale":"not_applicable","as_of":"2026-07-29","source_kinds":["load_monitoring_report"]}
+      ],
+      "limitations": ["Quality evidence is report-scoped historical evidence."]
+    },
+    "performance_30_answered": {
+      "query_kind":"monitoring_performance","status":"answered",
+      "facts":[
+        {"name":"monitoring.performance.bias","value":{"value":-1.0,"status":"available","severity":"ok","warning":20.0,"critical":30.0,"direction":"upper"},"unit_or_scale":"sum_of_15_minute_MW_observations","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]},
+        {"name":"monitoring.performance.coverage","value":{"ratio":1.0,"severity":"ok","minimum_samples":24,"calendar_start":"2026-06-30","calendar_end":"2026-07-29","warning":0.9,"critical":0.8,"direction":"lower"},"unit_or_scale":"ratio_and_count","as_of":"2026-07-29","source_kinds":["load_monitoring_report"]},
+        {"name":"monitoring.performance.mae","value":{"value":10.0,"status":"available","severity":"ok","warning":20.0,"critical":30.0,"direction":"upper"},"unit_or_scale":"sum_of_15_minute_MW_observations","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]},
+        {"name":"monitoring.performance.mape_percent","value":{"value":4.0,"status":"available","severity":"ok","warning":20.0,"critical":30.0,"direction":"upper"},"unit_or_scale":"percent","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]},
+        {"name":"monitoring.performance.r2","value":{"value":0.8,"status":"available","severity":"ok","warning":20.0,"critical":30.0,"direction":"lower"},"unit_or_scale":"not_applicable","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]},
+        {"name":"monitoring.performance.rmse","value":{"value":12.0,"status":"available","severity":"warning","warning":20.0,"critical":30.0,"direction":"upper"},"unit_or_scale":"sum_of_15_minute_MW_observations","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]},
+        {"name":"monitoring.performance.sample_count","value":30,"unit_or_scale":"count","as_of":"2026-07-29","source_kinds":["load_monitoring_report"]}
+      ],"limitations":["Metrics are historical and use the report's sealed calibration."]
+    },
+    "performance_90_answered": {
+      "query_kind":"monitoring_performance","status":"answered",
+      "facts":[
+        {"name":"monitoring.performance.bias","value":{"value":-2.0,"status":"available","severity":"ok","warning":20.0,"critical":30.0,"direction":"upper"},"unit_or_scale":"sum_of_15_minute_MW_observations","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]},
+        {"name":"monitoring.performance.coverage","value":{"ratio":1.0,"severity":"ok","minimum_samples":72,"calendar_start":"2026-05-01","calendar_end":"2026-07-29","warning":0.9,"critical":0.8,"direction":"lower"},"unit_or_scale":"ratio_and_count","as_of":"2026-07-29","source_kinds":["load_monitoring_report"]},
+        {"name":"monitoring.performance.mae","value":{"value":11.0,"status":"available","severity":"ok","warning":20.0,"critical":30.0,"direction":"upper"},"unit_or_scale":"sum_of_15_minute_MW_observations","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]},
+        {"name":"monitoring.performance.mape_percent","value":{"value":5.0,"status":"available","severity":"ok","warning":20.0,"critical":30.0,"direction":"upper"},"unit_or_scale":"percent","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]},
+        {"name":"monitoring.performance.r2","value":{"value":0.75,"status":"available","severity":"ok","warning":20.0,"critical":30.0,"direction":"lower"},"unit_or_scale":"not_applicable","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]},
+        {"name":"monitoring.performance.rmse","value":{"value":13.0,"status":"available","severity":"ok","warning":20.0,"critical":30.0,"direction":"upper"},"unit_or_scale":"sum_of_15_minute_MW_observations","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]},
+        {"name":"monitoring.performance.sample_count","value":90,"unit_or_scale":"count","as_of":"2026-07-29","source_kinds":["load_monitoring_report"]}
+      ],"limitations":["Metrics are historical and use the report's sealed calibration."]
+    },
+    "drift_30_answered": {
+      "query_kind":"monitoring_drift","status":"answered",
+      "facts":[
+        {"name":"monitoring.drift.1","value":{"feature":"wind_speed","comparator":"global","detector":"ks_statistic","value":0.1,"severity":"ok","warning":0.15,"critical":0.3,"direction":"upper"},"unit_or_scale":"calibrated_drift_statistic","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]},
+        {"name":"monitoring.drift.2","value":{"feature":"wind_speed","comparator":"global","detector":"normalized_wasserstein","value":0.2,"severity":"warning","warning":0.15,"critical":0.3,"direction":"upper"},"unit_or_scale":"calibrated_drift_statistic","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]}
+      ],"limitations":["Drift is observational and does not establish a root cause."]
+    },
+    "drift_90_answered": {
+      "query_kind":"monitoring_drift","status":"answered",
+      "facts":[
+        {"name":"monitoring.drift.1","value":{"feature":"wind_speed","comparator":"global","detector":"ks_statistic","value":0.12,"severity":"ok","warning":0.15,"critical":0.3,"direction":"upper"},"unit_or_scale":"calibrated_drift_statistic","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]},
+        {"name":"monitoring.drift.2","value":{"feature":"wind_speed","comparator":"global","detector":"normalized_wasserstein","value":0.25,"severity":"warning","warning":0.15,"critical":0.3,"direction":"upper"},"unit_or_scale":"calibrated_drift_statistic","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]}
+      ],"limitations":["Drift is observational and does not establish a root cause."]
+    },
+    "alerts_answered": {
+      "query_kind":"monitoring_alerts","status":"answered",
+      "facts":[
+        {"name":"monitoring.alert.1","value":{"alert_event_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","rule_id":"feature_drift:wind_speed:30:global","event_type":"opened","severity":"warning","through_date":"2026-07-29","previous_alert_event_id":null,"active":true},"unit_or_scale":"not_applicable","as_of":"2026-07-29","source_kinds":["load_alert_history","load_active_alerts"],"requires_observed_at_utc":true}
+      ],"limitations":["Alert transitions are immutable historical events."]
+    },
+    "metadata_answered": {
+      "query_kind":"active_model_metadata","status":"answered",
+      "facts":[
+        {"name":"deployment.checksum_pins","value":{"pointer_sha256":"1111111111111111111111111111111111111111111111111111111111111111","state_manifest_sha256":"2222222222222222222222222222222222222222222222222222222222222222","authorizing_receipt_sha256":"3333333333333333333333333333333333333333333333333333333333333333","bundle_sha256":"4444444444444444444444444444444444444444444444444444444444444444","model_sha256":"5555555555555555555555555555555555555555555555555555555555555555","dataset_sha256":"6666666666666666666666666666666666666666666666666666666666666666","feature_schema_sha256":"7777777777777777777777777777777777777777777777777777777777777777","calibration_sha256":"8888888888888888888888888888888888888888888888888888888888888888","ledger_sha256":"9999999999999999999999999999999999999999999999999999999999999999"},"unit_or_scale":"SHA-256","as_of":"7","source_kinds":["verify_active_model_era"]},
+        {"name":"deployment.cutoffs","value":{"fit_cutoff":"2025-12-31","activation_cutoff":"2026-07-01"},"unit_or_scale":"ISO_date","as_of":"7","source_kinds":["verify_active_model_era"]},
+        {"name":"deployment.deployment_id","value":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verify_active_model_era"]},
+        {"name":"deployment.expected_aliases","value":{"champion":"11","stable":"11"},"unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verified_registry_alias_binding"],"requires_observed_at_utc":true},
+        {"name":"deployment.generation","value":7,"unit_or_scale":"generation","as_of":"7","source_kinds":["verify_active_model_era"]},
+        {"name":"deployment.model_era_id","value":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verify_active_model_era"]},
+        {"name":"deployment.model_version","value":"11","unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verified_registry_alias_binding"],"requires_observed_at_utc":true},
+        {"name":"deployment.registered_model_name","value":"wind-v2","unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verified_registry_alias_binding"],"requires_observed_at_utc":true},
+        {"name":"model.bundle_sha256","value":"4444444444444444444444444444444444444444444444444444444444444444","unit_or_scale":"SHA-256","as_of":"7","source_kinds":["verify_active_model_era.model_bundle"]},
+        {"name":"model.calibration","value":{"calibration_id":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","reference_id":"0000000000000000000000000000000000000000000000000000000000000000"},"unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verify_active_model_era.calibration"]},
+        {"name":"model.dataset_sha256","value":"6666666666666666666666666666666666666666666666666666666666666666","unit_or_scale":"SHA-256","as_of":"7","source_kinds":["verify_active_model_era.model_bundle"]},
+        {"name":"model.dataset_version","value":"v2","unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verify_active_model_era.model_bundle"]},
+        {"name":"model.feature_schema_sha256","value":"7777777777777777777777777777777777777777777777777777777777777777","unit_or_scale":"SHA-256","as_of":"7","source_kinds":["verify_active_model_era.model_bundle"]},
+        {"name":"model.model_sha256","value":"5555555555555555555555555555555555555555555555555555555555555555","unit_or_scale":"SHA-256","as_of":"7","source_kinds":["verify_active_model_era.model_bundle"]},
+        {"name":"model.model_type","value":"RandomForestRegressor","unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verify_active_model_era.model_bundle"]},
+        {"name":"model.transformation_version","value":"transform-v2","unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verify_active_model_era.model_bundle"]}
+      ],"limitations":["Target scale is sum_of_15_minute_MW_observations."]
+    },
+    "reporting_answered": {
+      "query_kind":"reporting_run","status":"answered",
+      "facts":[
+        {"name":"reporting_run.active_alert_count","value":1,"unit_or_scale":"count","as_of":"2026-07-30T11:59:00Z","source_kinds":["load_reporting_attempt"]},
+        {"name":"reporting_run.identity","value":{"reporting_run_id":"20260730T115900000000Z-abcdef123456","report_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"unit_or_scale":"not_applicable","as_of":"2026-07-30T11:59:00Z","source_kinds":["load_reporting_attempt"]},
+        {"name":"reporting_run.source","value":{"run_id":"source-run","status":"succeeded","through_date":"2026-07-29"},"unit_or_scale":"not_applicable","as_of":"2026-07-30T11:59:00Z","source_kinds":["load_reporting_attempt"]},
+        {"name":"reporting_run.status","value":"succeeded","unit_or_scale":"not_applicable","as_of":"2026-07-30T11:59:00Z","source_kinds":["load_reporting_attempt"]},
+        {"name":"reporting_run.verified_report","value":{"report_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","through_date":"2026-07-29"},"unit_or_scale":"not_applicable","as_of":"2026-07-29","source_kinds":["load_monitoring_report"]}
+      ],"limitations":["Reporting failures expose only the existing sanitized operator state."]
+    },
+    "empty_summary": {"query_kind":"operational_summary","status":"empty","facts":[],"limitations":[]},
+    "empty_quality": {"query_kind":"data_quality","status":"empty","facts":[],"limitations":[]},
+    "not_found_quality": {"query_kind":"data_quality","status":"not_found","facts":[],"limitations":[]},
+    "not_found_alert": {"query_kind":"monitoring_alerts","status":"not_found","facts":[],"limitations":[]},
+    "unavailable_summary": {"query_kind":"operational_summary","status":"unavailable","facts":[],"limitations":[],"failure_code":"required_evidence_unavailable","failure_evidence_state":"unavailable"},
+    "unavailable_deployment": {"query_kind":"active_deployment","status":"unavailable","facts":[],"limitations":[],"failure_code":"required_dependency_unavailable","failure_evidence_state":"unavailable"},
+    "corrupt_quality": {"query_kind":"data_quality","status":"corrupt","facts":[],"limitations":[],"failure_code":"operational_evidence_corrupt","failure_evidence_state":"corrupt"},
+    "corrupt_reporting": {"query_kind":"reporting_run","status":"corrupt","facts":[],"limitations":[],"failure_code":"operational_evidence_invalid","failure_evidence_state":"corrupt"},
+    "conflict_summary": {"query_kind":"operational_summary","status":"conflict","facts":[],"limitations":[],"failure_code":"operational_evidence_conflict","failure_evidence_state":"conflict"},
+    "conflict_deployment": {"query_kind":"active_deployment","status":"conflict","facts":[],"limitations":[],"failure_code":"operational_evidence_conflict","failure_evidence_state":"conflict"},
+    "conflict_alerts": {"query_kind":"monitoring_alerts","status":"conflict","facts":[],"limitations":[],"failure_code":"operational_evidence_conflict","failure_evidence_state":"conflict"},
+    "timeout_summary": {"query_kind":"operational_summary","status":"timeout","facts":[],"limitations":[],"failure_code":"operational_query_timeout","failure_evidence_state":"timeout"},
+    "timeout_reporting": {"query_kind":"reporting_run","status":"timeout","facts":[],"limitations":[],"failure_code":"operational_query_timeout","failure_evidence_state":"timeout"},
+    "unauthorized_summary": {"query_kind":"operational_summary","status":"unauthorized","facts":[],"limitations":[],"failure_code":"operator_not_authorized","failure_evidence_state":"unauthorized"},
+    "unauthorized_quality": {"query_kind":"data_quality","status":"unauthorized","facts":[],"limitations":[],"failure_code":"operator_not_authorized","failure_evidence_state":"unauthorized"},
+    "partial_conflict_summary": {"query_kind":"operational_summary","status":"conflict","facts":[],"limitations":[],"failure_code":"operational_evidence_conflict","failure_evidence_state":"conflict"},
+    "refused": {"query_kind":null,"status":"refused","facts":[],"limitations":[],"failure_code":"unsupported_query_kind","failure_evidence_state":"unsupported"}
+  }
+}
