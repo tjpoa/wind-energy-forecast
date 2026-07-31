@@ -30,6 +30,7 @@ from .monitoring_projection import (
     MonitoringProjectionService,
     MonitoringRunNotFoundError,
 )
+from .operational_api import operational_router
 from .performance import (
     InvalidPerformanceIntervalError,
     NoPerformanceObservationsError,
@@ -592,6 +593,7 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST"],
         allow_headers=["Content-Type"],
     )
+    api.include_router(operational_router)
 
     @api.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:

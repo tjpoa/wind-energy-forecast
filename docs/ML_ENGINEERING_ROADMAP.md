@@ -531,8 +531,8 @@ automatic model replacement remain out of scope.
 
 ## Operational Extension — Operational Read-only Copilot
 
-Status: product contract, ADR, and typed operational query layer implemented;
-API and later product increments not started.
+Status: product contract, ADR, typed operational query layer, and local-only
+read-only API implemented; later product increments not started.
 
 This future extension must consume verified operational evidence through
 read-only contracts. It must not mutate Phase 8/9 stores, MLflow, deployment
@@ -557,8 +557,12 @@ the existing checksum-pinned loaders as the source of truth.
    tests. Implemented through `wind_forecast.operational_query_models`,
    `wind_forecast.operational_query`, verified reporting-attempt loaders, and
    dedicated zero-write acceptance tests.
-3. Expose only that query layer through separately reviewed read-only API
-   endpoints.
+3. Expose only that query layer through a separately reviewed read-only API
+   endpoint. Implemented as local-only
+   `POST /api/v1/operational-query`, with a 64 KiB body limit, server-generated
+   request metadata, a maximum five-second cooperative deadline,
+   socket-derived loopback authorization, and `OperationalAnswer` status
+   mapping.
 4. Create a versioned evaluation dataset and harness for correctness,
    groundedness, tool selection, refusal behaviour, and evidence attribution.
 5. Design and implement a relational projection only if query requirements
@@ -581,6 +585,6 @@ the existing checksum-pinned loaders as the source of truth.
 Each item is an independent, reviewable increment. No item authorizes automatic
 training, lifecycle transitions, external notifications, live forecasting, or
 Airflow activation in an environment owned by Windows Task Scheduler.
-Items 1 and 2 are implemented. The API, evaluation harness, relational
+Items 1 through 3 are implemented. The evaluation harness, relational
 projection, observability, Copilot, MCP, RAG, and cloud design remain
 unimplemented and require separate reviewed increments.
