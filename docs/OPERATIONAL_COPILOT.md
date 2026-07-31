@@ -509,9 +509,19 @@ a critical gate.
 
 The acceptance tests bind all 20 canonical goldens back to
 `OperationalQueryService.answer()` using temporary synthetic evidence, a fixed
-clock, and a controlled Registry boundary. Zero-write is proved separately by
-instrumented dispatch checks and byte/size/mtime snapshots; it is not inferred
-from candidate JSONL.
+clock, and a controlled Registry boundary. They compare fact values and order,
+summary, limitations, failure fields, and complete citation domain, schema,
+record, digest, effective time, and mutable-state observation time. Mutation
+tests cover fabricated citations, missing facts, stale facts in failure states,
+weakened failures, alias observation time, private paths/secrets, and safe
+abstention.
+
+The existing query/API suites prove refusal before operational reads and zero
+operational writes. The evaluation tests additionally replace the query
+service and verified loaders with forbidden sentinels while replay scoring and
+compare byte/size/mtime snapshots. Candidate JSONL itself is only observable
+trace evidence and is never treated as proof of a candidate's internal
+read/write behavior.
 
 The current state is exactly `harness accepted; no Copilot evaluated`. No
 Copilot may pass its introduction gate until it supplies one complete,

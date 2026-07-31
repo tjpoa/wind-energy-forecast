@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
@@ -22,6 +23,7 @@ from .operational_query_models import (
     AnswerStatus,
     AuthorizationContext,
     EvidenceState,
+    EvidenceDomain,
     FactValue,
     OperationalAnswer,
     QueryKind,
@@ -63,18 +65,35 @@ class ExpectedFact(StrictModel):
     requires_observed_at_utc: StrictBool = False
 
 
+class ExpectedCitation(StrictModel):
+    domain: EvidenceDomain
+    source_kind: StrictStr
+    schema_version: StrictStr
+    record_id: StrictStr
+    sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
+    effective_at: StrictStr
+    observed_at_utc: datetime | None = None
+
+
 class ExpectedAnswer(StrictModel):
     query_kind: QueryKind | None
     status: AnswerStatus
     facts: tuple[ExpectedFact, ...] = ()
+    citation_set_id: StrictStr | None = None
     limitations: tuple[StrictStr, ...] = ()
     failure_code: StrictStr | None = None
+    failure_message: StrictStr | None = None
+    failure_retryable: StrictBool | None = None
     failure_evidence_state: EvidenceState | None = None
 
     @model_validator(mode="after")
     def validate_expected_answer(self) -> "ExpectedAnswer":
         if self.status == AnswerStatus.ANSWERED and not self.facts:
             raise ValueError("answered oracle requires expected facts")
+        if (self.status == AnswerStatus.ANSWERED) != (
+            self.citation_set_id is not None
+        ):
+            raise ValueError("answered oracle requires one citation set")
         failure_statuses = {
             AnswerStatus.REFUSED,
             AnswerStatus.UNAUTHORIZED,
@@ -83,13 +102,17 @@ class ExpectedAnswer(StrictModel):
             AnswerStatus.CONFLICT,
             AnswerStatus.TIMEOUT,
         }
-        has_failure = self.failure_code is not None or self.failure_evidence_state is not None
+        failure_values = (
+            self.failure_code,
+            self.failure_message,
+            self.failure_retryable,
+            self.failure_evidence_state,
+        )
+        has_failure = any(value is not None for value in failure_values)
         if (self.status in failure_statuses) != has_failure:
             raise ValueError("oracle failure fields must match the terminal status")
-        if has_failure and (
-            self.failure_code is None or self.failure_evidence_state is None
-        ):
-            raise ValueError("oracle failure code and evidence state are both required")
+        if has_failure and any(value is None for value in failure_values):
+            raise ValueError("all oracle failure fields are required")
         return self
 
 
@@ -108,12 +131,13 @@ class OperationalEvaluationManifest(StrictModel):
     dataset_version: Literal[DATASET_VERSION]
     contract_version: Literal["operational_read_only_copilot_v1"]
     language: Literal["en"]
-    source_contract_commit: StrictStr = Field(pattern=r"^[0-9a-f]{40}$")
+    source_contract_commit: Literal["8740e0c2b2d443aba830e650f7e0aaa395ee61e2"]
     case_count: Literal[EXPECTED_CASE_COUNT]
     cases_sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     distribution: dict[EvaluationCategory, StrictInt]
     gate_policy: EvaluationGatePolicy
     acceptance_state: Literal["harness accepted; no Copilot evaluated"]
+    citation_sets: dict[StrictStr, tuple[ExpectedCitation, ...]]
     oracles: dict[StrictStr, ExpectedAnswer]
 
     @model_validator(mode="after")
@@ -129,6 +153,16 @@ class OperationalEvaluationManifest(StrictModel):
             raise ValueError("dataset distribution is not the accepted v1 matrix")
         if sum(self.distribution.values()) != self.case_count:
             raise ValueError("dataset distribution does not match case_count")
+        for name, citations in self.citation_sets.items():
+            source_kinds = [item.source_kind for item in citations]
+            if not citations or len(source_kinds) != len(set(source_kinds)):
+                raise ValueError(f"citation set {name!r} is empty or ambiguous")
+        for oracle in self.oracles.values():
+            if (
+                oracle.citation_set_id is not None
+                and oracle.citation_set_id not in self.citation_sets
+            ):
+                raise ValueError("oracle references an unknown citation set")
         return self
 
 
@@ -214,6 +248,7 @@ __all__ = [
     "EvaluationCategory",
     "EvaluationMetrics",
     "ExpectedAnswer",
+    "ExpectedCitation",
     "ExpectedFact",
     "ExpectedToolCall",
     "OperationalEvaluationCase",

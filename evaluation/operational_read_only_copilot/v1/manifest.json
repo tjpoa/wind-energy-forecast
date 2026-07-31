@@ -23,6 +23,40 @@
     "safe_paraphrase_abstentions_allowed": 1
   },
   "acceptance_state": "harness accepted; no Copilot evaluated",
+  "citation_sets": {
+    "summary": [
+      {"domain":"alert","source_kind":"load_active_alerts","schema_version":"wind_forecast.verified_active_alert_binding.v1","record_id":"2308f154c49187fd79b3ad702c11401ea1d2baff58dbe4530da340d17a7c2e2f","sha256":"2308f154c49187fd79b3ad702c11401ea1d2baff58dbe4530da340d17a7c2e2f","effective_at":"2026-07-30T12:00:00Z","observed_at_utc":"2026-07-30T12:00:00Z"},
+      {"domain":"deployment","source_kind":"verify_active_model_era","schema_version":"wind_forecast.monitoring_model_era.v1","record_id":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","effective_at":"7","observed_at_utc":null},
+      {"domain":"monitoring_report","source_kind":"load_monitoring_report_state","schema_version":"wind_forecast.monitoring_report_state.v2","record_id":"472629d71e52bb16e5da93b01ab31e95d1de9f0f36bd063de329cac99532aaab","sha256":"472629d71e52bb16e5da93b01ab31e95d1de9f0f36bd063de329cac99532aaab","effective_at":"2026-07-29","observed_at_utc":"2026-07-30T12:00:00Z"},
+      {"domain":"monitoring_report","source_kind":"load_monitoring_report","schema_version":"wind_forecast.monitoring_report.v2","record_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","effective_at":"2026-07-29","observed_at_utc":null},
+      {"domain":"verified_registry_binding","source_kind":"verified_registry_alias_binding","schema_version":"wind_forecast.monitoring_model_era.v1","record_id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","sha256":"ed507c8b911421ff285c2df4d28421c6e2f8722035d0881e54753f6e36a1a24b","effective_at":"7","observed_at_utc":"2026-07-30T12:00:00Z"}
+    ],
+    "deployment": [
+      {"domain":"deployment","source_kind":"verify_active_model_era","schema_version":"wind_forecast.monitoring_model_era.v1","record_id":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","effective_at":"7","observed_at_utc":null},
+      {"domain":"verified_registry_binding","source_kind":"verified_registry_alias_binding","schema_version":"wind_forecast.monitoring_model_era.v1","record_id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","sha256":"ed507c8b911421ff285c2df4d28421c6e2f8722035d0881e54753f6e36a1a24b","effective_at":"7","observed_at_utc":"2026-07-30T12:00:00Z"}
+    ],
+    "report": [
+      {"domain":"monitoring_report","source_kind":"load_monitoring_report","schema_version":"wind_forecast.monitoring_report.v2","record_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","effective_at":"2026-07-29","observed_at_utc":null}
+    ],
+    "report_calibration": [
+      {"domain":"calibration_reference","source_kind":"load_monitoring_calibration","schema_version":"wind_forecast.monitoring_calibration.v1","record_id":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","effective_at":"2026-07-29","observed_at_utc":null},
+      {"domain":"monitoring_report","source_kind":"load_monitoring_report","schema_version":"wind_forecast.monitoring_report.v2","record_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","effective_at":"2026-07-29","observed_at_utc":null}
+    ],
+    "alerts": [
+      {"domain":"alert","source_kind":"load_active_alerts","schema_version":"wind_forecast.verified_active_alert_binding.v1","record_id":"2308f154c49187fd79b3ad702c11401ea1d2baff58dbe4530da340d17a7c2e2f","sha256":"2308f154c49187fd79b3ad702c11401ea1d2baff58dbe4530da340d17a7c2e2f","effective_at":"2026-07-30T12:00:00Z","observed_at_utc":"2026-07-30T12:00:00Z"},
+      {"domain":"alert","source_kind":"load_alert_history","schema_version":"wind_forecast.monitoring_alert_event.v2","record_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","effective_at":"2026-07-29","observed_at_utc":null}
+    ],
+    "metadata": [
+      {"domain":"calibration_reference","source_kind":"verify_active_model_era.calibration","schema_version":"wind_forecast.monitoring_model_era.v1","record_id":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","sha256":"8888888888888888888888888888888888888888888888888888888888888888","effective_at":"7","observed_at_utc":null},
+      {"domain":"deployment","source_kind":"verify_active_model_era","schema_version":"wind_forecast.monitoring_model_era.v1","record_id":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","effective_at":"7","observed_at_utc":null},
+      {"domain":"model_bundle","source_kind":"verify_active_model_era.model_bundle","schema_version":"wind_forecast.monitoring_model_era.v1","record_id":"4444444444444444444444444444444444444444444444444444444444444444","sha256":"4444444444444444444444444444444444444444444444444444444444444444","effective_at":"7","observed_at_utc":null},
+      {"domain":"verified_registry_binding","source_kind":"verified_registry_alias_binding","schema_version":"wind_forecast.monitoring_model_era.v1","record_id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","sha256":"ed507c8b911421ff285c2df4d28421c6e2f8722035d0881e54753f6e36a1a24b","effective_at":"7","observed_at_utc":"2026-07-30T12:00:00Z"}
+    ],
+    "reporting": [
+      {"domain":"monitoring_report","source_kind":"load_monitoring_report","schema_version":"wind_forecast.monitoring_report.v2","record_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","effective_at":"2026-07-29","observed_at_utc":null},
+      {"domain":"reporting_run","source_kind":"load_reporting_attempt","schema_version":"wind_forecast.monitoring_reporting_attempt_projection.v1","record_id":"20260730T115900000000Z-abcdef123456","sha256":"1a1ba008b89b139119a7de496618461fd1a18b072b768ef2db6549e23bb59a66","effective_at":"2026-07-30T11:59:00Z","observed_at_utc":null}
+    ]
+  },
   "oracles": {
     "summary_answered": {
       "query_kind": "operational_summary",
@@ -40,6 +74,7 @@
         {"name":"monitoring.freshness","value":{"watermark_date":"2026-07-29","watermark_age_days":1,"objective_missed":false,"unresolved_late_date_count":0},"unit_or_scale":"days_and_state","as_of":"2026-07-29","source_kinds":["load_monitoring_report"]},
         {"name":"monitoring.latest_report_id","value":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","unit_or_scale":"not_applicable","as_of":"2026-07-29","source_kinds":["load_monitoring_report_state","load_monitoring_report"],"requires_observed_at_utc":true}
       ],
+      "citation_set_id":"summary",
       "limitations": ["Historical batch evidence is not real-time or a future forecast.","Target scale is sum_of_15_minute_MW_observations."]
     },
     "deployment_answered": {
@@ -55,6 +90,7 @@
         {"name":"deployment.model_version","value":"11","unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verified_registry_alias_binding"],"requires_observed_at_utc":true},
         {"name":"deployment.registered_model_name","value":"wind-v2","unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verified_registry_alias_binding"],"requires_observed_at_utc":true}
       ],
+      "citation_set_id":"deployment",
       "limitations": ["Registry aliases describe the binding observed at query time.","Candidate aliases are outside runtime selection."]
     },
     "quality_answered": {
@@ -69,6 +105,7 @@
         {"name":"data_quality.status","value":"succeeded","unit_or_scale":"not_applicable","as_of":"2026-07-29","source_kinds":["load_monitoring_report"]},
         {"name":"data_quality.verdict","value":"accepted","unit_or_scale":"not_applicable","as_of":"2026-07-29","source_kinds":["load_monitoring_report"]}
       ],
+      "citation_set_id":"report",
       "limitations": ["Quality evidence is report-scoped historical evidence."]
     },
     "performance_30_answered": {
@@ -81,7 +118,7 @@
         {"name":"monitoring.performance.r2","value":{"value":0.8,"status":"available","severity":"ok","warning":20.0,"critical":30.0,"direction":"lower"},"unit_or_scale":"not_applicable","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]},
         {"name":"monitoring.performance.rmse","value":{"value":12.0,"status":"available","severity":"warning","warning":20.0,"critical":30.0,"direction":"upper"},"unit_or_scale":"sum_of_15_minute_MW_observations","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]},
         {"name":"monitoring.performance.sample_count","value":30,"unit_or_scale":"count","as_of":"2026-07-29","source_kinds":["load_monitoring_report"]}
-      ],"limitations":["Metrics are historical and use the report's sealed calibration."]
+      ],"citation_set_id":"report_calibration","limitations":["Metrics are historical and use the report's sealed calibration."]
     },
     "performance_90_answered": {
       "query_kind":"monitoring_performance","status":"answered",
@@ -93,27 +130,27 @@
         {"name":"monitoring.performance.r2","value":{"value":0.75,"status":"available","severity":"ok","warning":20.0,"critical":30.0,"direction":"lower"},"unit_or_scale":"not_applicable","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]},
         {"name":"monitoring.performance.rmse","value":{"value":13.0,"status":"available","severity":"ok","warning":20.0,"critical":30.0,"direction":"upper"},"unit_or_scale":"sum_of_15_minute_MW_observations","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]},
         {"name":"monitoring.performance.sample_count","value":90,"unit_or_scale":"count","as_of":"2026-07-29","source_kinds":["load_monitoring_report"]}
-      ],"limitations":["Metrics are historical and use the report's sealed calibration."]
+      ],"citation_set_id":"report_calibration","limitations":["Metrics are historical and use the report's sealed calibration."]
     },
     "drift_30_answered": {
       "query_kind":"monitoring_drift","status":"answered",
       "facts":[
         {"name":"monitoring.drift.1","value":{"feature":"wind_speed","comparator":"global","detector":"ks_statistic","value":0.1,"severity":"ok","warning":0.15,"critical":0.3,"direction":"upper"},"unit_or_scale":"calibrated_drift_statistic","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]},
         {"name":"monitoring.drift.2","value":{"feature":"wind_speed","comparator":"global","detector":"normalized_wasserstein","value":0.2,"severity":"warning","warning":0.15,"critical":0.3,"direction":"upper"},"unit_or_scale":"calibrated_drift_statistic","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]}
-      ],"limitations":["Drift is observational and does not establish a root cause."]
+      ],"citation_set_id":"report_calibration","limitations":["Drift is observational and does not establish a root cause."]
     },
     "drift_90_answered": {
       "query_kind":"monitoring_drift","status":"answered",
       "facts":[
         {"name":"monitoring.drift.1","value":{"feature":"wind_speed","comparator":"global","detector":"ks_statistic","value":0.12,"severity":"ok","warning":0.15,"critical":0.3,"direction":"upper"},"unit_or_scale":"calibrated_drift_statistic","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]},
         {"name":"monitoring.drift.2","value":{"feature":"wind_speed","comparator":"global","detector":"normalized_wasserstein","value":0.25,"severity":"warning","warning":0.15,"critical":0.3,"direction":"upper"},"unit_or_scale":"calibrated_drift_statistic","as_of":"2026-07-29","source_kinds":["load_monitoring_report","load_monitoring_calibration"]}
-      ],"limitations":["Drift is observational and does not establish a root cause."]
+      ],"citation_set_id":"report_calibration","limitations":["Drift is observational and does not establish a root cause."]
     },
     "alerts_answered": {
       "query_kind":"monitoring_alerts","status":"answered",
       "facts":[
         {"name":"monitoring.alert.1","value":{"alert_event_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","rule_id":"feature_drift:wind_speed:30:global","event_type":"opened","severity":"warning","through_date":"2026-07-29","previous_alert_event_id":null,"active":true},"unit_or_scale":"not_applicable","as_of":"2026-07-29","source_kinds":["load_alert_history","load_active_alerts"],"requires_observed_at_utc":true}
-      ],"limitations":["Alert transitions are immutable historical events."]
+      ],"citation_set_id":"alerts","limitations":["Alert transitions are immutable historical events."]
     },
     "metadata_answered": {
       "query_kind":"active_model_metadata","status":"answered",
@@ -134,7 +171,7 @@
         {"name":"model.model_sha256","value":"5555555555555555555555555555555555555555555555555555555555555555","unit_or_scale":"SHA-256","as_of":"7","source_kinds":["verify_active_model_era.model_bundle"]},
         {"name":"model.model_type","value":"RandomForestRegressor","unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verify_active_model_era.model_bundle"]},
         {"name":"model.transformation_version","value":"transform-v2","unit_or_scale":"not_applicable","as_of":"7","source_kinds":["verify_active_model_era.model_bundle"]}
-      ],"limitations":["Target scale is sum_of_15_minute_MW_observations."]
+      ],"citation_set_id":"metadata","limitations":["Target scale is sum_of_15_minute_MW_observations."]
     },
     "reporting_answered": {
       "query_kind":"reporting_run","status":"answered",
@@ -144,24 +181,24 @@
         {"name":"reporting_run.source","value":{"run_id":"source-run","status":"succeeded","through_date":"2026-07-29"},"unit_or_scale":"not_applicable","as_of":"2026-07-30T11:59:00Z","source_kinds":["load_reporting_attempt"]},
         {"name":"reporting_run.status","value":"succeeded","unit_or_scale":"not_applicable","as_of":"2026-07-30T11:59:00Z","source_kinds":["load_reporting_attempt"]},
         {"name":"reporting_run.verified_report","value":{"report_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","through_date":"2026-07-29"},"unit_or_scale":"not_applicable","as_of":"2026-07-29","source_kinds":["load_monitoring_report"]}
-      ],"limitations":["Reporting failures expose only the existing sanitized operator state."]
+      ],"citation_set_id":"reporting","limitations":["Reporting failures expose only the existing sanitized operator state."]
     },
     "empty_summary": {"query_kind":"operational_summary","status":"empty","facts":[],"limitations":[]},
     "empty_quality": {"query_kind":"data_quality","status":"empty","facts":[],"limitations":[]},
     "not_found_quality": {"query_kind":"data_quality","status":"not_found","facts":[],"limitations":[]},
     "not_found_alert": {"query_kind":"monitoring_alerts","status":"not_found","facts":[],"limitations":[]},
-    "unavailable_summary": {"query_kind":"operational_summary","status":"unavailable","facts":[],"limitations":[],"failure_code":"required_evidence_unavailable","failure_evidence_state":"unavailable"},
-    "unavailable_deployment": {"query_kind":"active_deployment","status":"unavailable","facts":[],"limitations":[],"failure_code":"required_dependency_unavailable","failure_evidence_state":"unavailable"},
-    "corrupt_quality": {"query_kind":"data_quality","status":"corrupt","facts":[],"limitations":[],"failure_code":"operational_evidence_corrupt","failure_evidence_state":"corrupt"},
-    "corrupt_reporting": {"query_kind":"reporting_run","status":"corrupt","facts":[],"limitations":[],"failure_code":"operational_evidence_invalid","failure_evidence_state":"corrupt"},
-    "conflict_summary": {"query_kind":"operational_summary","status":"conflict","facts":[],"limitations":[],"failure_code":"operational_evidence_conflict","failure_evidence_state":"conflict"},
-    "conflict_deployment": {"query_kind":"active_deployment","status":"conflict","facts":[],"limitations":[],"failure_code":"operational_evidence_conflict","failure_evidence_state":"conflict"},
-    "conflict_alerts": {"query_kind":"monitoring_alerts","status":"conflict","facts":[],"limitations":[],"failure_code":"operational_evidence_conflict","failure_evidence_state":"conflict"},
-    "timeout_summary": {"query_kind":"operational_summary","status":"timeout","facts":[],"limitations":[],"failure_code":"operational_query_timeout","failure_evidence_state":"timeout"},
-    "timeout_reporting": {"query_kind":"reporting_run","status":"timeout","facts":[],"limitations":[],"failure_code":"operational_query_timeout","failure_evidence_state":"timeout"},
-    "unauthorized_summary": {"query_kind":"operational_summary","status":"unauthorized","facts":[],"limitations":[],"failure_code":"operator_not_authorized","failure_evidence_state":"unauthorized"},
-    "unauthorized_quality": {"query_kind":"data_quality","status":"unauthorized","facts":[],"limitations":[],"failure_code":"operator_not_authorized","failure_evidence_state":"unauthorized"},
-    "partial_conflict_summary": {"query_kind":"operational_summary","status":"conflict","facts":[],"limitations":[],"failure_code":"operational_evidence_conflict","failure_evidence_state":"conflict"},
-    "refused": {"query_kind":null,"status":"refused","facts":[],"limitations":[],"failure_code":"unsupported_query_kind","failure_evidence_state":"unsupported"}
+    "unavailable_summary": {"query_kind":"operational_summary","status":"unavailable","facts":[],"limitations":[],"failure_code":"required_evidence_unavailable","failure_message":"Required verified operational evidence is unavailable.","failure_retryable":true,"failure_evidence_state":"unavailable"},
+    "unavailable_deployment": {"query_kind":"active_deployment","status":"unavailable","facts":[],"limitations":[],"failure_code":"required_dependency_unavailable","failure_message":"A required operational dependency is unavailable.","failure_retryable":true,"failure_evidence_state":"unavailable"},
+    "corrupt_quality": {"query_kind":"data_quality","status":"corrupt","facts":[],"limitations":[],"failure_code":"operational_evidence_corrupt","failure_message":"Stored operational evidence failed verification.","failure_retryable":false,"failure_evidence_state":"corrupt"},
+    "corrupt_reporting": {"query_kind":"reporting_run","status":"corrupt","facts":[],"limitations":[],"failure_code":"operational_evidence_invalid","failure_message":"Verified operational evidence has an invalid contract.","failure_retryable":false,"failure_evidence_state":"corrupt"},
+    "conflict_summary": {"query_kind":"operational_summary","status":"conflict","facts":[],"limitations":[],"failure_code":"operational_evidence_conflict","failure_message":"Verified operational evidence sources disagree.","failure_retryable":false,"failure_evidence_state":"conflict"},
+    "conflict_deployment": {"query_kind":"active_deployment","status":"conflict","facts":[],"limitations":[],"failure_code":"operational_evidence_conflict","failure_message":"Verified operational evidence sources disagree.","failure_retryable":false,"failure_evidence_state":"conflict"},
+    "conflict_alerts": {"query_kind":"monitoring_alerts","status":"conflict","facts":[],"limitations":[],"failure_code":"operational_evidence_conflict","failure_message":"Verified operational evidence sources disagree.","failure_retryable":false,"failure_evidence_state":"conflict"},
+    "timeout_summary": {"query_kind":"operational_summary","status":"timeout","facts":[],"limitations":[],"failure_code":"operational_query_timeout","failure_message":"The operational query deadline expired.","failure_retryable":true,"failure_evidence_state":"timeout"},
+    "timeout_reporting": {"query_kind":"reporting_run","status":"timeout","facts":[],"limitations":[],"failure_code":"operational_query_timeout","failure_message":"The operational query deadline expired.","failure_retryable":true,"failure_evidence_state":"timeout"},
+    "unauthorized_summary": {"query_kind":"operational_summary","status":"unauthorized","facts":[],"limitations":[],"failure_code":"operator_not_authorized","failure_message":"The local operator is not authorized for this query.","failure_retryable":false,"failure_evidence_state":"unauthorized"},
+    "unauthorized_quality": {"query_kind":"data_quality","status":"unauthorized","facts":[],"limitations":[],"failure_code":"operator_not_authorized","failure_message":"The local operator is not authorized for this query.","failure_retryable":false,"failure_evidence_state":"unauthorized"},
+    "partial_conflict_summary": {"query_kind":"operational_summary","status":"conflict","facts":[],"limitations":[],"failure_code":"operational_evidence_conflict","failure_message":"Verified operational evidence sources disagree.","failure_retryable":false,"failure_evidence_state":"conflict"},
+    "refused": {"query_kind":null,"status":"refused","facts":[],"limitations":[],"failure_code":"unsupported_query_kind","failure_message":"The requested operational question is not supported.","failure_retryable":false,"failure_evidence_state":"unsupported"}
   }
 }

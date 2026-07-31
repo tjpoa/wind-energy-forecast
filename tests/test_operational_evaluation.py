@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-import hashlib
 import json
 from pathlib import Path
 
@@ -21,6 +20,7 @@ from wind_forecast.operational_evaluation_models import (
     CandidateTrace,
     EvaluationCategory,
     ExpectedAnswer,
+    ExpectedCitation,
     TRACE_SCHEMA_VERSION,
 )
 from wind_forecast.operational_query import OperationalQueryService
@@ -44,24 +44,6 @@ CALIBRATION_ID = "c" * 64
 RUN_ID = "20260730T115900000000Z-abcdef123456"
 
 
-def _domain(source_kind: str) -> EvidenceDomain:
-    if source_kind == "verified_registry_alias_binding":
-        return EvidenceDomain.REGISTRY
-    if source_kind.startswith("verify_active_model_era.model_bundle"):
-        return EvidenceDomain.MODEL_BUNDLE
-    if source_kind.startswith("verify_active_model_era.calibration"):
-        return EvidenceDomain.CALIBRATION
-    if source_kind == "verify_active_model_era":
-        return EvidenceDomain.DEPLOYMENT
-    if source_kind == "load_monitoring_calibration":
-        return EvidenceDomain.CALIBRATION
-    if source_kind in {"load_alert_history", "load_active_alerts"}:
-        return EvidenceDomain.ALERT
-    if source_kind == "load_reporting_attempt":
-        return EvidenceDomain.REPORTING_RUN
-    return EvidenceDomain.MONITORING_REPORT
-
-
 def _canonical_text(value: object) -> str:
     return json.dumps(
         value,
@@ -72,33 +54,24 @@ def _canonical_text(value: object) -> str:
     )
 
 
-def _answer(oracle: ExpectedAnswer, *, correlation_id: str) -> OperationalAnswer:
+def _answer(
+    oracle: ExpectedAnswer,
+    expected_citations: tuple[ExpectedCitation, ...],
+    *,
+    correlation_id: str,
+) -> OperationalAnswer:
     facts: list[GroundedFact] = []
-    citations: list[EvidenceCitation] = []
-    evidence_index = 1
+    citations = [
+        EvidenceCitation(
+            evidence_id=f"e{index}",
+            **citation.model_dump(mode="python"),
+        )
+        for index, citation in enumerate(expected_citations, 1)
+    ]
+    evidence_id_by_source = {
+        citation.source_kind: citation.evidence_id for citation in citations
+    }
     for fact_index, expected in enumerate(oracle.facts, 1):
-        evidence_ids: list[str] = []
-        for source_kind in expected.source_kinds:
-            evidence_id = f"e{evidence_index}"
-            digest = hashlib.sha256(
-                f"{expected.name}:{source_kind}".encode("utf-8")
-            ).hexdigest()
-            citations.append(
-                EvidenceCitation(
-                    evidence_id=evidence_id,
-                    domain=_domain(source_kind),
-                    source_kind=source_kind,
-                    schema_version="wind_forecast.synthetic_evaluation.v1",
-                    record_id=digest,
-                    sha256=digest,
-                    effective_at=expected.as_of,
-                    observed_at_utc=(
-                        NOW if expected.requires_observed_at_utc else None
-                    ),
-                )
-            )
-            evidence_ids.append(evidence_id)
-            evidence_index += 1
         facts.append(
             GroundedFact(
                 fact_id=f"f{fact_index}",
@@ -106,7 +79,10 @@ def _answer(oracle: ExpectedAnswer, *, correlation_id: str) -> OperationalAnswer
                 value=expected.value,
                 unit_or_scale=expected.unit_or_scale,
                 as_of=expected.as_of,
-                evidence_ids=tuple(evidence_ids),
+                evidence_ids=tuple(
+                    evidence_id_by_source[source_kind]
+                    for source_kind in expected.source_kinds
+                ),
             )
         )
     summary = None
@@ -120,8 +96,8 @@ def _answer(oracle: ExpectedAnswer, *, correlation_id: str) -> OperationalAnswer
     if oracle.failure_code is not None:
         failure = OperationalFailure(
             code=oracle.failure_code,
-            message="Sanitized evaluation failure.",
-            retryable=oracle.status in {AnswerStatus.UNAVAILABLE, AnswerStatus.TIMEOUT},
+            message=oracle.failure_message,
+            retryable=oracle.failure_retryable,
             evidence_state=oracle.failure_evidence_state,
         )
     return OperationalAnswer(
@@ -145,6 +121,14 @@ def _perfect_traces(dataset) -> list[CandidateTrace]:
             tool_arguments=(case.expected_tool.arguments if case.expected_tool else None),
             answer=_answer(
                 dataset.manifest.oracles[case.oracle_id],
+                (
+                    dataset.manifest.citation_sets[
+                        dataset.manifest.oracles[case.oracle_id].citation_set_id
+                    ]
+                    if dataset.manifest.oracles[case.oracle_id].citation_set_id
+                    is not None
+                    else ()
+                ),
                 correlation_id=case.case_id,
             ),
         )
@@ -278,7 +262,12 @@ def test_private_candidate_data_is_detected_but_never_echoed() -> None:
     index = 56
     trace = traces[index]
     failure = trace.answer.failure.model_copy(
-        update={"message": "Traceback (most recent call last): C:\\Users\\operator\\secret"}
+        update={
+            "message": (
+                "AWS_SECRET_ACCESS_KEY=value; token=value; "
+                "D:\\ops\\credentials.env"
+            )
+        }
     )
     traces[index] = trace.model_copy(
         update={"answer": trace.answer.model_copy(update={"failure": failure})}
@@ -289,8 +278,138 @@ def test_private_candidate_data_is_detected_but_never_echoed() -> None:
 
     assert report.status == "failed"
     assert "private_data_exposure" in payload
-    assert "Traceback" not in payload
-    assert "operator" not in payload
+    assert "AWS_SECRET_ACCESS_KEY" not in payload
+    assert "credentials.env" not in payload
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("domain", EvidenceDomain.DEPLOYMENT),
+        ("schema_version", "fabricated.schema.v1"),
+        ("record_id", "f" * 64),
+        ("sha256", "0" * 64),
+        ("effective_at", "1900-01-01"),
+        ("observed_at_utc", NOW + timedelta(seconds=1)),
+    ),
+)
+def test_fabricated_citation_provenance_fails(field: str, value: object) -> None:
+    dataset = load_evaluation_dataset(MANIFEST)
+    traces = _perfect_traces(dataset)
+    trace = traces[0]
+    evidence = list(trace.answer.evidence)
+    evidence[0] = evidence[0].model_copy(update={field: value})
+    traces[0] = trace.model_copy(
+        update={"answer": trace.answer.model_copy(update={"evidence": tuple(evidence)})}
+    )
+
+    report = _score(dataset, traces)
+
+    assert report.status == "failed"
+    assert "evidence_provenance_mismatch" in report.results[0].failure_codes
+
+
+def test_missing_fact_and_alias_observation_time_fail() -> None:
+    dataset = load_evaluation_dataset(MANIFEST)
+    traces = _perfect_traces(dataset)
+    trace = traces[0]
+    facts = trace.answer.facts[1:]
+    summary = " ".join(
+        f"{fact.name}={_canonical_text(fact.value)} "
+        f"{''.join(f'[{item}]' for item in fact.evidence_ids)}."
+        for fact in facts
+    )
+    traces[0] = trace.model_copy(
+        update={"answer": trace.answer.model_copy(update={"facts": facts, "summary": summary})}
+    )
+    report = _score(dataset, traces)
+    assert "fact_set_mismatch" in report.results[0].failure_codes
+
+    traces = _perfect_traces(dataset)
+    trace = traces[0]
+    evidence = list(trace.answer.evidence)
+    registry_index = next(
+        index
+        for index, citation in enumerate(evidence)
+        if citation.source_kind == "verified_registry_alias_binding"
+    )
+    evidence[registry_index] = evidence[registry_index].model_copy(
+        update={"observed_at_utc": None}
+    )
+    traces[0] = trace.model_copy(
+        update={"answer": trace.answer.model_copy(update={"evidence": tuple(evidence)})}
+    )
+    report = _score(dataset, traces)
+    assert "evidence_provenance_mismatch" in report.results[0].failure_codes
+
+
+def test_failure_state_cannot_carry_stale_facts_or_weaken_failure_contract() -> None:
+    dataset = load_evaluation_dataset(MANIFEST)
+    traces = _perfect_traces(dataset)
+    answered = traces[0].answer
+    unavailable = traces[44]
+    stale = OperationalAnswer.model_validate(
+        {
+            **unavailable.answer.model_dump(mode="python"),
+            "summary": answered.summary,
+            "facts": answered.facts,
+            "evidence": answered.evidence,
+        },
+        strict=True,
+    )
+    traces[44] = unavailable.model_copy(update={"answer": stale})
+
+    report = _score(dataset, traces)
+
+    assert report.status == "failed"
+    assert "fact_set_mismatch" in report.results[44].failure_codes
+    assert "evidence_set_mismatch" in report.results[44].failure_codes
+    assert "unexpected_summary" in report.results[44].failure_codes
+
+    traces = _perfect_traces(dataset)
+    trace = traces[44]
+    weakened = trace.answer.failure.model_copy(
+        update={"message": "Evidence unavailable.", "retryable": False}
+    )
+    traces[44] = trace.model_copy(
+        update={"answer": trace.answer.model_copy(update={"failure": weakened})}
+    )
+    report = _score(dataset, traces)
+    assert "failure_mismatch" in report.results[44].failure_codes
+
+
+def test_safe_paraphrase_abstention_must_be_exact_and_private() -> None:
+    dataset = load_evaluation_dataset(MANIFEST)
+    traces = _perfect_traces(dataset)
+    index = 20
+    answer = OperationalAnswer(
+        query_kind=None,
+        status=AnswerStatus.REFUSED,
+        summary=None,
+        facts=(),
+        evidence=(),
+        limitations=(),
+        failure=OperationalFailure(
+            code="unsupported_query_kind",
+            message="token=value; D:\\ops\\credentials.env",
+            retryable=False,
+            evidence_state=EvidenceState.UNSUPPORTED,
+        ),
+        served_at_utc=NOW,
+        correlation_id=traces[index].case_id,
+    )
+    traces[index] = CandidateTrace(
+        case_id=traces[index].case_id,
+        selected_tool=None,
+        tool_arguments=None,
+        answer=answer,
+    )
+
+    report = _score(dataset, traces)
+
+    assert report.status == "failed"
+    assert "private_data_exposure" in report.results[index].failure_codes
+    assert "safe_paraphrase_abstention" not in report.results[index].failure_codes
 
 
 def test_dataset_and_response_inputs_fail_closed(tmp_path: Path) -> None:
@@ -309,6 +428,20 @@ def test_dataset_and_response_inputs_fail_closed(tmp_path: Path) -> None:
     oversized.write_bytes(b"{" + b"x" * MAX_JSONL_LINE_BYTES + b"}\n")
     with pytest.raises(OperationalEvaluationInputError, match="line exceeds"):
         load_candidate_traces(oversized)
+
+
+def test_manifest_rejects_a_different_source_contract_commit(tmp_path: Path) -> None:
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    manifest["source_contract_commit"] = "f" * 40
+    dataset_dir = tmp_path / "dataset"
+    dataset_dir.mkdir()
+    (dataset_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (dataset_dir / "cases.jsonl").write_bytes(
+        (MANIFEST.parent / "cases.jsonl").read_bytes()
+    )
+
+    with pytest.raises(OperationalEvaluationInputError, match="schema"):
+        load_evaluation_dataset(dataset_dir / "manifest.json")
 
 
 def _era() -> dict:
@@ -575,6 +708,31 @@ def test_evaluation_does_not_modify_dataset_or_synthetic_store(tmp_path: Path) -
 
     assert report.status == "passed"
     assert after == before
+
+
+def test_harness_never_dispatches_or_calls_operational_loaders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset = load_evaluation_dataset(MANIFEST)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("offline harness attempted an operational read")
+
+    monkeypatch.setattr(OperationalQueryService, "answer", forbidden)
+    for name in (
+        "verify_active_model_era",
+        "load_monitoring_report_state",
+        "load_monitoring_report",
+        "load_monitoring_calibration",
+        "load_alert_history",
+        "load_active_alerts",
+        "load_reporting_attempt",
+    ):
+        monkeypatch.setattr(operational, name, forbidden)
+
+    report = _score(dataset, _perfect_traces(dataset))
+
+    assert report.status == "passed"
 
 
 def test_candidate_trace_schema_forbids_server_metadata() -> None:

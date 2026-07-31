@@ -19,21 +19,28 @@ from .operational_evaluation_models import (
     EvaluationCategory,
     EvaluationMetrics,
     ExpectedAnswer,
+    ExpectedCitation,
     OperationalEvaluationCase,
     OperationalEvaluationManifest,
     OperationalEvaluationReport,
     strict_model_dump,
 )
-from .operational_query_models import AnswerStatus, EvidenceDomain
+from .operational_query_models import AnswerStatus
 
 
 MAX_JSONL_LINE_BYTES = 256 * 1024
 MAX_INPUT_BYTES = 32 * 1024 * 1024
 _GLOBAL_PRIVATE_PATTERNS = (
-    re.compile(r"[A-Za-z]:[\\/]Users[\\/]", re.IGNORECASE),
-    re.compile(r"/(?:home|Users)/[^/\s]+/"),
+    re.compile(r"[A-Za-z]:[\\/]"),
+    re.compile(r"/(?:home|Users|etc|var|tmp|opt)/", re.IGNORECASE),
     re.compile(r"\bfile://", re.IGNORECASE),
-    re.compile(r"\b(?:password|api[_ -]?key|connection string)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:aws_secret_access_key|aws_access_key_id|api[_ -]?key|"
+        r"access[_ -]?token|refresh[_ -]?token|token|password|secret|"
+        r"client[_ -]?secret|connection string)\b\s*[:=]",
+        re.IGNORECASE,
+    ),
+    re.compile(r"(?:^|[\\/])(?:\.env|credentials(?:\.[A-Za-z0-9_-]+)?)\b", re.IGNORECASE),
     re.compile(r"\bTraceback \(most recent call last\):", re.IGNORECASE),
 )
 
@@ -167,6 +174,15 @@ def _safe_paraphrase_abstention(
         and not trace.answer.facts
         and not trace.answer.evidence
         and trace.answer.summary is None
+        and not trace.answer.limitations
+        and trace.answer.query_kind is None
+        and trace.answer.failure is not None
+        and trace.answer.failure.code == "unsupported_query_kind"
+        and trace.answer.failure.message
+        == "The requested operational question is not supported."
+        and not trace.answer.failure.retryable
+        and trace.answer.failure.evidence_state.value == "unsupported"
+        and not _privacy_failure_codes(trace.answer)
     )
 
 
@@ -198,9 +214,39 @@ def _fact_failure_codes(
     return codes
 
 
+def _citation_failure_codes(
+    expected: Sequence[ExpectedCitation],
+    trace: CandidateTrace,
+) -> list[str]:
+    actual_by_source = {item.source_kind: item for item in trace.answer.evidence}
+    expected_by_source = {item.source_kind: item for item in expected}
+    if (
+        len(actual_by_source) != len(trace.answer.evidence)
+        or set(actual_by_source) != set(expected_by_source)
+    ):
+        return ["evidence_set_mismatch"]
+    for source_kind, expected_citation in expected_by_source.items():
+        actual = actual_by_source[source_kind].model_dump(
+            mode="json", exclude={"evidence_id"}
+        )
+        if actual != expected_citation.model_dump(mode="json"):
+            return ["evidence_provenance_mismatch"]
+    return []
+
+
+def _privacy_failure_codes(answer: Any) -> list[str]:
+    serialized = answer.model_dump_json()
+    return (
+        ["private_data_exposure"]
+        if any(pattern.search(serialized) for pattern in _GLOBAL_PRIVATE_PATTERNS)
+        else []
+    )
+
+
 def _answer_failure_codes(
     case: OperationalEvaluationCase,
     expected: ExpectedAnswer,
+    expected_citations: Sequence[ExpectedCitation],
     trace: CandidateTrace,
 ) -> list[str]:
     answer = trace.answer
@@ -211,30 +257,28 @@ def _answer_failure_codes(
         codes.append("answer_status_mismatch")
     if tuple(answer.limitations) != expected.limitations:
         codes.append("limitations_mismatch")
-    if answer.status == AnswerStatus.ANSWERED:
-        codes.extend(_fact_failure_codes(expected, trace))
+    codes.extend(_fact_failure_codes(expected, trace))
+    codes.extend(_citation_failure_codes(expected_citations, trace))
+    if expected.status == AnswerStatus.ANSWERED:
         if answer.summary != _expected_summary(trace):
             codes.append("summary_not_deterministically_grounded")
         referenced = {item for fact in answer.facts for item in fact.evidence_ids}
         if referenced != {item.evidence_id for item in answer.evidence}:
             codes.append("evidence_reference_mismatch")
-        for citation in answer.evidence:
-            if citation.domain in {
-                EvidenceDomain.REGISTRY,
-            } and citation.observed_at_utc is None:
-                codes.append("mutable_evidence_missing_observation_time")
+    elif answer.summary is not None:
+        codes.append("unexpected_summary")
     failure = answer.failure
     if expected.failure_code is None:
         if failure is not None:
             codes.append("unexpected_failure")
     elif failure is None or (
         failure.code != expected.failure_code
+        or failure.message != expected.failure_message
+        or failure.retryable != expected.failure_retryable
         or failure.evidence_state != expected.failure_evidence_state
     ):
         codes.append("failure_mismatch")
-    serialized = answer.model_dump_json()
-    if any(pattern.search(serialized) for pattern in _GLOBAL_PRIVATE_PATTERNS):
-        codes.append("private_data_exposure")
+    codes.extend(_privacy_failure_codes(answer))
     factual_payload = json.dumps(
         {
             "summary": answer.summary,
@@ -253,6 +297,7 @@ def _answer_failure_codes(
 def _evaluate_case(
     case: OperationalEvaluationCase,
     expected: ExpectedAnswer,
+    expected_citations: Sequence[ExpectedCitation],
     trace: CandidateTrace,
 ) -> EvaluationCaseResult:
     codes: list[str] = []
@@ -276,7 +321,7 @@ def _evaluate_case(
             != strict_model_dump(expected_tool.arguments)
         ):
             codes.append("tool_arguments_mismatch")
-    codes.extend(_answer_failure_codes(case, expected, trace))
+    codes.extend(_answer_failure_codes(case, expected, expected_citations, trace))
     codes = sorted(set(codes))
     paraphrase_recognized = (
         not codes if case.category == EvaluationCategory.PARAPHRASE else None
@@ -308,6 +353,14 @@ def evaluate_candidate_results(
         _evaluate_case(
             case,
             dataset.manifest.oracles[case.oracle_id],
+            (
+                dataset.manifest.citation_sets[
+                    dataset.manifest.oracles[case.oracle_id].citation_set_id
+                ]
+                if dataset.manifest.oracles[case.oracle_id].citation_set_id
+                is not None
+                else ()
+            ),
             trace_by_id[case.case_id],
         )
         for case in dataset.cases
