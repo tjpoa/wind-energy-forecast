@@ -4,16 +4,25 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+import ipaddress
+import math
 from pathlib import Path
 from urllib.parse import urlparse
 
 from .paths import project_root
+from .tracking import DEFAULT_TRACKING_URI
 
 
 PERFORMANCE_ARTIFACT_DIR_ENV = "WIND_FORECAST_PERFORMANCE_ARTIFACT_DIR"
 MONITORING_STORE_ROOT_ENV = "WIND_FORECAST_MONITORING_STORE_ROOT"
+DEPLOYMENT_ROOT_ENV = "WIND_FORECAST_DEPLOYMENT_ROOT"
+OPERATIONAL_QUERY_TIMEOUT_ENV = (
+    "WIND_FORECAST_OPERATIONAL_QUERY_TIMEOUT_SECONDS"
+)
+MLFLOW_TRACKING_URI_ENV = "MLFLOW_TRACKING_URI"
 CORS_ALLOWED_ORIGINS_ENV = "WIND_FORECAST_CORS_ALLOW_ORIGINS"
 DEFAULT_CORS_ALLOWED_ORIGINS = ("http://localhost:5173",)
+DEFAULT_OPERATIONAL_QUERY_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -38,6 +47,16 @@ class MonitoringStoreConfig:
     """Location of the immutable Phase 9 monitoring store."""
 
     store_root: Path
+
+
+@dataclass(frozen=True)
+class OperationalQueryConfig:
+    """Read-only operational-query sources and bounded runtime settings."""
+
+    deployment_root: Path
+    monitoring_store_root: Path
+    timeout_seconds: float
+    registry_uri: str | None
 
 
 @dataclass(frozen=True)
@@ -113,6 +132,53 @@ def load_monitoring_store_config() -> MonitoringStoreConfig:
     return MonitoringStoreConfig(store_root=configured_path.resolve())
 
 
+def load_operational_query_config() -> OperationalQueryConfig:
+    """Load the local-only operational-query configuration.
+
+    Paths are resolved without requiring them to exist. A Registry URI is
+    enabled only when it is an HTTP(S) endpoint whose numeric host is exactly
+    the IPv4 or IPv6 loopback address.
+    """
+    deployment_root = _resolved_project_path(
+        os.getenv(DEPLOYMENT_ROOT_ENV),
+        default="data/processed/v2/deployment",
+    )
+    monitoring_root = load_monitoring_store_config().store_root
+    timeout_raw = os.getenv(
+        OPERATIONAL_QUERY_TIMEOUT_ENV,
+        str(DEFAULT_OPERATIONAL_QUERY_TIMEOUT_SECONDS),
+    )
+    try:
+        timeout_seconds = float(timeout_raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{OPERATIONAL_QUERY_TIMEOUT_ENV} must be a finite number greater "
+            "than zero and no greater than 5."
+        ) from exc
+    if (
+        not math.isfinite(timeout_seconds)
+        or timeout_seconds <= 0
+        or timeout_seconds > DEFAULT_OPERATIONAL_QUERY_TIMEOUT_SECONDS
+    ):
+        raise ValueError(
+            f"{OPERATIONAL_QUERY_TIMEOUT_ENV} must be a finite number greater "
+            "than zero and no greater than 5."
+        )
+
+    tracking_uri = os.getenv(MLFLOW_TRACKING_URI_ENV, DEFAULT_TRACKING_URI)
+    registry_uri = (
+        tracking_uri.strip()
+        if _is_numeric_loopback_http_uri(tracking_uri.strip())
+        else None
+    )
+    return OperationalQueryConfig(
+        deployment_root=deployment_root,
+        monitoring_store_root=monitoring_root,
+        timeout_seconds=timeout_seconds,
+        registry_uri=registry_uri,
+    )
+
+
 def load_cors_config() -> CORSConfig:
     """Load validated, comma-separated CORS origins from the environment.
 
@@ -158,6 +224,40 @@ def _validate_cors_origin(origin: str) -> None:
         or any(character.isspace() for character in origin)
     ):
         raise ValueError(_cors_origin_error())
+
+
+def _resolved_project_path(raw_path: str | None, *, default: str) -> Path:
+    configured_path = (
+        Path(raw_path.strip())
+        if raw_path is not None and raw_path.strip()
+        else Path(default)
+    )
+    if not configured_path.is_absolute():
+        configured_path = project_root() / configured_path
+    return configured_path.resolve()
+
+
+def _is_numeric_loopback_http_uri(value: str) -> bool:
+    if not value or any(character.isspace() for character in value):
+        return False
+    try:
+        parsed = urlparse(value)
+        _ = parsed.port
+        address = ipaddress.ip_address(parsed.hostname or "")
+    except (ValueError, TypeError):
+        return False
+    return (
+        parsed.scheme in {"http", "https"}
+        and address in {
+            ipaddress.ip_address("127.0.0.1"),
+            ipaddress.ip_address("::1"),
+        }
+        and parsed.username is None
+        and parsed.password is None
+        and not parsed.params
+        and not parsed.query
+        and not parsed.fragment
+    )
 
 
 def _cors_origin_error() -> str:
