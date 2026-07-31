@@ -17,6 +17,7 @@ This folder keeps project documentation organized by purpose and roadmap phase.
 | [Reproducibility Guide](REPRODUCIBILITY.md) | MLflow Registry workflow and immutable artifact-bundle recovery. |
 | [Controlled Retraining](CONTROLLED_RETRAINING.md) | Approved post-monitoring lifecycle contract, policy, cutoffs, deployment semantics, and staged delivery plan. |
 | [Operational Read-only Copilot](OPERATIONAL_COPILOT.md) | Accepted product contract, typed query layer, and local-only HTTP API for bounded, grounded, read-only operational questions. |
+| [PostgreSQL Operational Projection](OPERATIONAL_POSTGRES_PROJECTION.md) | Accepted derived-projection contract; schema, migrations, projector, benchmark, and query integration are not implemented. |
 
 ## Phase Documents
 
