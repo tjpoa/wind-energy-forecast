@@ -65,7 +65,8 @@ def test_imports_do_not_import_psycopg_or_connect() -> None:
         "import wind_forecast.operational_projection_migrations; "
         "import wind_forecast.operational_projection_projector; "
         "assert 'psycopg' not in sys.modules; "
-        "assert 'joblib' not in sys.modules"
+        "assert 'joblib' not in sys.modules; "
+        "assert 'numpy' not in sys.modules"
     )
     completed = subprocess.run(
         [sys.executable, "-c", code],

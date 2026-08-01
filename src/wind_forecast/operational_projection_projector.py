@@ -107,10 +107,23 @@ def resolve_report_model_era(
 
 
 def threshold_severity(value: float | None, limits: Mapping[str, Any]) -> str:
-    """Evaluate thresholds without importing scientific dependencies early."""
-    from wind_forecast.monitoring_statistics import threshold_severity as implementation
-
-    return implementation(value, limits)
+    """Preserve the directional threshold contract without scientific imports."""
+    if value is None or not math.isfinite(float(value)):
+        return "critical" if value is not None else "not_available"
+    direction = str(limits.get("direction", "upper"))
+    warning = float(limits["warning"])
+    critical = float(limits["critical"])
+    if direction == "lower":
+        if value < critical:
+            return "critical"
+        if value < warning:
+            return "warning"
+    else:
+        if value > critical:
+            return "critical"
+        if value > warning:
+            return "warning"
+    return "ok"
 
 
 PROJECTION_LOCK_KEY = 8_144_735_432_071_719_011
