@@ -19,6 +19,7 @@ from wind_forecast.config import (
     load_operational_projection_database_config,
 )
 from wind_forecast import operational_projection_migrations as migrations
+from wind_forecast import operational_projection_projector as projector
 
 
 INTEGRATION_FLAG = "WIND_FORECAST_OPERATIONAL_PROJECTION_TEST_INTEGRATION"
@@ -321,3 +322,299 @@ def test_postgres_migrations_schema_roles_and_integrity(
             serialized, serialized_now = future.result(timeout=5)
     assert serialized.state == "current"
     assert serialized_now == ()
+
+
+def test_postgres_projector_publication_verification_and_rollback(
+    projection_dsns: dict[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import psycopg
+
+    migrations.migrate(projection_dsns["migrator"])
+    first_commit = "d" * 40
+    second_commit = "e" * 40
+    first_snapshot = projector.build_projection_snapshot(
+        tmp_path,
+        environment_id="local",
+        source_git_commit=first_commit,
+    )
+
+    missing = projector.verify_projection(
+        projection_dsns["reader"],
+        tmp_path,
+        environment_id="local",
+        source_git_commit=first_commit,
+    )
+    assert missing.status == "missing"
+
+    projected = projector.project_projection(
+        projection_dsns["writer"],
+        tmp_path,
+        environment_id="local",
+        source_git_commit=first_commit,
+    )
+    assert projected.status == "projected"
+    assert projected.generation_id == first_snapshot.generation_id
+    assert projector.verify_projection(
+        projection_dsns["reader"],
+        tmp_path,
+        environment_id="local",
+        source_git_commit=first_commit,
+    ).status == "ready"
+    assert projector.plan_projection(
+        projection_dsns["reader"],
+        tmp_path,
+        environment_id="local",
+        source_git_commit=first_commit,
+    ).status == "no_op"
+    assert projector.project_projection(
+        projection_dsns["writer"],
+        tmp_path,
+        environment_id="local",
+        source_git_commit=first_commit,
+    ).status == "no_op"
+
+    second_snapshot = projector.build_projection_snapshot(
+        tmp_path,
+        environment_id="local",
+        source_git_commit=second_commit,
+    )
+    assert projector.verify_projection(
+        projection_dsns["reader"],
+        tmp_path,
+        environment_id="local",
+        source_git_commit=second_commit,
+    ).status == "stale"
+
+    with pytest.raises(projector.ProjectionDatabaseError):
+        projector.project_projection(
+            projection_dsns["writer"],
+            tmp_path,
+            environment_id="local",
+            source_git_commit=second_commit,
+            failure_hook=lambda stage: (
+                (_ for _ in ()).throw(RuntimeError("forced failure"))
+                if stage == "before_commit"
+                else None
+            ),
+        )
+    with psycopg.connect(projection_dsns["reader"]) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT generation_id FROM operational_projection.projection_head "
+                "WHERE environment_id = 'local'"
+            )
+            assert cursor.fetchone()[0] == first_snapshot.generation_id
+            cursor.execute(
+                "SELECT count(*) FROM operational_projection.projection_generation "
+                "WHERE generation_id = %s",
+                (second_snapshot.generation_id,),
+            )
+            assert cursor.fetchone()[0] == 0
+
+    assert projector.project_projection(
+        projection_dsns["writer"],
+        tmp_path,
+        environment_id="local",
+        source_git_commit=second_commit,
+    ).status == "projected"
+    assert projector.project_projection(
+        projection_dsns["writer"],
+        tmp_path,
+        environment_id="local",
+        source_git_commit=first_commit,
+    ).status == "projected"
+
+    with psycopg.connect(projection_dsns["migrator"], autocommit=True) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SET ROLE wf_projection_owner")
+            cursor.execute(
+                "UPDATE operational_projection.projection_generation "
+                "SET evidence_record_count = evidence_record_count + 1 "
+                "WHERE generation_id = %s",
+                (first_snapshot.generation_id,),
+            )
+    try:
+        assert projector.verify_projection(
+            projection_dsns["reader"],
+            tmp_path,
+            environment_id="local",
+            source_git_commit=first_commit,
+        ).status == "mismatch"
+    finally:
+        with psycopg.connect(projection_dsns["migrator"], autocommit=True) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SET ROLE wf_projection_owner")
+                cursor.execute(
+                    "UPDATE operational_projection.projection_generation "
+                    "SET evidence_record_count = 0 WHERE generation_id = %s",
+                    (first_snapshot.generation_id,),
+                )
+
+    bundled = migrations.discover_migrations()
+    with psycopg.connect(projection_dsns["migrator"], autocommit=True) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SET ROLE wf_projection_owner")
+            cursor.execute(
+                "UPDATE operational_projection.schema_migration SET sha256 = %s "
+                "WHERE version = 2",
+                ("0" * 64,),
+            )
+    try:
+        assert projector.verify_projection(
+            projection_dsns["reader"],
+            tmp_path,
+            environment_id="local",
+            source_git_commit=first_commit,
+        ).status == "incompatible"
+    finally:
+        with psycopg.connect(projection_dsns["migrator"], autocommit=True) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SET ROLE wf_projection_owner")
+                cursor.execute(
+                    "UPDATE operational_projection.schema_migration SET sha256 = %s "
+                    "WHERE version = 2",
+                    (bundled[1].sha256,),
+                )
+
+    from test_operational_projection_projector import _patch_sources
+
+    _patch_sources(monkeypatch)
+    full = projector.project_projection(
+        projection_dsns["writer"],
+        tmp_path,
+        environment_id="local",
+        source_git_commit="1" * 40,
+    )
+    assert full.status == "projected"
+    assert full.counts["monitoring_report_count"] == 1
+    assert full.counts["performance_metric_count"] == 5
+    assert full.counts["drift_measurement_count"] == 2
+    assert projector.verify_projection(
+        projection_dsns["reader"],
+        tmp_path,
+        environment_id="local",
+        source_git_commit="1" * 40,
+    ).status == "ready"
+    with psycopg.connect(projection_dsns["reader"]) as connection:
+        with connection.cursor() as cursor:
+            for table, expected in (
+                ("model_era", 1),
+                ("monitoring_report", 1),
+                ("quality_issue", 1),
+                ("monitoring_window", 2),
+                ("performance_metric", 5),
+                ("drift_measurement", 2),
+                ("alert_event", 1),
+                ("active_alert_snapshot", 1),
+                ("reporting_attempt", 1),
+                ("lineage_edge", 7),
+            ):
+                cursor.execute(
+                    f"SELECT count(*) FROM operational_projection.{table}"
+                )
+                assert cursor.fetchone()[0] == expected
+
+    with psycopg.connect(projection_dsns["migrator"], autocommit=True) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SET ROLE wf_projection_owner")
+            cursor.execute(
+                "SELECT evidence_record_id FROM "
+                "operational_projection.generation_evidence "
+                "WHERE generation_id = %s ORDER BY evidence_record_id LIMIT 1",
+                (full.generation_id,),
+            )
+            evidence_record_id = cursor.fetchone()[0]
+            cursor.execute(
+                "DELETE FROM operational_projection.generation_evidence "
+                "WHERE generation_id = %s AND evidence_record_id = %s",
+                (full.generation_id, evidence_record_id),
+            )
+    try:
+        assert projector.verify_projection(
+            projection_dsns["reader"],
+            tmp_path,
+            environment_id="local",
+            source_git_commit="1" * 40,
+        ).status == "mismatch"
+    finally:
+        with psycopg.connect(projection_dsns["migrator"], autocommit=True) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SET ROLE wf_projection_owner")
+                cursor.execute(
+                    "INSERT INTO operational_projection.generation_evidence "
+                    "(generation_id, evidence_record_id) VALUES (%s, %s)",
+                    (full.generation_id, evidence_record_id),
+                )
+
+    with psycopg.connect(projection_dsns["migrator"], autocommit=True) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SET ROLE wf_projection_owner")
+            cursor.execute(
+                "UPDATE operational_projection.projection_generation "
+                "SET source_set_sha256 = %s WHERE generation_id = %s",
+                ("0" * 64, full.generation_id),
+            )
+    try:
+        assert projector.verify_projection(
+            projection_dsns["reader"],
+            tmp_path,
+            environment_id="local",
+            source_git_commit="1" * 40,
+        ).status == "mismatch"
+    finally:
+        with psycopg.connect(projection_dsns["migrator"], autocommit=True) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SET ROLE wf_projection_owner")
+                cursor.execute(
+                    "UPDATE operational_projection.projection_generation "
+                    "SET source_set_sha256 = %s WHERE generation_id = %s",
+                    (full_snapshot_source_set(tmp_path, monkeypatch), full.generation_id),
+                )
+
+
+def full_snapshot_source_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> str:
+    from test_operational_projection_projector import _patch_sources
+
+    _patch_sources(monkeypatch)
+    return projector.build_projection_snapshot(
+        tmp_path,
+        environment_id="local",
+        source_git_commit="1" * 40,
+    ).manifest.source_set_sha256
+
+
+def test_postgres_projectors_serialize_on_environment_lock(
+    projection_dsns: dict[str, str],
+    tmp_path: Path,
+) -> None:
+    import psycopg
+
+    migrations.migrate(projection_dsns["migrator"])
+    with psycopg.connect(projection_dsns["writer"], autocommit=True) as blocker:
+        with blocker.cursor() as cursor:
+            cursor.execute(
+                "SELECT pg_advisory_lock(%s)",
+                (projector.PROJECTION_LOCK_KEY,),
+            )
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                projector.project_projection,
+                projection_dsns["writer"],
+                tmp_path,
+                environment_id="local",
+                source_git_commit="f" * 40,
+            )
+            time.sleep(0.2)
+            assert not future.done()
+            with blocker.cursor() as cursor:
+                cursor.execute(
+                    "SELECT pg_advisory_unlock(%s)",
+                    (projector.PROJECTION_LOCK_KEY,),
+                )
+            result = future.result(timeout=5)
+    assert result.status == "projected"

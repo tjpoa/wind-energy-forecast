@@ -1160,7 +1160,8 @@ def _add_active_snapshot_rows(
 ) -> None:
     if not active:
         return
-    assert active_state_identity is not None
+    if active_state_identity is None:
+        raise ProjectionSourceConflictError("Active alerts have no verified state.")
     for rule_id, alert_id in sorted(active.items()):
         builder.add_row(
             "active_alert_snapshot",
