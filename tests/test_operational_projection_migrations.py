@@ -63,7 +63,9 @@ def test_imports_do_not_import_psycopg_or_connect() -> None:
         "import sys; "
         "import wind_forecast.config; "
         "import wind_forecast.operational_projection_migrations; "
-        "assert 'psycopg' not in sys.modules"
+        "import wind_forecast.operational_projection_projector; "
+        "assert 'psycopg' not in sys.modules; "
+        "assert 'joblib' not in sys.modules"
     )
     completed = subprocess.run(
         [sys.executable, "-c", code],
@@ -73,6 +75,13 @@ def test_imports_do_not_import_psycopg_or_connect() -> None:
     )
 
     assert completed.returncode == 0, completed.stderr
+
+
+def _patch_empty_projector_sources(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(projector, "load_monitoring_report_state", lambda _root: None)
+    monkeypatch.setattr(projector, "load_active_alerts", lambda _root: {})
+    monkeypatch.setattr(projector, "load_alert_history", lambda _root: [])
+    monkeypatch.setattr(projector, "load_reporting_attempts", lambda _root: [])
 
 
 def test_discover_migrations_is_contiguous_and_hashes_original_bytes(
@@ -331,6 +340,7 @@ def test_postgres_projector_publication_verification_and_rollback(
 ) -> None:
     import psycopg
 
+    _patch_empty_projector_sources(monkeypatch)
     migrations.migrate(projection_dsns["migrator"])
     first_commit = "d" * 40
     second_commit = "e" * 40
@@ -591,9 +601,11 @@ def full_snapshot_source_set(
 def test_postgres_projectors_serialize_on_environment_lock(
     projection_dsns: dict[str, str],
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import psycopg
 
+    _patch_empty_projector_sources(monkeypatch)
     migrations.migrate(projection_dsns["migrator"])
     with psycopg.connect(projection_dsns["writer"], autocommit=True) as blocker:
         with blocker.cursor() as cursor:

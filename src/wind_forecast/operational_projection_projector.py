@@ -10,17 +10,6 @@ import re
 import subprocess
 from typing import Any, Callable, Iterable, Mapping
 
-from wind_forecast.monitoring import load_model_era, load_prediction_evidence
-from wind_forecast.monitoring_reporting import (
-    load_active_alerts,
-    load_alert_history,
-    load_monitoring_calibration,
-    load_monitoring_report,
-    load_monitoring_report_state,
-    load_reporting_attempts,
-    resolve_report_model_era,
-)
-from wind_forecast.monitoring_statistics import threshold_severity
 from wind_forecast.operational_projection_migrations import (
     AppliedMigration,
     OperationalProjectionMigrationError,
@@ -40,6 +29,88 @@ from wind_forecast.operational_projection_models import (
     ordered_rows,
 )
 from wind_forecast.paths import project_root
+
+
+def load_model_era(store_root: str | Path, model_era_id: str) -> dict[str, Any]:
+    """Load a model era without importing the operational stack at module import."""
+    from wind_forecast.monitoring import load_model_era as implementation
+
+    return implementation(store_root, model_era_id)
+
+
+def load_prediction_evidence(
+    store_root: str | Path,
+    prediction_id: str,
+) -> dict[str, Any]:
+    """Load prediction evidence without importing scientific dependencies early."""
+    from wind_forecast.monitoring import load_prediction_evidence as implementation
+
+    return implementation(store_root, prediction_id)
+
+
+def load_active_alerts(store_root: str | Path) -> dict[str, Any]:
+    """Load active alerts through the authoritative loader on first use."""
+    from wind_forecast.monitoring_reporting import load_active_alerts as implementation
+
+    return implementation(store_root)
+
+
+def load_alert_history(store_root: str | Path) -> list[dict[str, Any]]:
+    """Load alert history through the authoritative loader on first use."""
+    from wind_forecast.monitoring_reporting import load_alert_history as implementation
+
+    return implementation(store_root)
+
+
+def load_monitoring_calibration(path: str | Path) -> dict[str, Any]:
+    """Load calibration evidence through the authoritative loader on first use."""
+    from wind_forecast.monitoring_reporting import (
+        load_monitoring_calibration as implementation,
+    )
+
+    return implementation(path)
+
+
+def load_monitoring_report(path: str | Path) -> dict[str, Any]:
+    """Load a monitoring report through the authoritative loader on first use."""
+    from wind_forecast.monitoring_reporting import load_monitoring_report as implementation
+
+    return implementation(path)
+
+
+def load_monitoring_report_state(store_root: str | Path) -> dict[str, Any] | None:
+    """Load report state through the authoritative loader on first use."""
+    from wind_forecast.monitoring_reporting import (
+        load_monitoring_report_state as implementation,
+    )
+
+    return implementation(store_root)
+
+
+def load_reporting_attempts(store_root: str | Path) -> list[dict[str, Any]]:
+    """Load reporting attempts through the authoritative loader on first use."""
+    from wind_forecast.monitoring_reporting import load_reporting_attempts as implementation
+
+    return implementation(store_root)
+
+
+def resolve_report_model_era(
+    store_root: str | Path,
+    report: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Resolve report lineage through the authoritative loader on first use."""
+    from wind_forecast.monitoring_reporting import (
+        resolve_report_model_era as implementation,
+    )
+
+    return implementation(store_root, report)
+
+
+def threshold_severity(value: float | None, limits: Mapping[str, Any]) -> str:
+    """Evaluate thresholds without importing scientific dependencies early."""
+    from wind_forecast.monitoring_statistics import threshold_severity as implementation
+
+    return implementation(value, limits)
 
 
 PROJECTION_LOCK_KEY = 8_144_735_432_071_719_011
