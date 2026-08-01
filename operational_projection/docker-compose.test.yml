@@ -1,4 +1,4 @@
 services:
   postgres:
     ports:
-      - "127.0.0.1::5432"
+      - "127.0.0.1:${WIND_FORECAST_OPERATIONAL_PROJECTION_TEST_PORT:?Select an ephemeral loopback port}:5432"
