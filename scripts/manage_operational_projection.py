@@ -1,6 +1,6 @@
-"""Manual migration entry point for the dedicated operational projection."""
+"""Manual entry point for the dedicated operational projection."""
 
-from wind_forecast.operational_projection_migrations import main
+from wind_forecast.operational_projection_cli import main
 
 
 if __name__ == "__main__":
