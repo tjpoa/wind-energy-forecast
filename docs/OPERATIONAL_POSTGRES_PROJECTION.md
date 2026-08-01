@@ -10,7 +10,7 @@
 | Contract version | `operational_postgres_projection_v1` |
 | Audience | One authorized operator in a trusted local environment |
 | Operating mode | `retrospective_historical_batch_not_real_time` |
-| Implementation status | Dedicated PostgreSQL foundation, roles, schema, migrations, and manual migration CLI implemented; projector, benchmark, and query integration are not implemented |
+| Implementation status | Dedicated PostgreSQL foundation, roles, schema, migrations, manual all-or-nothing projector, verifier, and management CLI implemented; benchmark and query integration are not implemented |
 
 ## Objective And Justification Gate
 
@@ -397,6 +397,42 @@ Both commands require only the migrator DSN. Output is sanitized JSON; DSNs,
 passwords, raw PostgreSQL errors, and environment dumps are never returned.
 Migrations are not applied on import, API startup, health checks, or queries.
 
+### Local Projector Runbook
+
+The projector reads the monitoring store selected by
+`WIND_FORECAST_MONITORING_STORE_ROOT`, which retains its existing project-root
+default. It accepts only the `local` operational environment and requires a
+clean tracked Git checkout so every generation is bound to one committed
+projector implementation. It never imports the PostgreSQL driver or opens a
+connection merely because its modules are imported.
+
+The manual commands are:
+
+```text
+python scripts/manage_operational_projection.py plan
+python scripts/manage_operational_projection.py project
+python scripts/manage_operational_projection.py verify
+```
+
+`plan` and `verify` require only the reader DSN. `project` requires only the
+writer DSN, obtains the environment advisory lock, revalidates the mutable
+source views, and publishes the ready generation and head in one transaction.
+An identical ready head is reported as `no_op`; no operational file, pointer,
+lock, report, alert, model, or artifact is written.
+
+`verify` returns `ready`, `missing`, `stale`, `mismatch`, or `incompatible`.
+Only `ready` exits successfully. `plan` exits successfully with `planned` or
+`no_op`, while `project` exits successfully with `projected` or `no_op`.
+Failures and negative verification states use sanitized JSON and a non-zero
+exit status.
+
+A reporting attempt is mutable between its initial request and its terminal
+result. Because the accepted relational schema retains immutable attempt rows,
+the projector fails closed with `source_not_stable` while any verified attempt
+is still `in_progress`. It neither omits nor prematurely persists that attempt;
+the operator reruns the manual command after the reporting attempt reaches
+`succeeded` or `failed`.
+
 ## Benchmark Readiness Gate
 
 Plan 4 must use deterministic synthetic evidence only:
@@ -432,7 +468,7 @@ request, passes independent review, and stops for explicit user approval:
 
 1. This documentation-only contract: accepted by this record.
 2. Dedicated PostgreSQL foundation, roles, schema, and migrations: implemented.
-3. Manual all-or-nothing artifact projector and verifier: pending.
+3. Manual all-or-nothing artifact projector and verifier: implemented.
 4. Deterministic benchmark and `GO`/`NO-GO` decision: pending.
 5. Optional `disabled|required` query-layer integration after benchmark `GO`:
    pending.
@@ -452,10 +488,12 @@ staging, cloud, and production identity remain later independent decisions.
 - Authentication, authorization, secret handling, data minimization, retention,
   migration, generation, concurrency, benchmark, rollback, and stop gates are
   decision-complete for Plans 2 through 5.
-- PostgreSQL foundation, roles, schema, and migrations are implemented without
-  a consumer; projector, benchmark, and integration remain unimplemented.
-- No projector, consumer, pipeline, artifact, or operational-state mutation is
-  introduced by the foundation plan.
+- PostgreSQL foundation, roles, schema, migrations, and the manual projector
+  are implemented without a consumer; benchmark and integration remain
+  unimplemented.
+- The projector is manual, reconstructible, loader-backed, serialized, and
+  all-or-nothing. It introduces no consumer, pipeline, scheduler, artifact, or
+  operational-state mutation.
 
 ## Risks And Controls
 
