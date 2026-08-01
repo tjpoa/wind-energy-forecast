@@ -153,6 +153,91 @@ jobs:
       - name: Validate Docker Compose configuration
         run: docker compose config --quiet
 
+  operational-projection-postgres:
+    name: Operational projection PostgreSQL 16
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_PASSWORD: ci-bootstrap-${{ github.run_id }}
+      WIND_FORECAST_OPERATIONAL_PROJECTION_MIGRATOR_PASSWORD: ci-migrator-${{ github.run_id }}
+      WIND_FORECAST_OPERATIONAL_PROJECTION_WRITER_PASSWORD: ci-writer-${{ github.run_id }}
+      WIND_FORECAST_OPERATIONAL_PROJECTION_READER_PASSWORD: ci-reader-${{ github.run_id }}
+      WIND_FORECAST_OPERATIONAL_ENVIRONMENT_ID: local
+      WIND_FORECAST_OPERATIONAL_PROJECTION_TEST_INTEGRATION: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install projection test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "psycopg[binary]>=3,<4" "pytest>=8,<9" "pytest-cov>=7,<8" "ruff>=0.8,<1"
+          python -m pip install --no-deps -e .
+
+      - name: Select an ephemeral loopback port
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import socket
+
+          with socket.socket() as listener:
+              listener.bind(("127.0.0.1", 0))
+              print(f"WIND_FORECAST_OPERATIONAL_PROJECTION_TEST_PORT={listener.getsockname()[1]}")
+          PY
+
+      - name: Configure role-specific test DSNs
+        run: |
+          echo "WIND_FORECAST_OPERATIONAL_PROJECTION_MIGRATOR_DSN=postgresql://wf_projection_migrator:${WIND_FORECAST_OPERATIONAL_PROJECTION_MIGRATOR_PASSWORD}@127.0.0.1:${WIND_FORECAST_OPERATIONAL_PROJECTION_TEST_PORT}/wind_forecast_operational" >> "$GITHUB_ENV"
+          echo "WIND_FORECAST_OPERATIONAL_PROJECTION_WRITER_DSN=postgresql://wf_projection_writer:${WIND_FORECAST_OPERATIONAL_PROJECTION_WRITER_PASSWORD}@127.0.0.1:${WIND_FORECAST_OPERATIONAL_PROJECTION_TEST_PORT}/wind_forecast_operational" >> "$GITHUB_ENV"
+          echo "WIND_FORECAST_OPERATIONAL_PROJECTION_READER_DSN=postgresql://wf_projection_reader:${WIND_FORECAST_OPERATIONAL_PROJECTION_READER_PASSWORD}@127.0.0.1:${WIND_FORECAST_OPERATIONAL_PROJECTION_TEST_PORT}/wind_forecast_operational" >> "$GITHUB_ENV"
+
+      - name: Validate dedicated Compose configuration
+        run: |
+          docker compose \
+            -f operational_projection/docker-compose.yml \
+            -f operational_projection/docker-compose.test.yml \
+            config --quiet
+
+      - name: Start isolated PostgreSQL 16
+        run: |
+          docker compose \
+            --project-name wind-projection-ci \
+            -f operational_projection/docker-compose.yml \
+            -f operational_projection/docker-compose.test.yml \
+            up --detach --wait
+
+      - name: Test migrations, schema, and roles
+        run: python -m pytest --no-cov tests/test_operational_projection_migrations.py
+
+      - name: Run projection lint
+        run: |
+          python -m ruff check \
+            src/wind_forecast/config.py \
+            src/wind_forecast/operational_projection_migrations.py \
+            scripts/manage_operational_projection.py \
+            tests/test_operational_projection_migrations.py
+
+      - name: Show PostgreSQL logs on failure
+        if: failure()
+        run: docker logs wind-projection-ci-postgres-1
+
+      - name: Remove ephemeral PostgreSQL resources
+        if: always()
+        run: |
+          docker compose \
+            --project-name wind-projection-ci \
+            -f operational_projection/docker-compose.yml \
+            -f operational_projection/docker-compose.test.yml \
+            down --volumes
+
   airflow-quality:
     name: Airflow image and DAG import
     runs-on: ubuntu-latest

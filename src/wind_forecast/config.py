@@ -23,6 +23,17 @@ MLFLOW_TRACKING_URI_ENV = "MLFLOW_TRACKING_URI"
 CORS_ALLOWED_ORIGINS_ENV = "WIND_FORECAST_CORS_ALLOW_ORIGINS"
 DEFAULT_CORS_ALLOWED_ORIGINS = ("http://localhost:5173",)
 DEFAULT_OPERATIONAL_QUERY_TIMEOUT_SECONDS = 5.0
+OPERATIONAL_ENVIRONMENT_ID_ENV = "WIND_FORECAST_OPERATIONAL_ENVIRONMENT_ID"
+OPERATIONAL_PROJECTION_MIGRATOR_DSN_ENV = (
+    "WIND_FORECAST_OPERATIONAL_PROJECTION_MIGRATOR_DSN"
+)
+OPERATIONAL_PROJECTION_WRITER_DSN_ENV = (
+    "WIND_FORECAST_OPERATIONAL_PROJECTION_WRITER_DSN"
+)
+OPERATIONAL_PROJECTION_READER_DSN_ENV = (
+    "WIND_FORECAST_OPERATIONAL_PROJECTION_READER_DSN"
+)
+SUPPORTED_OPERATIONAL_ENVIRONMENT_ID = "local"
 
 
 @dataclass(frozen=True)
@@ -57,6 +68,15 @@ class OperationalQueryConfig:
     monitoring_store_root: Path
     timeout_seconds: float
     registry_uri: str | None
+
+
+@dataclass(frozen=True)
+class OperationalProjectionDatabaseConfig:
+    """One explicitly selected database role for the local projection."""
+
+    environment_id: str
+    role: str
+    dsn: str
 
 
 @dataclass(frozen=True)
@@ -176,6 +196,39 @@ def load_operational_query_config() -> OperationalQueryConfig:
         monitoring_store_root=monitoring_root,
         timeout_seconds=timeout_seconds,
         registry_uri=registry_uri,
+    )
+
+
+def load_operational_projection_database_config(
+    role: str,
+) -> OperationalProjectionDatabaseConfig:
+    """Load one projection DSN without importing a driver or opening a connection."""
+    dsn_variables = {
+        "migrator": OPERATIONAL_PROJECTION_MIGRATOR_DSN_ENV,
+        "writer": OPERATIONAL_PROJECTION_WRITER_DSN_ENV,
+        "reader": OPERATIONAL_PROJECTION_READER_DSN_ENV,
+    }
+    if role not in dsn_variables:
+        raise ValueError("Operational projection database role is unsupported.")
+
+    environment_id = os.getenv(
+        OPERATIONAL_ENVIRONMENT_ID_ENV,
+        SUPPORTED_OPERATIONAL_ENVIRONMENT_ID,
+    ).strip()
+    if environment_id != SUPPORTED_OPERATIONAL_ENVIRONMENT_ID:
+        raise ValueError(
+            f"{OPERATIONAL_ENVIRONMENT_ID_ENV} must be exactly "
+            f"{SUPPORTED_OPERATIONAL_ENVIRONMENT_ID!r}."
+        )
+
+    dsn_variable = dsn_variables[role]
+    dsn = os.getenv(dsn_variable)
+    if dsn is None or not dsn.strip():
+        raise ValueError(f"{dsn_variable} must be configured.")
+    return OperationalProjectionDatabaseConfig(
+        environment_id=environment_id,
+        role=role,
+        dsn=dsn.strip(),
     )
 
 

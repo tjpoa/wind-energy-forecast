@@ -10,7 +10,7 @@
 | Contract version | `operational_postgres_projection_v1` |
 | Audience | One authorized operator in a trusted local environment |
 | Operating mode | `retrospective_historical_batch_not_real_time` |
-| Implementation status | Contract accepted; PostgreSQL schema, migrations, projector, benchmark, and query integration are not implemented |
+| Implementation status | Dedicated PostgreSQL foundation, roles, schema, migrations, and manual migration CLI implemented; projector, benchmark, and query integration are not implemented |
 
 ## Objective And Justification Gate
 
@@ -367,13 +367,35 @@ There are no destructive down migrations. Because the projection is derived,
 rollback disables the consumer and rebuilds only the dedicated database after
 separate destructive authorization.
 
-The future manual CLI is limited to:
+The manual CLI is limited to:
 
 - `migration-status` and `migrate` in Plan 2;
 - `plan`, `project`, and `verify` in Plan 3.
 
 No `rebuild`, purge, scheduled projection, or request-triggered projection is
 approved.
+
+### Local Migration Runbook
+
+The dedicated stack is defined in `operational_projection/docker-compose.yml`.
+It uses PostgreSQL 16, the `wind_forecast_operational` database, a private
+network, and a dedicated volume. The base stack publishes no host port. The
+test overlay may bind PostgreSQL to an ephemeral port on `127.0.0.1` only.
+
+Copy `operational_projection/.env.example` to the ignored local `.env`, replace
+all placeholders, and start the dedicated database explicitly. For test use,
+select an unused loopback port through
+`WIND_FORECAST_OPERATIONAL_PROJECTION_TEST_PORT`, then set the three
+role-specific DSNs to that port. The migration commands are:
+
+```text
+python scripts/manage_operational_projection.py migration-status
+python scripts/manage_operational_projection.py migrate
+```
+
+Both commands require only the migrator DSN. Output is sanitized JSON; DSNs,
+passwords, raw PostgreSQL errors, and environment dumps are never returned.
+Migrations are not applied on import, API startup, health checks, or queries.
 
 ## Benchmark Readiness Gate
 
@@ -409,7 +431,7 @@ Each plan starts from updated `master`, uses a separate branch and draft pull
 request, passes independent review, and stops for explicit user approval:
 
 1. This documentation-only contract: accepted by this record.
-2. Dedicated PostgreSQL foundation, roles, schema, and migrations: pending.
+2. Dedicated PostgreSQL foundation, roles, schema, and migrations: implemented.
 3. Manual all-or-nothing artifact projector and verifier: pending.
 4. Deterministic benchmark and `GO`/`NO-GO` decision: pending.
 5. Optional `disabled|required` query-layer integration after benchmark `GO`:
@@ -430,9 +452,10 @@ staging, cloud, and production identity remain later independent decisions.
 - Authentication, authorization, secret handling, data minimization, retention,
   migration, generation, concurrency, benchmark, rollback, and stop gates are
   decision-complete for Plans 2 through 5.
-- PostgreSQL schema, migrations, projector, benchmark, and integration remain
-  explicitly unimplemented after this documentation-only plan.
-- No dependency, service, pipeline, artifact, or operational state changes.
+- PostgreSQL foundation, roles, schema, and migrations are implemented without
+  a consumer; projector, benchmark, and integration remain unimplemented.
+- No projector, consumer, pipeline, artifact, or operational-state mutation is
+  introduced by the foundation plan.
 
 ## Risks And Controls
 
