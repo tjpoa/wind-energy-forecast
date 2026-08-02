@@ -519,6 +519,44 @@ or equivalent implementation and full corruption, ordering, identity, and
 regression evidence. Benchmark-side caching or parallel repetitions are not
 accepted because they would weaken or bias the filesystem comparison.
 
+#### Loader performance follow-up
+
+The separately approved loader optimization keeps the authoritative parsing,
+validation, public errors, and returned ordering unchanged. Stores below 32
+candidate records remain on the sequential path. At 32 records or more,
+`load_alert_history` and `load_reporting_attempts` read independent sorted
+paths through an order-preserving thread map capped at eight workers. The cap
+limits file-descriptor pressure; the ordered result iteration also preserves
+which sorted-path error is observed first. The implementation is read-only and
+introduces no cache, configuration, environment variable, or API change.
+
+This follow-up does not change the Plan 4 decision. The mandatory full profile
+must still complete with all approved cardinalities, repetitions, equivalence,
+deadline, speed, and index-plan gates before a reviewed decision may replace
+the current `NO-GO`.
+
+A deterministic local pilot with 40 reports, 400 reporting attempts, 2,000
+alert events, and 8,000 drift measurements returned byte-for-byte equivalent
+loader results. On the same generated store, alert-history enumeration changed
+from 12.522 seconds sequentially to 0.426 seconds in the bounded parallel path;
+reporting-attempt enumeration changed from 5.592 seconds to 0.235 seconds. These
+pilot timings demonstrate the loader optimization only. They are not projection
+readiness evidence and do not satisfy or replace the mandatory full benchmark.
+
+The post-optimization full profile was executed once on `2026-08-02` with the
+one-hour hard bound. Migration completed in 0.158 seconds, deterministic fixture
+generation in 50.313 seconds, and the complete verified projection snapshot in
+139.719 seconds. The run then exhausted the remaining bound in
+`snapshot_publish`; query measurement never started. The supervisor recorded
+`NO-GO` with `benchmark_runtime:hard_timeout` and removed its synthetic store.
+The dedicated PostgreSQL container, network, and volume were also removed.
+
+This result proves that verified loader enumeration and snapshot construction
+are no longer the blocking phase. It does not provide query medians, maxima, or
+index plans, so the readiness decision remains `NO-GO`. Any further work must
+target benchmark publication separately and must not weaken the transactional
+projector, database constraints, cardinalities, repetitions, or query gates.
+
 ## Delivery Plans
 
 Each plan starts from updated `master`, uses a separate branch and draft pull

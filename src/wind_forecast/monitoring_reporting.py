@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
@@ -9,7 +10,7 @@ import json
 import math
 import os
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence, TypeVar
 from uuid import uuid4
 
 import joblib
@@ -62,6 +63,9 @@ PREDICTION_COLUMN = "Reference_Prediction"
 ACTUAL_COLUMN = "Actual"
 LEDGER_PREDICTION_COLUMN = "Prediction"
 SEVERITY_ORDER = {"not_available": -1, "ok": 0, "warning": 1, "critical": 2}
+_PARALLEL_LOADER_MIN_ITEMS = 32
+_PARALLEL_LOADER_MAX_WORKERS = 8
+_LoadedRecord = TypeVar("_LoadedRecord")
 
 
 class MonitoringReportingError(RuntimeError):
@@ -701,11 +705,11 @@ def load_reporting_attempts(
     runs_root = store_root / "reporting" / "runs"
     if not runs_root.is_dir():
         return []
-    attempts = [
-        _load_reporting_attempt(store_root, path)
-        for path in sorted(runs_root.iterdir())
-        if path.is_dir()
-    ]
+    run_dirs = [path for path in sorted(runs_root.iterdir()) if path.is_dir()]
+    attempts = _load_paths_in_order(
+        run_dirs,
+        lambda path: _load_reporting_attempt(store_root, path),
+    )
     return sorted(
         attempts,
         key=lambda item: (
@@ -889,11 +893,11 @@ def load_alert_history(
     root = Path(monitoring_store_root) / "reporting" / "alerts"
     if not root.is_dir():
         return []
+    paths = sorted(root.glob("*.json"))
+    loaded_events = _load_paths_in_order(paths, _load_alert_event)
     events: list[dict[str, Any]] = []
     by_id: dict[str, dict[str, Any]] = {}
-    for path in sorted(root.glob("*.json")):
-        event = _read_json(path)
-        _verify_record_id(event, "monitoring_alert", "alert_event_id")
+    for event in loaded_events:
         by_id[str(event["alert_event_id"])] = event
         if rule_id is None or event.get("rule_id") == rule_id:
             events.append(event)
@@ -926,6 +930,36 @@ def load_alert_history(
             str(item.get("alert_event_id")),
         ),
     )
+
+
+def _load_alert_event(path: Path) -> dict[str, Any]:
+    event = _read_json(path)
+    _verify_record_id(event, "monitoring_alert", "alert_event_id")
+    return event
+
+
+def _load_paths_in_order(
+    paths: Sequence[Path],
+    loader: Callable[[Path], _LoadedRecord],
+) -> list[_LoadedRecord]:
+    """Load independent files concurrently while observing results in path order."""
+    if len(paths) < _PARALLEL_LOADER_MIN_ITEMS:
+        return [loader(path) for path in paths]
+    # Eight workers bound file-descriptor pressure while overlapping local JSON reads.
+    try:
+        executor = ThreadPoolExecutor(max_workers=_PARALLEL_LOADER_MAX_WORKERS)
+    except (OSError, RuntimeError) as exc:
+        raise MonitoringReportingUnavailableError(
+            "Parallel monitoring artifact loading is unavailable."
+        ) from exc
+    with executor:
+        try:
+            loaded = executor.map(loader, paths)
+        except (OSError, RuntimeError) as exc:
+            raise MonitoringReportingUnavailableError(
+                "Parallel monitoring artifact loading is unavailable."
+            ) from exc
+        return list(loaded)
 
 
 def _calibrate_drift_thresholds(
