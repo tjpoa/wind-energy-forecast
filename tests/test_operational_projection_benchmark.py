@@ -289,6 +289,29 @@ def test_synthetic_store_is_loader_valid_and_projection_complete(
         "performance_report_window",
         "drift_report_window",
     )
+    interval = cases["alert_interval_pagination"]
+    assert interval.parameters == (
+        selection.alert_start,
+        selection.alert_end,
+        "local",
+        selection.alert_limit,
+        selection.alert_offset,
+    )
+    cte_sql, outer_sql = interval.sql.split(") SELECT", maxsplit=1)
+    assert "WITH interval_alerts AS MATERIALIZED" in cte_sql
+    assert "WHERE through_date BETWEEN %s AND %s" in cte_sql
+    assert "LIMIT" not in cte_sql
+    assert "OFFSET" not in cte_sql
+    assert "generation_evidence" not in cte_sql
+    assert "projection_head" not in cte_sql
+    assert "JOIN operational_projection.generation_evidence" in outer_sql
+    assert "JOIN operational_projection.projection_head" in outer_sql
+    assert (
+        "ORDER BY ia.through_date, ia.rule_id, ia.alert_event_id "
+        "LIMIT %s OFFSET %s"
+    ) in outer_sql
+    assert outer_sql.index("projection_head") < outer_sql.index("LIMIT %s")
+    assert interval.expected_indexes == ("alert_event_date_idx",)
     assert cases["exact_alert_id"].filesystem() == ((selection.alert_event_id,),)
     assert cases["reporting_run_by_run_id"].filesystem()[0][0] == (
         selection.reporting_run_id
