@@ -39,6 +39,55 @@ def _alert_model_era() -> dict[str, object]:
     }
 
 
+def _write_test_alert(store: Path, index: int) -> dict[str, object]:
+    event = reporting._alert_event(
+        f"quality:test-{index % 3}",
+        f"2026-07-{(index % 28) + 1:02d}",
+        "opened",
+        "warning",
+        None,
+        _alert_model_era(),
+    )
+    alerts_root = store / "reporting" / "alerts"
+    alerts_root.mkdir(parents=True, exist_ok=True)
+    (alerts_root / f"{index:04d}-{event['alert_event_id']}.json").write_text(
+        json.dumps(event),
+        encoding="utf-8",
+    )
+    return event
+
+
+def _write_failed_reporting_attempt(store: Path, index: int) -> dict[str, object]:
+    run_id = f"reporting-run-{index:04d}"
+    run_root = store / "reporting" / "runs" / run_id
+    run_root.mkdir(parents=True, exist_ok=True)
+    request = {
+        "schema_version": "wind_forecast.monitoring_report_request.v2",
+        "run_id": run_id,
+        "requested_at_utc": f"2026-07-30T12:{index % 60:02d}:00Z",
+        "plan": {
+            "status": "planned",
+            "through_date": "2026-07-29",
+            "source_run_id": f"source-{index:04d}",
+            "source_status": "failed",
+            "calibration_id": "calibration-id",
+        },
+    }
+    (run_root / "request.json").write_text(json.dumps(request), encoding="utf-8")
+    (run_root / "failure.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "wind_forecast.monitoring_report_failure.v1",
+                "run_id": run_id,
+                "failed_at_utc": f"2026-07-30T13:{index % 60:02d}:00Z",
+                "error_type": "SyntheticFailure",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return request
+
+
 def _calibration_environment(tmp_path, monkeypatch):
     dates = pd.date_range("2022-01-01", "2023-12-31", freq="D")
     frame = pd.DataFrame(
@@ -436,6 +485,124 @@ def test_reporting_attempt_loader_is_verified_ordered_and_sanitized(
         "The reporting attempt failed. Inspect local operator logs."
     )
     assert "secret.json" not in json.dumps(exact).lower()
+
+
+def test_large_verified_loaders_use_bounded_parallel_map_without_changing_results(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    item_count = reporting._PARALLEL_LOADER_MIN_ITEMS + 3
+    for index in range(item_count):
+        _write_test_alert(tmp_path, index + 100)
+        _write_failed_reporting_attempt(tmp_path, index)
+
+    original_threshold = reporting._PARALLEL_LOADER_MIN_ITEMS
+    monkeypatch.setattr(reporting, "_PARALLEL_LOADER_MIN_ITEMS", item_count + 1)
+    sequential_alerts = load_alert_history(tmp_path)
+    sequential_attempts = load_reporting_attempts(tmp_path)
+    monkeypatch.setattr(reporting, "_PARALLEL_LOADER_MIN_ITEMS", original_threshold)
+
+    real_executor = reporting.ThreadPoolExecutor
+    worker_counts: list[int] = []
+
+    class RecordingExecutor:
+        def __init__(self, *, max_workers: int) -> None:
+            worker_counts.append(max_workers)
+            self._delegate = real_executor(max_workers=max_workers)
+
+        def __enter__(self):
+            self._delegate.__enter__()
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return self._delegate.__exit__(exc_type, exc_value, traceback)
+
+        def map(self, function, values):
+            return self._delegate.map(function, values)
+
+    monkeypatch.setattr(reporting, "ThreadPoolExecutor", RecordingExecutor)
+
+    assert load_alert_history(tmp_path) == sequential_alerts
+    assert load_reporting_attempts(tmp_path) == sequential_attempts
+    assert worker_counts == [
+        reporting._PARALLEL_LOADER_MAX_WORKERS,
+        reporting._PARALLEL_LOADER_MAX_WORKERS,
+    ]
+    assert [item["run_id"] for item in sequential_attempts] == [
+        item["run_id"]
+        for item in sorted(
+            sequential_attempts,
+            key=lambda item: (item["attempted_at_utc"], item["run_id"]),
+            reverse=True,
+        )
+    ]
+
+
+def test_small_verified_loaders_remain_sequential(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    alert = _write_test_alert(tmp_path, 1)
+    request = _write_failed_reporting_attempt(tmp_path, 1)
+
+    class UnexpectedExecutor:
+        def __init__(self, **_kwargs) -> None:
+            raise AssertionError("Small stores must not construct an executor.")
+
+    monkeypatch.setattr(reporting, "ThreadPoolExecutor", UnexpectedExecutor)
+
+    assert [item["alert_event_id"] for item in load_alert_history(tmp_path)] == [
+        alert["alert_event_id"]
+    ]
+    assert [item["run_id"] for item in load_reporting_attempts(tmp_path)] == [
+        request["run_id"]
+    ]
+
+
+def test_parallel_loader_infrastructure_failure_is_sanitized(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for index in range(reporting._PARALLEL_LOADER_MIN_ITEMS):
+        _write_test_alert(tmp_path, index)
+
+    class UnavailableExecutor:
+        def __init__(self, **_kwargs) -> None:
+            raise RuntimeError("raw thread infrastructure detail")
+
+    monkeypatch.setattr(reporting, "ThreadPoolExecutor", UnavailableExecutor)
+    with pytest.raises(
+        reporting.MonitoringReportingUnavailableError,
+        match="Parallel monitoring artifact loading is unavailable",
+    ) as raised:
+        load_alert_history(tmp_path)
+    assert "raw thread" not in str(raised.value)
+
+
+def test_parallel_loaders_report_the_first_sorted_corruption_deterministically(
+    tmp_path: Path,
+) -> None:
+    for index in range(reporting._PARALLEL_LOADER_MIN_ITEMS):
+        _write_test_alert(tmp_path, index + 100)
+        _write_failed_reporting_attempt(tmp_path, index + 100)
+
+    alerts_root = tmp_path / "reporting" / "alerts"
+    (alerts_root / "0000-first-corrupt.json").write_text("{", encoding="utf-8")
+    (alerts_root / "0001-second-corrupt.json").write_text("{", encoding="utf-8")
+    with pytest.raises(reporting.MonitoringReportingError) as alert_error:
+        load_alert_history(tmp_path)
+    assert "0000-first-corrupt.json" in str(alert_error.value)
+    assert "0001-second-corrupt.json" not in str(alert_error.value)
+
+    runs_root = tmp_path / "reporting" / "runs"
+    for name in ("0000-first-corrupt", "0001-second-corrupt"):
+        run_root = runs_root / name
+        run_root.mkdir()
+        (run_root / "request.json").write_text("{", encoding="utf-8")
+    with pytest.raises(reporting.MonitoringReportingError) as attempt_error:
+        load_reporting_attempts(tmp_path)
+    assert "0000-first-corrupt" in str(attempt_error.value)
+    assert "0001-second-corrupt" not in str(attempt_error.value)
 
 
 def test_statistical_alert_requires_three_distinct_report_dates() -> None:
