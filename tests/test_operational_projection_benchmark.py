@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from scripts import benchmark_operational_projection as benchmark
+from wind_forecast import operational_projection_migrations as migrations
+from wind_forecast import operational_projection_projector as projector
+from wind_forecast.operational_projection_models import ProjectionSnapshot, RelationalRow
 from wind_forecast.operational_projection_projector import build_projection_snapshot
+
+
+INTEGRATION_FLAG = "WIND_FORECAST_OPERATIONAL_PROJECTION_TEST_INTEGRATION"
 
 
 def test_profiles_have_exact_contract_cardinalities() -> None:
@@ -29,6 +36,134 @@ def test_profiles_have_exact_contract_cardinalities() -> None:
     assert smoke.repetitions == 3
 
 
+def test_binary_copy_specs_are_complete_and_exactly_typed() -> None:
+    assert tuple(benchmark.COPY_SPECS) == (
+        "evidence_record",
+        "generation_evidence",
+        *benchmark.TABLE_ORDER,
+    )
+    allowed_types = {
+        "bool",
+        "bpchar",
+        "date",
+        "float8",
+        "int4",
+        "int8",
+        "text",
+        "timestamptz",
+    }
+    for table, spec in benchmark.COPY_SPECS.items():
+        assert len(spec.columns) == len(spec.postgres_types)
+        assert len(spec.columns) == len(set(spec.columns))
+        assert set(spec.postgres_types) <= allowed_types
+        if table in benchmark.TABLE_ORDER:
+            assert spec.columns == projector._TABLE_COLUMNS[table]
+
+
+def test_copy_rows_uses_binary_format_exact_types_and_bounded_checks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, object] = {"rows": [], "checks": []}
+
+    class RecordingCopy:
+        def __enter__(self) -> "RecordingCopy":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def set_types(self, values: tuple[str, ...]) -> None:
+            observed["types"] = values
+
+        def write_row(self, row: tuple[object, ...]) -> None:
+            observed["rows"].append(row)  # type: ignore[union-attr]
+
+    class RecordingCursor:
+        def copy(self, statement: str) -> RecordingCopy:
+            observed["statement"] = statement
+            return RecordingCopy()
+
+    monkeypatch.setattr(benchmark, "COPY_DEADLINE_CHECK_INTERVAL", 2)
+    monkeypatch.setattr(
+        benchmark,
+        "_check_runtime",
+        lambda deadline, phase: observed["checks"].append(  # type: ignore[union-attr]
+            (deadline, phase)
+        ),
+    )
+    rows = (("a" * 64, 1), ("b" * 64, 2), ("c" * 64, 3))
+
+    written = benchmark._copy_rows(
+        RecordingCursor(),
+        "generation_evidence",
+        rows,
+        deadline_ns=123,
+    )
+
+    assert written == 3
+    assert observed["statement"] == (
+        "COPY operational_projection.generation_evidence "
+        "(generation_id, evidence_record_id) FROM STDIN (FORMAT BINARY)"
+    )
+    assert observed["types"] == ("bpchar", "int8")
+    assert observed["rows"] == list(rows)
+    assert observed["checks"] == [
+        (123, "snapshot_publish:copy_generation_evidence")
+    ]
+
+
+def test_publication_step_progress_is_sanitized_and_timed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    timings: dict[str, float] = {}
+
+    assert benchmark._run_publication_step(
+        "copy_alert_event",
+        timings,
+        None,
+        lambda: 7,
+        row_count=7,
+    ) == 7
+
+    events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert events[0] == {
+        "event": "benchmark_progress",
+        "phase": "snapshot_publish_step_started",
+        "row_count": 7,
+        "step": "copy_alert_event",
+    }
+    assert events[1]["event"] == "benchmark_progress"
+    assert events[1]["phase"] == "snapshot_publish_step_completed"
+    assert events[1]["row_count"] == 7
+    assert events[1]["step"] == "copy_alert_event"
+    assert isinstance(events[1]["elapsed_ms"], float)
+    assert tuple(timings) == ("copy_alert_event",)
+    serialized = json.dumps(events)
+    assert str(Path.cwd()).lower() not in serialized.lower()
+    assert "postgresql://" not in serialized.lower()
+
+
+def test_successful_commit_boundary_checks_deadline_only_before_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[str] = []
+    monkeypatch.setattr(
+        benchmark,
+        "_check_runtime",
+        lambda _deadline, phase: observed.append(f"check:{phase}"),
+    )
+
+    benchmark._run_publication_step(
+        "commit",
+        {},
+        123,
+        lambda: observed.append("commit"),
+        check_deadline_after=False,
+    )
+
+    assert observed == ["check:snapshot_publish:commit", "commit"]
+
+
 def test_synthetic_store_is_loader_valid_and_projection_complete(
     tmp_path: Path,
 ) -> None:
@@ -47,6 +182,15 @@ def test_synthetic_store_is_loader_valid_and_projection_complete(
     assert snapshot.counts()["performance_metric_count"] == profile.reports * 10
     assert snapshot.counts()["drift_measurement_count"] == profile.drift_measurements
     assert not snapshot.rows_for("model_era")
+    for table in benchmark.TABLE_ORDER:
+        rows = snapshot.rows_for(table)
+        if not rows:
+            continue
+        actual_columns = {
+            *rows[0].value_map(),
+            *(link.column for link in rows[0].evidence_links),
+        }
+        assert actual_columns == set(benchmark.COPY_SPECS[table].columns)
 
     cases = {case.name: case for case in benchmark.build_query_cases(tmp_path, selection)}
     assert tuple(cases) == (
@@ -70,6 +214,135 @@ def test_synthetic_store_is_loader_valid_and_projection_complete(
     drift = cases["drift_report_window"].filesystem()
     assert len(drift) == profile.drift_measurements // profile.reports // 2
     assert [row[2] for row in drift] == list(range(len(drift)))
+
+
+@pytest.fixture
+def benchmark_projection_dsns() -> dict[str, str]:
+    if os.getenv(INTEGRATION_FLAG) != "1":
+        pytest.skip("PostgreSQL integration test was not explicitly enabled.")
+    variables = {
+        "migrator": benchmark.MIGRATOR_DSN_ENV,
+        "writer": benchmark.WRITER_DSN_ENV,
+        "reader": benchmark.READER_DSN_ENV,
+    }
+    values = {role: os.getenv(variable, "") for role, variable in variables.items()}
+    if any(not value for value in values.values()):
+        pytest.fail("Explicit integration mode requires all three test DSNs.")
+    return values
+
+
+def _assert_projection_database_is_empty(reader_dsn: str) -> None:
+    import psycopg
+
+    with psycopg.connect(reader_dsn) as connection:
+        with connection.cursor() as cursor:
+            for table in (
+                "projection_head",
+                "projection_generation",
+                "evidence_record",
+                "monitoring_report",
+                "drift_measurement",
+            ):
+                cursor.execute(
+                    f"SELECT count(*) FROM operational_projection.{table}"
+                )
+                assert cursor.fetchone()[0] == 0
+
+
+def test_binary_copy_specs_match_postgres_schema(
+    benchmark_projection_dsns: dict[str, str],
+) -> None:
+    import psycopg
+
+    migrations.migrate(benchmark_projection_dsns["migrator"])
+    with psycopg.connect(benchmark_projection_dsns["reader"]) as connection:
+        with connection.cursor() as cursor:
+            for table, spec in benchmark.COPY_SPECS.items():
+                cursor.execute(
+                    "SELECT a.attname, t.typname "
+                    "FROM pg_catalog.pg_attribute a "
+                    "JOIN pg_catalog.pg_class c ON c.oid = a.attrelid "
+                    "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+                    "JOIN pg_catalog.pg_type t ON t.oid = a.atttypid "
+                    "WHERE n.nspname = 'operational_projection' "
+                    "AND c.relname = %s AND a.attnum > 0 AND NOT a.attisdropped "
+                    "ORDER BY a.attnum",
+                    (table,),
+                )
+                actual = dict(cursor.fetchall())
+                assert tuple(actual[column] for column in spec.columns) == (
+                    spec.postgres_types
+                )
+
+
+def test_binary_publication_rolls_back_head_and_rows_before_commit(
+    benchmark_projection_dsns: dict[str, str],
+    tmp_path: Path,
+) -> None:
+    migrations.migrate(benchmark_projection_dsns["migrator"])
+    _assert_projection_database_is_empty(benchmark_projection_dsns["reader"])
+    benchmark.generate_synthetic_store(tmp_path, benchmark.PROFILES["smoke"])
+    snapshot = build_projection_snapshot(
+        tmp_path,
+        environment_id="local",
+        source_git_commit="a" * 40,
+    )
+
+    def fail_before_commit(stage: str) -> None:
+        assert stage == "before_commit"
+        raise RuntimeError("forced pre-commit failure")
+
+    with pytest.raises(RuntimeError, match="forced pre-commit failure"):
+        benchmark._bulk_publish_snapshot(
+            benchmark_projection_dsns["writer"],
+            snapshot,
+            deadline_ns=None,
+            failure_hook=fail_before_commit,
+        )
+
+    _assert_projection_database_is_empty(benchmark_projection_dsns["reader"])
+
+
+def test_binary_publication_keeps_constraints_enabled_and_rolls_back(
+    benchmark_projection_dsns: dict[str, str],
+    tmp_path: Path,
+) -> None:
+    import psycopg
+
+    migrations.migrate(benchmark_projection_dsns["migrator"])
+    _assert_projection_database_is_empty(benchmark_projection_dsns["reader"])
+    benchmark.generate_synthetic_store(tmp_path, benchmark.PROFILES["smoke"])
+    snapshot = build_projection_snapshot(
+        tmp_path,
+        environment_id="local",
+        source_git_commit="b" * 40,
+    )
+    rows = list(snapshot.rows)
+    drift_index = next(
+        index
+        for index, row in enumerate(rows)
+        if row.table == "drift_measurement"
+    )
+    drift_row = rows[drift_index]
+    invalid_values = drift_row.value_map()
+    invalid_values["severity"] = "invalid"
+    rows[drift_index] = RelationalRow.create(
+        drift_row.table,
+        invalid_values,
+        evidence_links={
+            link.column: link.evidence for link in drift_row.evidence_links
+        },
+    )
+    invalid_snapshot = ProjectionSnapshot(snapshot.manifest, tuple(rows))
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        benchmark._bulk_publish_snapshot(
+            benchmark_projection_dsns["writer"],
+            invalid_snapshot,
+            deadline_ns=None,
+        )
+
+    _assert_projection_database_is_empty(benchmark_projection_dsns["reader"])
 
 
 def _case_result(

@@ -557,6 +557,35 @@ index plans, so the readiness decision remains `NO-GO`. Any further work must
 target benchmark publication separately and must not weaken the transactional
 projector, database constraints, cardinalities, repetitions, or query gates.
 
+#### Snapshot publication performance follow-up
+
+The separately approved publication optimization changes only the synthetic
+benchmark seeding path. Each allowlisted table now has a fixed ordered column
+and exact PostgreSQL-type specification derived from migration `0002`.
+Psycopg streams those already normalized values with binary `COPY`; the
+fixed-length SHA-256 columns use an explicit COPY-only `bpchar` binary dumper.
+No manual binary serialization, staging table, unlogged relation, disabled
+constraint or trigger, durability relaxation, schema change, or writer-role
+expansion is introduced.
+
+All constrained-table copies, the ready marker, and `projection_head` remain in
+one explicit transaction, with the head as the final database write before
+commit. A failure from binary adaptation, a PostgreSQL constraint, the injected
+pre-commit test hook, a statement timeout, or the cooperative global runtime
+check before commit aborts and rolls back the transaction. Commit is the
+irreversible boundary: after PostgreSQL confirms it, no rollback is claimed.
+A later overall timeout or `ANALYZE` failure still produces `NO-GO`, but leaves
+only a complete committed synthetic generation in the disposable database,
+which is removed with the ephemeral environment. The supervisor and one-hour
+full-profile bound remain unchanged.
+
+Sanitized progress now distinguishes preparation, each table COPY, head
+publication, commit, and each `ANALYZE`. The successful result adds only the
+corresponding millisecond timings; it exposes no DSN, SQL text, path, or source
+payload. This follow-up does not alter the full cardinalities, thirty
+repetitions, filesystem enumeration, query deadline, speed gates, index gates,
+or identity/order equivalence requirements.
+
 ## Delivery Plans
 
 Each plan starts from updated `master`, uses a separate branch and draft pull
