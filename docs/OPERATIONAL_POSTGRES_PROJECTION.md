@@ -586,6 +586,33 @@ payload. This follow-up does not alter the full cardinalities, thirty
 repetitions, filesystem enumeration, query deadline, speed gates, index gates,
 or identity/order equivalence requirements.
 
+The real smoke profile at source commit `06799a661c3a64355270ab3e2ddec24cca09cae4`
+completed in 1.348 seconds on `2026-08-02`. Snapshot publication took 0.302
+seconds, the ready generation and head were queryable, and all six identity and
+ordering comparisons were exact. As required, its timing and index gates were
+disabled, so this is functional evidence rather than a readiness decision.
+
+The post-publication-optimization full profile was then executed exactly once
+at the same source commit, with the original cardinalities, thirty repetitions,
+and 3,600-second supervisor. Migration completed in 0.199 seconds, fixture
+generation in 82.063 seconds, and snapshot construction in 147.835 seconds.
+Within publication, preparation completed in 0.127 seconds, binary evidence
+COPY in 0.726 seconds, and generation insertion in 2.140 seconds. The subsequent
+binary `generation_evidence` COPY of 61,004 associations did not complete within
+the remaining bound. No projected-table COPY, ready/head publication, commit,
+`ANALYZE`, or query measurement followed. The supervisor recorded `NO-GO` with
+`benchmark_runtime:hard_timeout`.
+
+Because the timeout occurred before commit, PostgreSQL rolled back the complete
+transaction. A read-only verification found zero rows in `projection_head`,
+`projection_generation`, `evidence_record`, `generation_evidence`,
+`monitoring_report`, and `drift_measurement`. This result identifies
+`copy_generation_evidence` as the remaining publication bottleneck but still
+does not provide six-query medians, maxima, speedups, or index plans. Plan 4 is
+therefore not complete, its readiness decision remains `NO-GO`, and Plan 5
+remains blocked. Any next attempt requires a separately reviewed plan focused
+on this substep without weakening the preserved constraints or transaction.
+
 ## Delivery Plans
 
 Each plan starts from updated `master`, uses a separate branch and draft pull
