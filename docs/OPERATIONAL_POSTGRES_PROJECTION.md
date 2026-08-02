@@ -466,7 +466,7 @@ read or write the governed operational store.
 
 ### Plan 4 Result — `NO-GO`
 
-Decision date: `2026-08-01`.
+Decision date: `2026-08-02`.
 
 The deterministic harness and its PostgreSQL 16 smoke profile were implemented
 and passed with exact identity/order equivalence for all six query cases. The
@@ -478,17 +478,17 @@ store. Smoke timings are not readiness evidence and did not apply the full
 timing or index-plan gates.
 
 The mandatory full profile retained the approved 1,000/10,000/50,000/200,000
-cardinalities and 30 repetitions. Multiple local attempts remained active for
-hours without producing a complete result. Removing duplicate loader scans
-between selectors and bulk-seeding the already loader-normalized snapshot into
-the clean ephemeral database did not make the full run complete in a
-reasonable operator review window. No complete set of medians, maxima, or
-`EXPLAIN (ANALYZE, BUFFERS)` results exists, so none is admitted or inferred.
+cardinalities and 30 repetitions. After the loader, publication-observability,
+and generation-ID recomputation follow-ups documented below, it completed all
+six query measurements in 780.192 seconds. Every identity/order comparison was
+exact, every maximum PostgreSQL query time was below five seconds, both speed
+gates passed, and five of six intended-index gates passed.
 
-The readiness claim is therefore unproven and the fail-closed decision is
-`NO-GO`. Thresholds, cardinalities, and repetitions were not reduced. Plan 5
-must not start unless a later separately approved decision replaces this
-`NO-GO` with a complete benchmark design and a reviewed `GO` result.
+The complete fail-closed decision is `NO-GO` solely because
+`alert_interval_pagination` did not use `alert_event_date_idx`. Thresholds,
+cardinalities, repetitions, constraints, and guarantees were not reduced.
+Plan 4 is complete with this reviewed `NO-GO`; Plan 5 remains blocked unless a
+later separately approved decision replaces it with a reviewed `GO` result.
 
 #### Benchmark runtime diagnosis and bounded execution
 
@@ -530,10 +530,10 @@ limits file-descriptor pressure; the ordered result iteration also preserves
 which sorted-path error is observed first. The implementation is read-only and
 introduces no cache, configuration, environment variable, or API change.
 
-This follow-up does not change the Plan 4 decision. The mandatory full profile
-must still complete with all approved cardinalities, repetitions, equivalence,
-deadline, speed, and index-plan gates before a reviewed decision may replace
-the current `NO-GO`.
+At that stage, this follow-up did not change the Plan 4 decision. The mandatory
+full profile still had to complete with all approved cardinalities,
+repetitions, equivalence, deadline, speed, and index-plan gates before a
+reviewed decision could replace the existing `NO-GO`.
 
 A deterministic local pilot with 40 reports, 400 reporting attempts, 2,000
 alert events, and 8,000 drift measurements returned byte-for-byte equivalent
@@ -551,11 +551,12 @@ generation in 50.313 seconds, and the complete verified projection snapshot in
 `NO-GO` with `benchmark_runtime:hard_timeout` and removed its synthetic store.
 The dedicated PostgreSQL container, network, and volume were also removed.
 
-This result proves that verified loader enumeration and snapshot construction
-are no longer the blocking phase. It does not provide query medians, maxima, or
-index plans, so the readiness decision remains `NO-GO`. Any further work must
-target benchmark publication separately and must not weaken the transactional
-projector, database constraints, cardinalities, repetitions, or query gates.
+This intermediate result proved that verified loader enumeration and snapshot
+construction were no longer the blocking phase. It did not provide query
+medians, maxima, or index plans, so the readiness decision remained `NO-GO`.
+The following work therefore targeted benchmark publication separately without
+weakening the transactional projector, database constraints, cardinalities,
+repetitions, or query gates.
 
 #### Snapshot publication performance follow-up
 
@@ -606,12 +607,73 @@ the remaining bound. No projected-table COPY, ready/head publication, commit,
 Because the timeout occurred before commit, PostgreSQL rolled back the complete
 transaction. A read-only verification found zero rows in `projection_head`,
 `projection_generation`, `evidence_record`, `generation_evidence`,
-`monitoring_report`, and `drift_measurement`. This result identifies
-`copy_generation_evidence` as the remaining publication bottleneck but still
-does not provide six-query medians, maxima, speedups, or index plans. Plan 4 is
-therefore not complete, its readiness decision remains `NO-GO`, and Plan 5
-remains blocked. Any next attempt requires a separately reviewed plan focused
-on this substep without weakening the preserved constraints or transaction.
+`monitoring_report`, and `drift_measurement`. This result identified
+`copy_generation_evidence` as the then-remaining publication bottleneck but did
+not provide six-query medians, maxima, speedups, or index plans. Plan 4 was
+therefore not complete, its readiness decision remained `NO-GO`, and Plan 5
+remained blocked. The next attempt required the separately reviewed plan below,
+focused on this substep without weakening the preserved constraints or
+transaction.
+
+#### Generation-evidence root-cause follow-up
+
+An opt-in PostgreSQL 16 probe compared the existing binary `COPY`, Psycopg text
+`COPY`, and an `INSERT ... SELECT` association through the real writer role,
+schema, PK, and both FKs. Each trial seeded valid synthetic evidence in one
+transaction, verified the exact association identities and cardinality, then
+deliberately rolled back and confirmed an empty database. All three methods
+completed at 1,000 and 10,000 associations and advanced to three independent
+61,004-association trials with a 45-second supervisor and 30-second statement
+timeout.
+
+| Method | Trial 1 (ms) | Trial 2 (ms) | Trial 3 (ms) |
+|---|---:|---:|---:|
+| Binary `COPY` | 879.107 | 846.876 | 882.014 |
+| Text `COPY` | 810.468 | 937.702 | 946.482 |
+| `INSERT ... SELECT` | 847.299 | 956.123 | 1,059.340 |
+
+The values above cover only association opening/configuration, row transfer,
+and server finalization. Every trial wrote exactly 61,004 rows with the same
+identity digest and rolled back cleanly. Because binary `COPY` passed every
+trial and neither alternative was faster than its best trial in all three
+measurements, the fail-closed selection rule retains binary `COPY`.
+
+Code inspection then identified the scale-dependent defect outside Psycopg:
+`ProjectionSnapshot.generation_id` is a computed property that canonically
+serializes and hashes the full manifest. The association generator referenced
+that property once per evidence row, recomputing the complete large-manifest
+digest 61,004 times. Publication now computes the generation ID once during
+preparation and reuses the immutable value for the manifest row, every
+generation-evidence association, ready marker, and head. A regression test
+requires exactly one property access. No schema, constraint, privilege,
+transaction, durability, cardinality, repetition, or query gate changes.
+
+#### Final full-profile decision
+
+The full profile ran exactly once at source commit
+`57071911f5f4c3c3dd06ade5e9e284fb04a307e3` on a clean ephemeral PostgreSQL
+16 instance. Migration took 0.134 seconds, fixture generation 47.518 seconds,
+snapshot construction 137.933 seconds, snapshot publication 8.451 seconds,
+and the complete query measurement 567.568 seconds. Total runtime was 780.192
+seconds. Within publication, preparation took 1.646 seconds,
+`copy_generation_evidence` 0.654 seconds, all 200,000 drift rows 2.933 seconds,
+commit 0.025 seconds, and every `ANALYZE` completed.
+
+| Query | Filesystem median (ms) | PostgreSQL median (ms) | PostgreSQL max (ms) | Speedup | Equivalent | Intended index |
+|---|---:|---:|---:|---:|:---:|:---:|
+| `alert_interval_pagination` | 12,186.7892 | 2.8616 | 58.5708 | 0.999765 | yes | **no** |
+| `exact_alert_id` | 12,177.6591 | 0.71575 | 1.6546 | 0.999941 | yes | yes |
+| `reporting_run_by_run_id` | 5,563.47955 | 0.6418 | 1.3373 | 0.999885 | yes | yes |
+| `reporting_run_by_report_id` | 5,563.4245 | 0.6276 | 1.2 | 0.999887 | yes | yes |
+| `performance_report_window` | 4.72285 | 0.65085 | 1.3514 | 0.862191 | yes | yes |
+| `drift_report_window` | 4.7555 | 0.92485 | 11.609 | 0.805520 | yes | yes |
+
+`alert_interval_pagination` used
+`alert_event_evidence_record_id_key` and `projection_head_pkey`, but not its
+required `alert_event_date_idx`; the harness therefore recorded the single
+failure `alert_interval_pagination:index`. This is a complete `NO-GO`, not a
+timeout or missing-evidence result. Plan 4 is concluded and Plan 5 remains
+blocked and unimplemented.
 
 ## Delivery Plans
 
@@ -621,8 +683,8 @@ request, passes independent review, and stops for explicit user approval:
 1. This documentation-only contract: accepted by this record.
 2. Dedicated PostgreSQL foundation, roles, schema, and migrations: implemented.
 3. Manual all-or-nothing artifact projector and verifier: implemented.
-4. Deterministic benchmark and `GO`/`NO-GO` decision: implemented with
-   `NO-GO`; the full readiness evidence did not complete.
+4. Deterministic benchmark and `GO`/`NO-GO` decision: implemented and concluded
+   with a complete `NO-GO`; interval pagination did not use its intended index.
 5. Optional `disabled|required` query-layer integration after benchmark `GO`:
    blocked by the Plan 4 `NO-GO` and not implemented.
 
