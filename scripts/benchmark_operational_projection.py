@@ -821,14 +821,22 @@ def build_query_cases(root: Path, selection: FixtureSelection) -> tuple[QueryCas
             "alerts",
             load_alerts,
             alert_interval,
-            "SELECT ae.alert_event_id FROM operational_projection.alert_event ae "
-            + member_alert
-            + "WHERE ae.through_date BETWEEN %s AND %s "
-            "ORDER BY ae.through_date, ae.rule_id, ae.alert_event_id LIMIT %s OFFSET %s",
+            "WITH interval_alerts AS MATERIALIZED ("
+            "SELECT alert_event_id, evidence_record_id, through_date, rule_id "
+            "FROM operational_projection.alert_event "
+            "WHERE through_date BETWEEN %s AND %s"
+            ") "
+            "SELECT ia.alert_event_id FROM interval_alerts ia "
+            "JOIN operational_projection.generation_evidence ge "
+            "ON ge.evidence_record_id = ia.evidence_record_id "
+            "JOIN operational_projection.projection_head ph "
+            "ON ph.generation_id = ge.generation_id AND ph.environment_id = %s "
+            "ORDER BY ia.through_date, ia.rule_id, ia.alert_event_id "
+            "LIMIT %s OFFSET %s",
             (
-                "local",
                 selection.alert_start,
                 selection.alert_end,
+                "local",
                 selection.alert_limit,
                 selection.alert_offset,
             ),
