@@ -15,8 +15,12 @@ import json
 import os
 from pathlib import Path
 import platform
+import secrets
+import shutil
 import statistics
-from tempfile import TemporaryDirectory
+import subprocess
+import sys
+from tempfile import gettempdir, TemporaryDirectory
 from time import perf_counter_ns
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -41,6 +45,7 @@ DETECTORS = ("ks_statistic", "normalized_wasserstein")
 COMPARATORS = ("global", "seasonal")
 DEADLINE_MS = 5_000.0
 MINIMUM_SPEEDUP = 0.20
+DEFAULT_MAX_RUNTIME_SECONDS = 3_600.0
 TABLE_ORDER = (
     "model_era",
     "monitoring_report",
@@ -98,6 +103,49 @@ class QueryCase:
 
     def filesystem(self) -> tuple[tuple[Any, ...], ...]:
         return self.filesystem_selector(self.filesystem_loader())
+
+
+class BenchmarkNoGo(RuntimeError):
+    """Fail-closed benchmark termination with sanitized failure identities."""
+
+    def __init__(self, *failures: str) -> None:
+        super().__init__("Benchmark readiness gate failed.")
+        self.failures = failures
+
+
+def _emit_progress(phase: str, **values: int | float | str) -> None:
+    print(
+        json.dumps(
+            {"event": "benchmark_progress", "phase": phase, **values},
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _check_runtime(deadline_ns: int | None, phase: str) -> None:
+    if deadline_ns is not None and perf_counter_ns() >= deadline_ns:
+        raise BenchmarkNoGo(f"benchmark_runtime:{phase}")
+
+
+def _raise_statement_timeout(exc: Exception, failure: str) -> None:
+    if getattr(exc, "sqlstate", None) == "57014":
+        raise BenchmarkNoGo(failure) from None
+
+
+def _cleanup_worker_stores(token: str, *, temp_root: Path | None = None) -> None:
+    if len(token) != 16 or any(character not in "0123456789abcdef" for character in token):
+        raise ValueError("Benchmark workspace token is invalid.")
+    root = (temp_root or Path(gettempdir())).resolve()
+    prefix = f"wf-projection-benchmark-{token}-"
+    for candidate in root.glob(f"{prefix}*"):
+        resolved = candidate.resolve()
+        if resolved.parent != root or not resolved.name.startswith(prefix):
+            raise RuntimeError("Benchmark temporary cleanup target is invalid.")
+        if resolved.is_dir():
+            shutil.rmtree(resolved)
 
 
 def _json_bytes(payload: Mapping[str, Any]) -> bytes:
@@ -617,6 +665,8 @@ def _measure_cases(
     connection: Any,
     cases: Sequence[QueryCase],
     repetitions: int,
+    *,
+    deadline_ns: int | None = None,
 ) -> dict[str, dict[str, Any]]:
     grouped: dict[str, list[QueryCase]] = {}
     for case in cases:
@@ -626,16 +676,24 @@ def _measure_cases(
     filesystem_samples = {case.name: [] for case in cases}
     postgres_samples = {case.name: [] for case in cases}
 
-    for grouped_cases in grouped.values():
+    _emit_progress("query_warmup_started")
+    for group_name, grouped_cases in grouped.items():
+        _check_runtime(deadline_ns, f"warmup_{group_name}")
         payload = grouped_cases[0].filesystem_loader()
         for case in grouped_cases:
             expected[case.name] = case.filesystem_selector(payload)
     for case in cases:
-        equivalent[case.name] = (
-            _postgres_rows(connection, case) == expected[case.name]
-        )
+        try:
+            equivalent[case.name] = (
+                _postgres_rows(connection, case) == expected[case.name]
+            )
+        except Exception as exc:
+            _raise_statement_timeout(exc, f"{case.name}:deadline")
+            raise
+    _emit_progress("query_warmup_completed")
 
     for repetition in range(repetitions):
+        _check_runtime(deadline_ns, f"repetition_{repetition + 1}")
         phases = ("filesystem", "postgres")
         if repetition % 2:
             phases = tuple(reversed(phases))
@@ -659,7 +717,11 @@ def _measure_cases(
             else:
                 for case in cases:
                     started = perf_counter_ns()
-                    observed = _postgres_rows(connection, case)
+                    try:
+                        observed = _postgres_rows(connection, case)
+                    except Exception as exc:
+                        _raise_statement_timeout(exc, f"{case.name}:deadline")
+                        raise
                     postgres_samples[case.name].append(
                         (perf_counter_ns() - started) / 1_000_000
                     )
@@ -667,14 +729,24 @@ def _measure_cases(
                         equivalent[case.name]
                         and observed == expected[case.name]
                     )
+        _emit_progress(
+            "query_repetition_completed",
+            repetition=repetition + 1,
+            repetitions=repetitions,
+        )
 
     results: dict[str, dict[str, Any]] = {}
     for case in cases:
+        _check_runtime(deadline_ns, f"explain_{case.name}")
         with connection.cursor() as cursor:
-            cursor.execute(
-                "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + case.sql,
-                case.parameters,
-            )
+            try:
+                cursor.execute(
+                    "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + case.sql,
+                    case.parameters,
+                )
+            except Exception as exc:
+                _raise_statement_timeout(exc, f"{case.name}:deadline")
+                raise
             explain = cursor.fetchone()[0]
         indexes = _index_names(explain)
         filesystem_median = statistics.median(filesystem_samples[case.name])
@@ -727,6 +799,20 @@ def _copy_rows(cursor: Any, table: str, columns: Sequence[str], rows: Iterable[S
             copy.write_row(row)
 
 
+def _group_snapshot_rows(snapshot: Any) -> tuple[dict[str, tuple[Any, ...]], dict[str, int]]:
+    grouped: dict[str, list[Any]] = {table: [] for table in TABLE_ORDER}
+    for row in snapshot.rows:
+        grouped[row.table].append(row)
+    frozen = {table: tuple(rows) for table, rows in grouped.items()}
+    evidence_count = len(snapshot.manifest.evidence)
+    counts = {
+        "evidence_record_count": evidence_count,
+        "generation_evidence_count": evidence_count,
+        **{f"{table}_count": len(rows) for table, rows in frozen.items()},
+    }
+    return frozen, counts
+
+
 def _bulk_publish_snapshot(writer_dsn: str, snapshot: Any) -> None:
     """Seed one clean ephemeral benchmark database through writer privileges."""
     import psycopg
@@ -735,7 +821,7 @@ def _bulk_publish_snapshot(writer_dsn: str, snapshot: Any) -> None:
         record.identity: index
         for index, record in enumerate(snapshot.manifest.evidence, start=1)
     }
-    counts = snapshot.counts()
+    rows_by_table, counts = _group_snapshot_rows(snapshot)
     with psycopg.connect(
         writer_dsn,
         application_name="wind_forecast_projection_benchmark_writer",
@@ -821,7 +907,7 @@ def _bulk_publish_snapshot(writer_dsn: str, snapshot: Any) -> None:
                 ),
             )
             for table in TABLE_ORDER:
-                table_rows = snapshot.rows_for(table)
+                table_rows = rows_by_table[table]
                 if not table_rows:
                     continue
                 columns = tuple(
@@ -858,7 +944,36 @@ def _bulk_publish_snapshot(writer_dsn: str, snapshot: Any) -> None:
             )
 
 
-def run_benchmark(profile: Profile) -> dict[str, Any]:
+def run_benchmark(
+    profile: Profile,
+    *,
+    max_runtime_seconds: float | None = None,
+    workspace_token: str | None = None,
+) -> dict[str, Any]:
+    if workspace_token is not None and (
+        len(workspace_token) != 16
+        or any(character not in "0123456789abcdef" for character in workspace_token)
+    ):
+        raise ValueError("Benchmark workspace token is invalid.")
+    started_ns = perf_counter_ns()
+    deadline_ns = (
+        None
+        if max_runtime_seconds is None
+        else started_ns + int(max_runtime_seconds * 1_000_000_000)
+    )
+    phase_timings_ms: dict[str, float] = {}
+
+    def start_phase(name: str) -> int:
+        _check_runtime(deadline_ns, name)
+        _emit_progress(f"{name}_started")
+        return perf_counter_ns()
+
+    def finish_phase(name: str, phase_started_ns: int) -> None:
+        elapsed_ms = (perf_counter_ns() - phase_started_ns) / 1_000_000
+        phase_timings_ms[name] = round(elapsed_ms, 3)
+        _emit_progress(f"{name}_completed", elapsed_ms=round(elapsed_ms, 3))
+        _check_runtime(deadline_ns, name)
+
     environment = os.environ.get(ENVIRONMENT_ENV, "local")
     if environment != "local":
         raise ValueError("Benchmark environment is unsupported.")
@@ -871,30 +986,62 @@ def run_benchmark(profile: Profile) -> dict[str, Any]:
         raise ValueError("Required benchmark database configuration is unavailable.")
     import psycopg
 
-    migrate(dsns["migrator"])
-    with TemporaryDirectory(prefix="wf-projection-benchmark-") as temporary:
+    phase_started_ns = start_phase("migration")
+    try:
+        migrate(dsns["migrator"])
+    except Exception as exc:
+        _raise_statement_timeout(exc, "migration:deadline")
+        raise
+    finish_phase("migration", phase_started_ns)
+    temporary_prefix = (
+        "wf-projection-benchmark-"
+        if workspace_token is None
+        else f"wf-projection-benchmark-{workspace_token}-"
+    )
+    with TemporaryDirectory(prefix=temporary_prefix) as temporary:
         root = Path(temporary)
+        phase_started_ns = start_phase("fixture_generation")
         selection = generate_synthetic_store(root, profile)
+        finish_phase("fixture_generation", phase_started_ns)
         source_commit = resolve_source_git_commit()
+        phase_started_ns = start_phase("snapshot_build")
         snapshot = build_projection_snapshot(
             root,
             environment_id="local",
             source_git_commit=source_commit,
         )
-        _bulk_publish_snapshot(dsns["writer"], snapshot)
-        _analyze(dsns["migrator"])
+        finish_phase("snapshot_build", phase_started_ns)
+        phase_started_ns = start_phase("snapshot_publish")
+        try:
+            _bulk_publish_snapshot(dsns["writer"], snapshot)
+            _analyze(dsns["migrator"])
+        except Exception as exc:
+            _raise_statement_timeout(exc, "snapshot_publish:deadline")
+            raise
+        finish_phase("snapshot_publish", phase_started_ns)
         with psycopg.connect(
             dsns["reader"],
             autocommit=True,
             application_name="wind_forecast_projection_benchmark_reader",
         ) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute("SET TIME ZONE 'UTC'")
-                cursor.execute("SET statement_timeout = '5s'")
-                cursor.execute("SHOW server_version")
-                postgres_version = str(cursor.fetchone()[0])
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SET TIME ZONE 'UTC'")
+                    cursor.execute("SET statement_timeout = '5s'")
+                    cursor.execute("SHOW server_version")
+                    postgres_version = str(cursor.fetchone()[0])
+            except Exception as exc:
+                _raise_statement_timeout(exc, "reader_setup:deadline")
+                raise
             query_cases = build_query_cases(root, selection)
-            cases = _measure_cases(connection, query_cases, profile.repetitions)
+            phase_started_ns = start_phase("query_measurement")
+            cases = _measure_cases(
+                connection,
+                query_cases,
+                profile.repetitions,
+                deadline_ns=deadline_ns,
+            )
+            finish_phase("query_measurement", phase_started_ns)
     decision, failures = evaluate_gate(
         cases,
         enforce_timing=profile.enforce_timing_gate,
@@ -905,6 +1052,8 @@ def run_benchmark(profile: Profile) -> dict[str, Any]:
         "profile": profile.name,
         "decision": decision,
         "failures": failures,
+        "phase_timings_ms": phase_timings_ms,
+        "total_runtime_ms": round((perf_counter_ns() - started_ns) / 1_000_000, 3),
         "dataset": {
             "reports": profile.reports,
             "reporting_attempts": profile.attempts,
@@ -930,13 +1079,37 @@ def run_benchmark(profile: Profile) -> dict[str, Any]:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=tuple(PROFILES), default="full")
+    parser.add_argument(
+        "--max-runtime-seconds",
+        type=float,
+        default=DEFAULT_MAX_RUNTIME_SECONDS,
+        help="Fail closed after this total runtime without weakening any query gate.",
+    )
+    parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--workspace-token", help=argparse.SUPPRESS)
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+def _run_worker(args: argparse.Namespace) -> int:
     try:
-        summary = run_benchmark(PROFILES[args.profile])
+        summary = run_benchmark(
+            PROFILES[args.profile],
+            max_runtime_seconds=args.max_runtime_seconds,
+            workspace_token=args.workspace_token,
+        )
+    except BenchmarkNoGo as exc:
+        print(
+            json.dumps(
+                {
+                    "schema_version": "wind_forecast.operational_projection_benchmark.v1",
+                    "profile": args.profile,
+                    "decision": "NO-GO",
+                    "failures": exc.failures,
+                },
+                sort_keys=True,
+            )
+        )
+        return 1
     except Exception:
         print(
             json.dumps(
@@ -952,6 +1125,65 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     print(json.dumps(summary, sort_keys=True, separators=(",", ":"), default=str))
     return 0 if summary["decision"] == "GO" else 1
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if args.max_runtime_seconds <= 0:
+        parser.error("--max-runtime-seconds must be positive")
+    if args.worker:
+        return _run_worker(args)
+    workspace_token = secrets.token_hex(8)
+    command = (
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--profile",
+        args.profile,
+        "--max-runtime-seconds",
+        str(args.max_runtime_seconds),
+        "--workspace-token",
+        workspace_token,
+        "--worker",
+    )
+    timed_out = False
+    try:
+        return_code = subprocess.run(
+            command,
+            check=False,
+            timeout=args.max_runtime_seconds,
+        ).returncode
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        return_code = 1
+    try:
+        _cleanup_worker_stores(workspace_token)
+    except Exception:
+        print(
+            json.dumps(
+                {
+                    "schema_version": "wind_forecast.operational_projection_benchmark.v1",
+                    "profile": args.profile,
+                    "decision": "ERROR",
+                    "error": "Benchmark temporary cleanup failed.",
+                },
+                sort_keys=True,
+            )
+        )
+        return 2
+    if timed_out:
+        print(
+            json.dumps(
+                {
+                    "schema_version": "wind_forecast.operational_projection_benchmark.v1",
+                    "profile": args.profile,
+                    "decision": "NO-GO",
+                    "failures": ("benchmark_runtime:hard_timeout",),
+                },
+                sort_keys=True,
+            )
+        )
+    return return_code
 
 
 if __name__ == "__main__":

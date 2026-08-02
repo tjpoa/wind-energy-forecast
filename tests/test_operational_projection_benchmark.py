@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -152,6 +153,135 @@ def test_explain_index_names_are_collected_without_raw_plan_output() -> None:
     )
 
 
+def test_snapshot_rows_are_grouped_in_one_pass() -> None:
+    snapshot = SimpleNamespace(
+        manifest=SimpleNamespace(evidence=(1, 2, 3)),
+        rows=(
+            SimpleNamespace(table="alert_event"),
+            SimpleNamespace(table="alert_event"),
+            SimpleNamespace(table="reporting_attempt"),
+        ),
+    )
+    grouped, counts = benchmark._group_snapshot_rows(snapshot)
+    assert len(grouped["alert_event"]) == 2
+    assert len(grouped["reporting_attempt"]) == 1
+    assert counts["evidence_record_count"] == 3
+    assert counts["generation_evidence_count"] == 3
+    assert counts["alert_event_count"] == 2
+    assert counts["drift_measurement_count"] == 0
+
+
+def test_measurement_keeps_all_repetitions_but_shares_group_load(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loads = 0
+
+    def loader() -> list[str]:
+        nonlocal loads
+        loads += 1
+        return ["expected"]
+
+    def selector(payload: list[str]) -> tuple[tuple[str, ...], ...]:
+        return ((payload[0],),)
+
+    cases = tuple(
+        benchmark.QueryCase(
+            name=name,
+            filesystem_group="shared",
+            filesystem_loader=loader,
+            filesystem_selector=selector,
+            sql="SELECT 1",
+            parameters=(),
+            expected_indexes=(),
+        )
+        for name in ("first", "second")
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "_postgres_rows",
+        lambda connection, case: (("expected",),),
+    )
+
+    class Cursor:
+        def __enter__(self) -> "Cursor":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def execute(self, *args: object) -> None:
+            return None
+
+        def fetchone(self) -> tuple[list[dict[str, object]]]:
+            return ([{"Plan": {"Node Type": "Result"}}],)
+
+    connection = SimpleNamespace(cursor=lambda: Cursor())
+    results = benchmark._measure_cases(connection, cases, 30)
+    assert loads == 31  # one warm-up plus exactly 30 measured enumerations
+    assert all(result["equivalent"] for result in results.values())
+
+
+def test_runtime_limit_is_reported_as_sanitized_no_go(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail_closed(*args: object, **kwargs: object) -> None:
+        raise benchmark.BenchmarkNoGo("benchmark_runtime:query_measurement")
+
+    monkeypatch.setattr(benchmark, "run_benchmark", fail_closed)
+    assert benchmark.main(
+        ["--profile", "full", "--max-runtime-seconds", "1", "--worker"]
+    ) == 1
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["decision"] == "NO-GO"
+    assert payload["failures"] == ["benchmark_runtime:query_measurement"]
+    assert str(Path.cwd()).lower() not in captured.out.lower()
+    assert "postgresql://" not in captured.out.lower()
+
+
+def test_statement_timeout_is_translated_to_no_go() -> None:
+    timeout = RuntimeError("raw database detail")
+    timeout.sqlstate = "57014"  # type: ignore[attr-defined]
+    with pytest.raises(benchmark.BenchmarkNoGo) as raised:
+        benchmark._raise_statement_timeout(timeout, "snapshot_publish:deadline")
+    assert raised.value.failures == ("snapshot_publish:deadline",)
+    other = RuntimeError("not a statement timeout")
+    assert benchmark._raise_statement_timeout(other, "ignored") is None
+
+
+def test_supervisor_enforces_hard_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def expire(*args: object, **kwargs: object) -> None:
+        raise benchmark.subprocess.TimeoutExpired(cmd="benchmark", timeout=1)
+
+    monkeypatch.setattr(benchmark.subprocess, "run", expire)
+    assert benchmark.main(
+        ["--profile", "full", "--max-runtime-seconds", "1"]
+    ) == 1
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert payload["decision"] == "NO-GO"
+    assert payload["failures"] == ["benchmark_runtime:hard_timeout"]
+    assert str(Path.cwd()).lower() not in output.lower()
+
+
+def test_supervisor_cleanup_removes_only_its_synthetic_workspace(
+    tmp_path: Path,
+) -> None:
+    token = "0123456789abcdef"
+    owned = tmp_path / f"wf-projection-benchmark-{token}-owned"
+    unrelated = tmp_path / "wf-projection-benchmark-other"
+    owned.mkdir()
+    unrelated.mkdir()
+    (owned / "fixture.json").write_text("{}", encoding="utf-8")
+    benchmark._cleanup_worker_stores(token, temp_root=tmp_path)
+    assert not owned.exists()
+    assert unrelated.is_dir()
+
+
 def test_cli_configuration_error_is_sanitized(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -162,7 +292,7 @@ def test_cli_configuration_error_is_sanitized(
         benchmark.READER_DSN_ENV,
     ):
         monkeypatch.delenv(name, raising=False)
-    assert benchmark.main(["--profile", "smoke"]) == 2
+    assert benchmark.main(["--profile", "smoke", "--worker"]) == 2
     output = capsys.readouterr().out
     payload = json.loads(output)
     assert payload["decision"] == "ERROR"

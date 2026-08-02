@@ -490,6 +490,35 @@ The readiness claim is therefore unproven and the fail-closed decision is
 must not start unless a later separately approved decision replaces this
 `NO-GO` with a complete benchmark design and a reviewed `GO` result.
 
+#### Benchmark runtime diagnosis and bounded execution
+
+Follow-up profiling found no blocked PostgreSQL query or accidental repetition
+loop. Each full filesystem repetition authoritatively reads approximately
+71,001 JSON records: 50,000 alert events, 10,000 requests, 10,000 terminal
+outcomes, 1,000 reports referenced by successful attempts, and the selected
+monitoring report. Thirty measured repetitions therefore require approximately
+2.13 million verified JSON reads, before the warm-up and projection snapshot
+passes. This filesystem work, rather than the 180 PostgreSQL statements, is the
+dominant local runtime cost.
+
+The harness now reports sanitized phase and repetition progress on stderr,
+groups snapshot rows once for bulk publication, and applies a configurable
+one-hour hard runtime bound by default. A supervisor process terminates the
+single benchmark worker at that bound, so fixture generation, verified loaders,
+snapshot construction, publication, and queries cannot continue silently past
+it. The supervisor removes only the uniquely tagged synthetic temporary store
+after normal completion or forced termination. Reaching either this bound or
+any PostgreSQL statement timeout records `NO-GO`; it can never produce `GO` or
+a silent fallback. The full cardinalities, thirty repetitions, loader calls,
+identity/order comparisons, deadlines, speed thresholds, and index-plan gates
+remain unchanged.
+
+A material reduction beyond these harness improvements would require a separate
+approved change to the authoritative loaders, with deterministic parallel-read
+or equivalent implementation and full corruption, ordering, identity, and
+regression evidence. Benchmark-side caching or parallel repetitions are not
+accepted because they would weaken or bias the filesystem comparison.
+
 ## Delivery Plans
 
 Each plan starts from updated `master`, uses a separate branch and draft pull
