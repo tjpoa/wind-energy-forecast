@@ -46,6 +46,7 @@ COMPARATORS = ("global", "seasonal")
 DEADLINE_MS = 5_000.0
 MINIMUM_SPEEDUP = 0.20
 DEFAULT_MAX_RUNTIME_SECONDS = 3_600.0
+COPY_DEADLINE_CHECK_INTERVAL = 4_096
 TABLE_ORDER = (
     "model_era",
     "monitoring_report",
@@ -58,6 +59,271 @@ TABLE_ORDER = (
     "reporting_attempt",
     "lineage_edge",
 )
+ANALYZE_TABLES = (
+    "alert_event",
+    "reporting_attempt",
+    "performance_metric",
+    "drift_measurement",
+)
+
+
+@dataclass(frozen=True)
+class CopySpec:
+    """Allowlisted binary COPY columns and exact PostgreSQL input types."""
+
+    columns: tuple[str, ...]
+    postgres_types: tuple[str, ...]
+
+
+COPY_SPECS = {
+    "evidence_record": CopySpec(
+        (
+            "evidence_record_id",
+            "domain",
+            "source_kind",
+            "schema_version",
+            "record_id",
+            "sha256",
+            "effective_at",
+            "observed_at_utc",
+        ),
+        ("int8", "text", "text", "text", "text", "bpchar", "text", "timestamptz"),
+    ),
+    "generation_evidence": CopySpec(
+        ("generation_id", "evidence_record_id"),
+        ("bpchar", "int8"),
+    ),
+    "model_era": CopySpec(
+        (
+            "model_era_id",
+            "evidence_record_id",
+            "association_kind",
+            "deployment_id",
+            "deployment_generation",
+            "registered_model_name",
+            "model_version",
+            "fit_cutoff",
+            "activation_cutoff",
+            "bundle_sha256",
+            "model_sha256",
+            "dataset_sha256",
+            "feature_schema_sha256",
+            "calibration_sha256",
+            "ledger_sha256",
+            "calibration_id",
+            "reference_id",
+        ),
+        (
+            "text",
+            "int8",
+            "text",
+            "text",
+            "int8",
+            "text",
+            "text",
+            "date",
+            "date",
+            "bpchar",
+            "bpchar",
+            "bpchar",
+            "bpchar",
+            "bpchar",
+            "bpchar",
+            "text",
+            "text",
+        ),
+    ),
+    "monitoring_report": CopySpec(
+        (
+            "report_id",
+            "evidence_record_id",
+            "reporting_run_id",
+            "created_at_utc",
+            "through_date",
+            "source_run_id",
+            "source_status",
+            "calibration_id",
+            "reference_id",
+            "policy_sha256",
+            "quality_status",
+            "batch_status",
+            "verdict",
+            "watermark_date",
+            "watermark_age_days",
+            "objective_days",
+            "late_days",
+            "objective_missed",
+            "unresolved_late_date_count",
+            "date_count",
+            "ren_complete_count",
+            "era5_complete_count",
+            "integration_ready_count",
+            "feature_ready_count",
+            "model_era_id",
+        ),
+        (
+            "text",
+            "int8",
+            "text",
+            "timestamptz",
+            "date",
+            "text",
+            "text",
+            "text",
+            "text",
+            "bpchar",
+            "text",
+            "text",
+            "text",
+            "date",
+            "int4",
+            "int4",
+            "int4",
+            "bool",
+            "int4",
+            "int4",
+            "int4",
+            "int4",
+            "int4",
+            "int4",
+            "text",
+        ),
+    ),
+    "quality_issue": CopySpec(
+        ("report_id", "position", "evidence_record_id", "code", "severity"),
+        ("text", "int4", "int8", "text", "text"),
+    ),
+    "monitoring_window": CopySpec(
+        (
+            "report_id",
+            "window_days",
+            "evidence_record_id",
+            "status",
+            "sample_count",
+            "coverage_ratio",
+            "coverage_severity",
+            "minimum_samples",
+            "calendar_start",
+            "calendar_end",
+        ),
+        ("text", "int4", "int8", "text", "int4", "float8", "text", "int4", "date", "date"),
+    ),
+    "performance_metric": CopySpec(
+        (
+            "report_id",
+            "window_days",
+            "evidence_record_id",
+            "metric_name",
+            "value",
+            "value_status",
+            "severity",
+            "warning_threshold",
+            "critical_threshold",
+            "direction",
+            "unit_or_scale",
+        ),
+        (
+            "text",
+            "int4",
+            "int8",
+            "text",
+            "float8",
+            "text",
+            "text",
+            "float8",
+            "float8",
+            "text",
+            "text",
+        ),
+    ),
+    "drift_measurement": CopySpec(
+        (
+            "report_id",
+            "window_days",
+            "position",
+            "evidence_record_id",
+            "feature",
+            "comparator",
+            "detector",
+            "value",
+            "severity",
+            "warning_threshold",
+            "critical_threshold",
+            "direction",
+        ),
+        (
+            "text",
+            "int4",
+            "int4",
+            "int8",
+            "text",
+            "text",
+            "text",
+            "float8",
+            "text",
+            "float8",
+            "float8",
+            "text",
+        ),
+    ),
+    "alert_event": CopySpec(
+        (
+            "alert_event_id",
+            "evidence_record_id",
+            "rule_id",
+            "through_date",
+            "event_type",
+            "severity",
+            "previous_alert_event_id",
+        ),
+        ("text", "int8", "text", "date", "text", "text", "text"),
+    ),
+    "active_alert_snapshot": CopySpec(
+        ("generation_id", "rule_id", "evidence_record_id", "alert_event_id"),
+        ("bpchar", "text", "int8", "text"),
+    ),
+    "reporting_attempt": CopySpec(
+        (
+            "reporting_run_id",
+            "evidence_record_id",
+            "attempted_at_utc",
+            "through_date",
+            "source_run_id",
+            "source_status",
+            "status",
+            "report_id",
+            "active_alert_count",
+            "failure_at_utc",
+            "failure_type",
+            "failure_message",
+        ),
+        (
+            "text",
+            "int8",
+            "timestamptz",
+            "date",
+            "text",
+            "text",
+            "text",
+            "text",
+            "int4",
+            "timestamptz",
+            "text",
+            "text",
+        ),
+    ),
+    "lineage_edge": CopySpec(
+        (
+            "generation_id",
+            "edge_type",
+            "source_evidence_record_id",
+            "target_evidence_record_id",
+            "position",
+            "evidence_record_id",
+        ),
+        ("bpchar", "text", "int8", "int8", "int4", "int8"),
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -778,25 +1044,95 @@ def _measure_cases(
     return results
 
 
-def _analyze(migrator_dsn: str) -> None:
+def _run_publication_step(
+    step: str,
+    timings: dict[str, float],
+    deadline_ns: int | None,
+    action: Callable[[], Any],
+    *,
+    row_count: int | None = None,
+    check_deadline_after: bool = True,
+) -> Any:
+    phase = f"snapshot_publish:{step}"
+    _check_runtime(deadline_ns, phase)
+    progress: dict[str, int | float | str] = {"step": step}
+    if row_count is not None:
+        progress["row_count"] = row_count
+    _emit_progress("snapshot_publish_step_started", **progress)
+    started_ns = perf_counter_ns()
+    try:
+        result = action()
+    except Exception as exc:
+        _raise_statement_timeout(exc, f"{phase}:deadline")
+        raise
+    elapsed_ms = round((perf_counter_ns() - started_ns) / 1_000_000, 3)
+    timings[step] = elapsed_ms
+    _emit_progress(
+        "snapshot_publish_step_completed",
+        **progress,
+        elapsed_ms=elapsed_ms,
+    )
+    if check_deadline_after:
+        _check_runtime(deadline_ns, phase)
+    return result
+
+
+def _analyze(
+    migrator_dsn: str,
+    *,
+    deadline_ns: int | None,
+) -> dict[str, float]:
     import psycopg
 
+    timings: dict[str, float] = {}
     with psycopg.connect(migrator_dsn, autocommit=True) as connection:
         with connection.cursor() as cursor:
             cursor.execute("SET ROLE wf_projection_owner")
-            cursor.execute("ANALYZE operational_projection.alert_event")
-            cursor.execute("ANALYZE operational_projection.reporting_attempt")
-            cursor.execute("ANALYZE operational_projection.performance_metric")
-            cursor.execute("ANALYZE operational_projection.drift_measurement")
+            for table in ANALYZE_TABLES:
+                _run_publication_step(
+                    f"analyze_{table}",
+                    timings,
+                    deadline_ns,
+                    lambda table=table: cursor.execute(
+                        f"ANALYZE operational_projection.{table}"
+                    ),
+                )
+    return timings
 
 
-def _copy_rows(cursor: Any, table: str, columns: Sequence[str], rows: Iterable[Sequence[Any]]) -> None:
+def _copy_rows(
+    cursor: Any,
+    table: str,
+    rows: Iterable[Sequence[Any]],
+    *,
+    deadline_ns: int | None,
+) -> int:
+    spec = COPY_SPECS.get(table)
+    if spec is None:
+        raise RuntimeError("Benchmark COPY table is unsupported.")
     statement = (
-        f"COPY operational_projection.{table} ({', '.join(columns)}) FROM STDIN"
+        f"COPY operational_projection.{table} ({', '.join(spec.columns)}) "
+        "FROM STDIN (FORMAT BINARY)"
     )
+    written = 0
     with cursor.copy(statement) as copy:
-        for row in rows:
+        copy.set_types(spec.postgres_types)
+        for written, row in enumerate(rows, start=1):
             copy.write_row(row)
+            if written % COPY_DEADLINE_CHECK_INTERVAL == 0:
+                _check_runtime(deadline_ns, f"snapshot_publish:copy_{table}")
+    return written
+
+
+def _register_binary_copy_dumpers(connection: Any) -> None:
+    """Register COPY-only binary adaptation missing from Psycopg defaults."""
+    from psycopg.types.string import StrBinaryDumper
+
+    class BpcharBinaryDumper(StrBinaryDumper):
+        pass
+
+    BpcharBinaryDumper.oid = connection.adapters.types["bpchar"].oid
+    connection.adapters.register_dumper(None, BpcharBinaryDumper)
 
 
 def _group_snapshot_rows(snapshot: Any) -> tuple[dict[str, tuple[Any, ...]], dict[str, int]]:
@@ -813,135 +1149,221 @@ def _group_snapshot_rows(snapshot: Any) -> tuple[dict[str, tuple[Any, ...]], dic
     return frozen, counts
 
 
-def _bulk_publish_snapshot(writer_dsn: str, snapshot: Any) -> None:
+def _bulk_publish_snapshot(
+    writer_dsn: str,
+    snapshot: Any,
+    *,
+    deadline_ns: int | None,
+    failure_hook: Callable[[str], None] | None = None,
+) -> dict[str, float]:
     """Seed one clean ephemeral benchmark database through writer privileges."""
     import psycopg
 
-    evidence_ids = {
-        record.identity: index
-        for index, record in enumerate(snapshot.manifest.evidence, start=1)
-    }
-    rows_by_table, counts = _group_snapshot_rows(snapshot)
+    timings: dict[str, float] = {}
+
+    def prepare() -> tuple[dict[Any, int], dict[str, tuple[Any, ...]], dict[str, int]]:
+        evidence_ids = {
+            record.identity: index
+            for index, record in enumerate(snapshot.manifest.evidence, start=1)
+        }
+        rows_by_table, counts = _group_snapshot_rows(snapshot)
+        return evidence_ids, rows_by_table, counts
+
+    evidence_ids, rows_by_table, counts = _run_publication_step(
+        "prepare",
+        timings,
+        deadline_ns,
+        prepare,
+        row_count=len(snapshot.rows),
+    )
     with psycopg.connect(
         writer_dsn,
         application_name="wind_forecast_projection_benchmark_writer",
     ) as connection:
-        with connection.cursor() as cursor:
-            cursor.execute("SET TIME ZONE 'UTC'")
-            cursor.execute("SET statement_timeout = '30s'")
-            cursor.execute("SELECT count(*) FROM operational_projection.projection_generation")
-            if int(cursor.fetchone()[0]) != 0:
-                raise RuntimeError("Benchmark database is not empty.")
-            _copy_rows(
-                cursor,
-                "evidence_record",
-                (
-                    "evidence_record_id",
-                    "domain",
-                    "source_kind",
+        try:
+            _register_binary_copy_dumpers(connection)
+            with connection.cursor() as cursor:
+                cursor.execute("SET TIME ZONE 'UTC'")
+                cursor.execute("SET statement_timeout = '30s'")
+                cursor.execute(
+                    "SELECT count(*) FROM "
+                    "operational_projection.projection_generation"
+                )
+                if int(cursor.fetchone()[0]) != 0:
+                    raise RuntimeError("Benchmark database is not empty.")
+
+                _run_publication_step(
+                    "copy_evidence_record",
+                    timings,
+                    deadline_ns,
+                    lambda: _copy_rows(
+                        cursor,
+                        "evidence_record",
+                        (
+                            (
+                                evidence_ids[record.identity],
+                                record.identity.domain,
+                                record.identity.source_kind,
+                                record.identity.schema_version,
+                                record.identity.record_id,
+                                record.identity.sha256,
+                                record.effective_at,
+                                record.observed_at_utc,
+                            )
+                            for record in snapshot.manifest.evidence
+                        ),
+                        deadline_ns=deadline_ns,
+                    ),
+                    row_count=len(snapshot.manifest.evidence),
+                )
+                generation_columns = (
+                    "generation_id",
+                    "environment_id",
+                    "contract_version",
                     "schema_version",
-                    "record_id",
-                    "sha256",
-                    "effective_at",
-                    "observed_at_utc",
-                ),
-                (
-                    (
-                        evidence_ids[record.identity],
-                        record.identity.domain,
-                        record.identity.source_kind,
-                        record.identity.schema_version,
-                        record.identity.record_id,
-                        record.identity.sha256,
-                        record.effective_at,
-                        record.observed_at_utc,
+                    "projector_version",
+                    "source_git_commit",
+                    "source_set_sha256",
+                    "evidence_record_count",
+                    "generation_evidence_count",
+                    "model_era_count",
+                    "monitoring_report_count",
+                    "quality_issue_count",
+                    "monitoring_window_count",
+                    "performance_metric_count",
+                    "drift_measurement_count",
+                    "alert_event_count",
+                    "active_alert_snapshot_count",
+                    "reporting_attempt_count",
+                    "lineage_edge_count",
+                )
+
+                def insert_generation() -> None:
+                    cursor.execute(
+                        "INSERT INTO operational_projection.projection_generation ("
+                        + ", ".join(generation_columns)
+                        + ") VALUES ("
+                        + ", ".join(["%s"] * len(generation_columns))
+                        + ")",
+                        (
+                            snapshot.generation_id,
+                            snapshot.manifest.environment_id,
+                            snapshot.manifest.contract_version,
+                            snapshot.manifest.schema_version,
+                            snapshot.manifest.projector_version,
+                            snapshot.manifest.source_git_commit,
+                            snapshot.manifest.source_set_sha256,
+                            *(counts[name] for name in generation_columns[7:]),
+                        ),
                     )
-                    for record in snapshot.manifest.evidence
-                ),
-            )
-            generation_columns = (
-                "generation_id",
-                "environment_id",
-                "contract_version",
-                "schema_version",
-                "projector_version",
-                "source_git_commit",
-                "source_set_sha256",
-                "evidence_record_count",
-                "generation_evidence_count",
-                "model_era_count",
-                "monitoring_report_count",
-                "quality_issue_count",
-                "monitoring_window_count",
-                "performance_metric_count",
-                "drift_measurement_count",
-                "alert_event_count",
-                "active_alert_snapshot_count",
-                "reporting_attempt_count",
-                "lineage_edge_count",
-            )
-            cursor.execute(
-                "INSERT INTO operational_projection.projection_generation ("
-                + ", ".join(generation_columns)
-                + ") VALUES ("
-                + ", ".join(["%s"] * len(generation_columns))
-                + ")",
-                (
-                    snapshot.generation_id,
-                    snapshot.manifest.environment_id,
-                    snapshot.manifest.contract_version,
-                    snapshot.manifest.schema_version,
-                    snapshot.manifest.projector_version,
-                    snapshot.manifest.source_git_commit,
-                    snapshot.manifest.source_set_sha256,
-                    *(counts[name] for name in generation_columns[7:]),
-                ),
-            )
-            _copy_rows(
-                cursor,
-                "generation_evidence",
-                ("generation_id", "evidence_record_id"),
-                (
-                    (snapshot.generation_id, evidence_ids[record.identity])
-                    for record in snapshot.manifest.evidence
-                ),
-            )
-            for table in TABLE_ORDER:
-                table_rows = rows_by_table[table]
-                if not table_rows:
-                    continue
-                columns = tuple(
-                    sorted(
-                        {
+
+                _run_publication_step(
+                    "insert_generation",
+                    timings,
+                    deadline_ns,
+                    insert_generation,
+                    row_count=1,
+                )
+                _run_publication_step(
+                    "copy_generation_evidence",
+                    timings,
+                    deadline_ns,
+                    lambda: _copy_rows(
+                        cursor,
+                        "generation_evidence",
+                        (
+                            (
+                                snapshot.generation_id,
+                                evidence_ids[record.identity],
+                            )
+                            for record in snapshot.manifest.evidence
+                        ),
+                        deadline_ns=deadline_ns,
+                    ),
+                    row_count=len(snapshot.manifest.evidence),
+                )
+                for table in TABLE_ORDER:
+                    table_rows = rows_by_table[table]
+                    spec = COPY_SPECS[table]
+                    if table_rows:
+                        first_columns = {
                             *table_rows[0].value_map(),
                             *(link.column for link in table_rows[0].evidence_links),
                         }
+                        if first_columns != set(spec.columns):
+                            raise RuntimeError(
+                                "Benchmark COPY columns differ from the normalized snapshot."
+                            )
+
+                    def values(
+                        table_rows: tuple[Any, ...] = table_rows,
+                        spec: CopySpec = spec,
+                    ) -> Iterable[tuple[Any, ...]]:
+                        for relational_row in table_rows:
+                            value_map = relational_row.value_map()
+                            value_map.update(
+                                {
+                                    link.column: evidence_ids[link.evidence]
+                                    for link in relational_row.evidence_links
+                                }
+                            )
+                            yield tuple(
+                                value_map[column] for column in spec.columns
+                            )
+
+                    _run_publication_step(
+                        f"copy_{table}",
+                        timings,
+                        deadline_ns,
+                        (
+                            lambda table=table, table_rows=table_rows: (
+                                _copy_rows(
+                                    cursor,
+                                    table,
+                                    values(table_rows, COPY_SPECS[table]),
+                                    deadline_ns=deadline_ns,
+                                )
+                                if table_rows
+                                else 0
+                            )
+                        ),
+                        row_count=len(table_rows),
                     )
+                ready_at = datetime.now(timezone.utc)
+
+                def publish_head() -> None:
+                    cursor.execute(
+                        "UPDATE operational_projection.projection_generation "
+                        "SET ready_at_utc = %s WHERE generation_id = %s",
+                        (ready_at, snapshot.generation_id),
+                    )
+                    cursor.execute(
+                        "INSERT INTO operational_projection.projection_head "
+                        "(environment_id, generation_id, published_at_utc) "
+                        "VALUES (%s, %s, %s)",
+                        ("local", snapshot.generation_id, ready_at),
+                    )
+
+                _run_publication_step(
+                    "publish_head",
+                    timings,
+                    deadline_ns,
+                    publish_head,
+                    row_count=1,
                 )
-
-                def values() -> Iterable[tuple[Any, ...]]:
-                    for relational_row in table_rows:
-                        value_map = relational_row.value_map()
-                        value_map.update(
-                            {
-                                link.column: evidence_ids[link.evidence]
-                                for link in relational_row.evidence_links
-                            }
-                        )
-                        yield tuple(value_map[column] for column in columns)
-
-                _copy_rows(cursor, table, columns, values())
-            ready_at = datetime.now(timezone.utc)
-            cursor.execute(
-                "UPDATE operational_projection.projection_generation "
-                "SET ready_at_utc = %s WHERE generation_id = %s",
-                (ready_at, snapshot.generation_id),
+                if failure_hook is not None:
+                    failure_hook("before_commit")
+            _run_publication_step(
+                "commit",
+                timings,
+                deadline_ns,
+                connection.commit,
+                check_deadline_after=False,
             )
-            cursor.execute(
-                "INSERT INTO operational_projection.projection_head "
-                "(environment_id, generation_id, published_at_utc) VALUES (%s, %s, %s)",
-                ("local", snapshot.generation_id, ready_at),
-            )
+        except Exception:
+            connection.rollback()
+            raise
+    return timings
 
 
 def run_benchmark(
@@ -962,6 +1384,7 @@ def run_benchmark(
         else started_ns + int(max_runtime_seconds * 1_000_000_000)
     )
     phase_timings_ms: dict[str, float] = {}
+    snapshot_publish_steps_ms: dict[str, float] = {}
 
     def start_phase(name: str) -> int:
         _check_runtime(deadline_ns, name)
@@ -1013,8 +1436,16 @@ def run_benchmark(
         finish_phase("snapshot_build", phase_started_ns)
         phase_started_ns = start_phase("snapshot_publish")
         try:
-            _bulk_publish_snapshot(dsns["writer"], snapshot)
-            _analyze(dsns["migrator"])
+            snapshot_publish_steps_ms.update(
+                _bulk_publish_snapshot(
+                    dsns["writer"],
+                    snapshot,
+                    deadline_ns=deadline_ns,
+                )
+            )
+            snapshot_publish_steps_ms.update(
+                _analyze(dsns["migrator"], deadline_ns=deadline_ns)
+            )
         except Exception as exc:
             _raise_statement_timeout(exc, "snapshot_publish:deadline")
             raise
@@ -1053,6 +1484,7 @@ def run_benchmark(
         "decision": decision,
         "failures": failures,
         "phase_timings_ms": phase_timings_ms,
+        "snapshot_publish_steps_ms": snapshot_publish_steps_ms,
         "total_runtime_ms": round((perf_counter_ns() - started_ns) / 1_000_000, 3),
         "dataset": {
             "reports": profile.reports,

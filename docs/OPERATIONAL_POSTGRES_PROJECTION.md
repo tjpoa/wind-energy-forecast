@@ -557,6 +557,62 @@ index plans, so the readiness decision remains `NO-GO`. Any further work must
 target benchmark publication separately and must not weaken the transactional
 projector, database constraints, cardinalities, repetitions, or query gates.
 
+#### Snapshot publication performance follow-up
+
+The separately approved publication optimization changes only the synthetic
+benchmark seeding path. Each allowlisted table now has a fixed ordered column
+and exact PostgreSQL-type specification derived from migration `0002`.
+Psycopg streams those already normalized values with binary `COPY`; the
+fixed-length SHA-256 columns use an explicit COPY-only `bpchar` binary dumper.
+No manual binary serialization, staging table, unlogged relation, disabled
+constraint or trigger, durability relaxation, schema change, or writer-role
+expansion is introduced.
+
+All constrained-table copies, the ready marker, and `projection_head` remain in
+one explicit transaction, with the head as the final database write before
+commit. A failure from binary adaptation, a PostgreSQL constraint, the injected
+pre-commit test hook, a statement timeout, or the cooperative global runtime
+check before commit aborts and rolls back the transaction. Commit is the
+irreversible boundary: after PostgreSQL confirms it, no rollback is claimed.
+A later overall timeout or `ANALYZE` failure still produces `NO-GO`, but leaves
+only a complete committed synthetic generation in the disposable database,
+which is removed with the ephemeral environment. The supervisor and one-hour
+full-profile bound remain unchanged.
+
+Sanitized progress now distinguishes preparation, each table COPY, head
+publication, commit, and each `ANALYZE`. The successful result adds only the
+corresponding millisecond timings; it exposes no DSN, SQL text, path, or source
+payload. This follow-up does not alter the full cardinalities, thirty
+repetitions, filesystem enumeration, query deadline, speed gates, index gates,
+or identity/order equivalence requirements.
+
+The real smoke profile at source commit `06799a661c3a64355270ab3e2ddec24cca09cae4`
+completed in 1.348 seconds on `2026-08-02`. Snapshot publication took 0.302
+seconds, the ready generation and head were queryable, and all six identity and
+ordering comparisons were exact. As required, its timing and index gates were
+disabled, so this is functional evidence rather than a readiness decision.
+
+The post-publication-optimization full profile was then executed exactly once
+at the same source commit, with the original cardinalities, thirty repetitions,
+and 3,600-second supervisor. Migration completed in 0.199 seconds, fixture
+generation in 82.063 seconds, and snapshot construction in 147.835 seconds.
+Within publication, preparation completed in 0.127 seconds, binary evidence
+COPY in 0.726 seconds, and generation insertion in 2.140 seconds. The subsequent
+binary `generation_evidence` COPY of 61,004 associations did not complete within
+the remaining bound. No projected-table COPY, ready/head publication, commit,
+`ANALYZE`, or query measurement followed. The supervisor recorded `NO-GO` with
+`benchmark_runtime:hard_timeout`.
+
+Because the timeout occurred before commit, PostgreSQL rolled back the complete
+transaction. A read-only verification found zero rows in `projection_head`,
+`projection_generation`, `evidence_record`, `generation_evidence`,
+`monitoring_report`, and `drift_measurement`. This result identifies
+`copy_generation_evidence` as the remaining publication bottleneck but still
+does not provide six-query medians, maxima, speedups, or index plans. Plan 4 is
+therefore not complete, its readiness decision remains `NO-GO`, and Plan 5
+remains blocked. Any next attempt requires a separately reviewed plan focused
+on this substep without weakening the preserved constraints or transaction.
+
 ## Delivery Plans
 
 Each plan starts from updated `master`, uses a separate branch and draft pull
