@@ -10,7 +10,7 @@
 | Contract version | `operational_postgres_projection_v1` |
 | Audience | One authorized operator in a trusted local environment |
 | Operating mode | `retrospective_historical_batch_not_real_time` |
-| Implementation status | Dedicated foundation, migrations, manual projector, verifier, and deterministic benchmark harness implemented; the mandatory full benchmark recorded `NO-GO`, so query integration is blocked and not implemented |
+| Implementation status | Dedicated foundation, migrations, manual projector, verifier, and deterministic benchmark harness implemented; the superseding mandatory full benchmark recorded `GO`, so query integration is eligible for a separate plan but remains unimplemented |
 
 ## Objective And Justification Gate
 
@@ -464,7 +464,7 @@ duration.
 A failed condition records `NO-GO` and blocks Plan 5. The benchmark does not
 read or write the governed operational store.
 
-### Plan 4 Result — `NO-GO`
+### Initial Plan 4 Result — `NO-GO` (superseded)
 
 Decision date: `2026-08-02`.
 
@@ -487,8 +487,9 @@ gates passed, and five of six intended-index gates passed.
 The complete fail-closed decision is `NO-GO` solely because
 `alert_interval_pagination` did not use `alert_event_date_idx`. Thresholds,
 cardinalities, repetitions, constraints, and guarantees were not reduced.
-Plan 4 is complete with this reviewed `NO-GO`; Plan 5 remains blocked unless a
-later separately approved decision replaces it with a reviewed `GO` result.
+At that revision, Plan 4 was complete with this reviewed `NO-GO`; Plan 5
+remained blocked unless a later separately approved decision replaced it with
+a reviewed `GO` result. The superseding result is recorded below.
 
 #### Benchmark runtime diagnosis and bounded execution
 
@@ -648,7 +649,7 @@ generation-evidence association, ready marker, and head. A regression test
 requires exactly one property access. No schema, constraint, privilege,
 transaction, durability, cardinality, repetition, or query gate changes.
 
-#### Final full-profile decision
+#### Initial complete full-profile decision
 
 The full profile ran exactly once at source commit
 `57071911f5f4c3c3dd06ade5e9e284fb04a307e3` on a clean ephemeral PostgreSQL
@@ -672,8 +673,55 @@ commit 0.025 seconds, and every `ANALYZE` completed.
 `alert_event_evidence_record_id_key` and `projection_head_pkey`, but not its
 required `alert_event_date_idx`; the harness therefore recorded the single
 failure `alert_interval_pagination:index`. This is a complete `NO-GO`, not a
-timeout or missing-evidence result. Plan 4 is concluded and Plan 5 remains
-blocked and unimplemented.
+timeout or missing-evidence result. At that revision Plan 4 was concluded and
+Plan 5 remained blocked and unimplemented.
+
+#### Superseding alert-pagination full-profile decision — `GO`
+
+The isolated alert-pagination follow-up changed only the benchmark SQL. A
+`MATERIALIZED` CTE selects the alert identity, evidence identity, date, and rule
+for the requested date interval. The outer query still validates membership in
+the current `projection_head` generation before applying the unchanged
+`through_date`, `rule_id`, and `alert_event_id` order and the unchanged limit
+and offset. The expected index remains `alert_event_date_idx`; no migration,
+schema, constraint, transaction, role, planner setting, cardinality,
+repetition, threshold, API, or projector behavior changed.
+
+A PostgreSQL 16 probe with 50,000 synthetic alerts first confirmed a bitmap
+index scan on `alert_event_date_idx`. The committed implementation then passed
+the real smoke profile with exact identity/order equivalence for all six query
+cases. All 30 benchmark contract and PostgreSQL integration tests passed,
+including fail-closed pre-commit rollback, real-constraint rejection, and
+binary publication coverage.
+
+The mandatory full profile ran exactly once on `2026-08-02` at source commit
+`a6d34cb6fdd8e1ef706d1695e981a897d395cbb0`, on a clean ephemeral PostgreSQL
+16 instance with the original cardinalities, 30 repetitions, and 3,600-second
+supervisor. Migration took 0.037 seconds, fixture generation 91.694 seconds,
+snapshot construction 277.749 seconds, snapshot publication 13.477 seconds,
+and query measurement 1,053.255 seconds. The exact phase measurements were
+37.107 ms, 91,693.733 ms, 277,749.259 ms, 13,476.666 ms, and 1,053,254.591 ms,
+respectively; exact total runtime was 1,456,530.665 ms.
+Publication completed every constrained binary `COPY`, published the head as
+the final database write, committed in exactly 40.243 ms, and completed every
+`ANALYZE`.
+
+| Query | Filesystem median (ms) | PostgreSQL median (ms) | PostgreSQL max (ms) | Speedup | Equivalent | Intended index |
+|---|---:|---:|---:|---:|:---:|:---:|
+| `alert_interval_pagination` | 15,800.7812 | 3.43485 | 5.987 | 0.999783 | yes | yes |
+| `exact_alert_id` | 15,788.1386 | 1.0576 | 1.8248 | 0.999933 | yes | yes |
+| `reporting_run_by_run_id` | 7,111.33025 | 0.8419 | 1.84 | 0.999882 | yes | yes |
+| `reporting_run_by_report_id` | 7,111.3412 | 0.80605 | 1.759 | 0.999887 | yes | yes |
+| `performance_report_window` | 7.93765 | 0.83815 | 1.9221 | 0.894408 | yes | yes |
+| `drift_report_window` | 7.97865 | 1.14865 | 2.1955 | 0.856035 | yes | yes |
+
+All six identity/order comparisons were exact, all six PostgreSQL maxima were
+below five seconds, both required speed gates exceeded 20%, and all six
+intended-index gates passed. `alert_interval_pagination` used
+`alert_event_date_idx` and `generation_evidence_evidence_idx`. The fail-closed
+decision is therefore `GO`, replacing the historical `NO-GO` above. Plan 4 is
+concluded. This result only makes Plan 5 eligible for a separate plan and
+explicit authorization; Plan 5 remains unimplemented and was not started.
 
 ## Delivery Plans
 
@@ -684,9 +732,9 @@ request, passes independent review, and stops for explicit user approval:
 2. Dedicated PostgreSQL foundation, roles, schema, and migrations: implemented.
 3. Manual all-or-nothing artifact projector and verifier: implemented.
 4. Deterministic benchmark and `GO`/`NO-GO` decision: implemented and concluded
-   with a complete `NO-GO`; interval pagination did not use its intended index.
+   with a superseding `GO`; all six intended indexes and all other gates passed.
 5. Optional `disabled|required` query-layer integration after benchmark `GO`:
-   blocked by the Plan 4 `NO-GO` and not implemented.
+   eligible for a separate plan and explicit authorization, but not implemented.
 
 No plan authorizes the next one implicitly. Observability, Copilot, MCP, RAG,
 staging, cloud, and production identity remain later independent decisions.
@@ -705,7 +753,7 @@ staging, cloud, and production identity remain later independent decisions.
   decision-complete for Plans 2 through 5.
 - PostgreSQL foundation, roles, schema, migrations, manual projector, and
   benchmark harness are implemented without a consumer; the benchmark decision
-  is `NO-GO`, and query integration remains blocked and unimplemented.
+  is `GO`, and query integration remains separately gated and unimplemented.
 - The projector is manual, reconstructible, loader-backed, serialized, and
   all-or-nothing. It introduces no consumer, pipeline, scheduler, artifact, or
   operational-state mutation.
