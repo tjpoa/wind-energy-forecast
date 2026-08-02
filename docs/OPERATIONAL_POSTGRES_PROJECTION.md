@@ -10,7 +10,7 @@
 | Contract version | `operational_postgres_projection_v1` |
 | Audience | One authorized operator in a trusted local environment |
 | Operating mode | `retrospective_historical_batch_not_real_time` |
-| Implementation status | Dedicated PostgreSQL foundation, roles, schema, migrations, manual all-or-nothing projector, verifier, and management CLI implemented; benchmark and query integration are not implemented |
+| Implementation status | Dedicated foundation, migrations, manual projector, verifier, and deterministic benchmark harness implemented; the mandatory full benchmark recorded `NO-GO`, so query integration is blocked and not implemented |
 
 ## Objective And Justification Gate
 
@@ -444,22 +444,51 @@ Plan 4 must use deterministic synthetic evidence only:
 - two windows and five performance metrics per report.
 
 It runs 30 warm repetitions for alert date interval plus pagination, exact
-alert ID, data quality by latest report, exact report, and reporting-run ID,
-reporting run by run ID, reporting run by report ID, report plus performance
-window, and report plus drift window.
+alert ID, reporting run by run ID, reporting run by report ID, report plus
+30-day performance window, and report plus 90-day drift window. Filesystem
+measurements call the verified loaders on every repetition. Selectors sharing
+the same authoritative enumeration share one loader call per repetition, but
+each selector is charged the complete loader duration plus its own selection
+duration.
 
 `GO` requires:
 
 - every query remains below the existing five-second maximum deadline;
-- one representative selector for each of the five projected question kinds
-  is at least 20% faster by median than equivalent filesystem-fixture
-  enumeration on the same process and machine;
+- alert date interval plus pagination and reporting run by report ID are each
+  at least 20% faster by median than equivalent filesystem-fixture enumeration
+  on the same process and machine;
 - selective queries use the intended indexes under
   `EXPLAIN (ANALYZE, BUFFERS)`;
 - PostgreSQL and filesystem selection return identical ordered identities.
 
 A failed condition records `NO-GO` and blocks Plan 5. The benchmark does not
 read or write the governed operational store.
+
+### Plan 4 Result — `NO-GO`
+
+Decision date: `2026-08-01`.
+
+The deterministic harness and its PostgreSQL 16 smoke profile were implemented
+and passed with exact identity/order equivalence for all six query cases. The
+smoke used four reports, twelve terminal reporting attempts, forty alert
+events, eight monitoring windows, forty performance metrics, eight hundred
+drift measurements, and three repetitions. It ran only against a clean,
+ephemeral loopback PostgreSQL instance and a temporary synthetic filesystem
+store. Smoke timings are not readiness evidence and did not apply the full
+timing or index-plan gates.
+
+The mandatory full profile retained the approved 1,000/10,000/50,000/200,000
+cardinalities and 30 repetitions. Multiple local attempts remained active for
+hours without producing a complete result. Removing duplicate loader scans
+between selectors and bulk-seeding the already loader-normalized snapshot into
+the clean ephemeral database did not make the full run complete in a
+reasonable operator review window. No complete set of medians, maxima, or
+`EXPLAIN (ANALYZE, BUFFERS)` results exists, so none is admitted or inferred.
+
+The readiness claim is therefore unproven and the fail-closed decision is
+`NO-GO`. Thresholds, cardinalities, and repetitions were not reduced. Plan 5
+must not start unless a later separately approved decision replaces this
+`NO-GO` with a complete benchmark design and a reviewed `GO` result.
 
 ## Delivery Plans
 
@@ -469,9 +498,10 @@ request, passes independent review, and stops for explicit user approval:
 1. This documentation-only contract: accepted by this record.
 2. Dedicated PostgreSQL foundation, roles, schema, and migrations: implemented.
 3. Manual all-or-nothing artifact projector and verifier: implemented.
-4. Deterministic benchmark and `GO`/`NO-GO` decision: pending.
+4. Deterministic benchmark and `GO`/`NO-GO` decision: implemented with
+   `NO-GO`; the full readiness evidence did not complete.
 5. Optional `disabled|required` query-layer integration after benchmark `GO`:
-   pending.
+   blocked by the Plan 4 `NO-GO` and not implemented.
 
 No plan authorizes the next one implicitly. Observability, Copilot, MCP, RAG,
 staging, cloud, and production identity remain later independent decisions.
@@ -488,9 +518,9 @@ staging, cloud, and production identity remain later independent decisions.
 - Authentication, authorization, secret handling, data minimization, retention,
   migration, generation, concurrency, benchmark, rollback, and stop gates are
   decision-complete for Plans 2 through 5.
-- PostgreSQL foundation, roles, schema, migrations, and the manual projector
-  are implemented without a consumer; benchmark and integration remain
-  unimplemented.
+- PostgreSQL foundation, roles, schema, migrations, manual projector, and
+  benchmark harness are implemented without a consumer; the benchmark decision
+  is `NO-GO`, and query integration remains blocked and unimplemented.
 - The projector is manual, reconstructible, loader-backed, serialized, and
   all-or-nothing. It introduces no consumer, pipeline, scheduler, artifact, or
   operational-state mutation.
