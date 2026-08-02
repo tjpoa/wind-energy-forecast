@@ -112,6 +112,94 @@ def test_copy_rows_uses_binary_format_exact_types_and_bounded_checks(
     ]
 
 
+@pytest.mark.parametrize("method", ("binary_copy", "text_copy"))
+def test_generation_evidence_copy_probe_is_typed_and_sanitized(
+    method: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    observed: dict[str, object] = {"rows": [], "exits": []}
+
+    class RecordingCopy:
+        def set_types(self, values: tuple[str, ...]) -> None:
+            observed["types"] = values
+
+        def write_row(self, row: tuple[object, ...]) -> None:
+            observed["rows"].append(row)  # type: ignore[union-attr]
+
+    class RecordingManager:
+        def __enter__(self) -> RecordingCopy:
+            return RecordingCopy()
+
+        def __exit__(self, *args: object) -> None:
+            observed["exits"].append(args)  # type: ignore[union-attr]
+
+    class RecordingCursor:
+        def copy(self, statement: str) -> RecordingManager:
+            observed["statement"] = statement
+            return RecordingManager()
+
+    timings: dict[str, float] = {}
+    written = benchmark._copy_generation_evidence_probe(
+        RecordingCursor(),
+        method=method,
+        generation_id="a" * 64,
+        association_count=3,
+        deadline_ns=None,
+        timings=timings,
+    )
+
+    assert written == 3
+    assert observed["rows"] == [("a" * 64, 1), ("a" * 64, 2), ("a" * 64, 3)]
+    assert observed["exits"] == [(None, None, None)]
+    if method == "binary_copy":
+        assert str(observed["statement"]).endswith("(FORMAT BINARY)")
+        assert observed["types"] == ("bpchar", "int8")
+    else:
+        assert not str(observed["statement"]).endswith("(FORMAT BINARY)")
+        assert "types" not in observed
+    events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert {event["method"] for event in events} == {method}
+    assert {event["association_count"] for event in events} == {3}
+    assert set(timings) == (
+        {"copy_open", "copy_first_row", "copy_remaining_rows", "copy_finalize"}
+        | ({"copy_configure"} if method == "binary_copy" else set())
+    )
+    serialized = json.dumps(events)
+    assert "postgresql://" not in serialized.lower()
+    assert str(Path.cwd()).lower() not in serialized.lower()
+
+
+def test_generation_evidence_insert_select_probe_is_counted() -> None:
+    class RecordingCursor:
+        rowcount = 7
+
+        def execute(self, statement: str, parameters: tuple[object, ...]) -> None:
+            self.statement = statement
+            self.parameters = parameters
+
+    cursor = RecordingCursor()
+    timings: dict[str, float] = {}
+    written = benchmark._insert_select_generation_evidence_probe(
+        cursor,
+        generation_id="b" * 64,
+        association_count=7,
+        deadline_ns=None,
+        timings=timings,
+    )
+
+    assert written == 7
+    assert "INSERT INTO operational_projection.generation_evidence" in cursor.statement
+    assert "FROM operational_projection.evidence_record" in cursor.statement
+    assert cursor.parameters == ("b" * 64, 1, 7)
+    assert tuple(timings) == ("insert_select",)
+
+
+def test_generation_evidence_identity_digest_is_deterministic() -> None:
+    assert benchmark._generation_evidence_identity_sha256(3) == (
+        "ca73761ddabfffcbe51170be0b07f67bafcdbed202545c60707573d36dc935b4"
+    )
+
+
 def test_publication_step_progress_is_sanitized_and_timed(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -240,6 +328,7 @@ def _assert_projection_database_is_empty(reader_dsn: str) -> None:
                 "projection_head",
                 "projection_generation",
                 "evidence_record",
+                "generation_evidence",
                 "monitoring_report",
                 "drift_measurement",
             ):
@@ -247,6 +336,57 @@ def _assert_projection_database_is_empty(reader_dsn: str) -> None:
                     f"SELECT count(*) FROM operational_projection.{table}"
                 )
                 assert cursor.fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("method", benchmark.GENERATION_EVIDENCE_PROBE_METHODS)
+def test_generation_evidence_probe_methods_use_real_schema_and_roll_back(
+    benchmark_projection_dsns: dict[str, str],
+    method: str,
+) -> None:
+    result = benchmark.run_generation_evidence_probe(
+        method,
+        128,
+        1,
+        max_runtime_seconds=45,
+    )
+
+    assert result["decision"] == "PASS"
+    assert result["method"] == method
+    assert result["association_count"] == 128
+    assert result["rows_written"] == 128
+    assert result["rolled_back"] is True
+    _assert_projection_database_is_empty(benchmark_projection_dsns["reader"])
+
+
+def test_generation_evidence_probe_rejects_invalid_fk_and_rolls_back(
+    benchmark_projection_dsns: dict[str, str],
+) -> None:
+    import psycopg
+
+    migrations.migrate(benchmark_projection_dsns["migrator"])
+    generation_id = "c" * 64
+    with psycopg.connect(benchmark_projection_dsns["writer"]) as connection:
+        benchmark._register_binary_copy_dumpers(connection)
+        with connection.cursor() as cursor:
+            cursor.execute("SET statement_timeout = '30s'")
+            benchmark._assert_probe_database_empty(cursor)
+            benchmark._seed_generation_evidence_probe(
+                cursor,
+                generation_id=generation_id,
+                association_count=2,
+                deadline_ns=None,
+            )
+            with pytest.raises(psycopg.errors.ForeignKeyViolation):
+                benchmark._copy_generation_evidence_probe(
+                    cursor,
+                    method="binary_copy",
+                    generation_id=generation_id,
+                    association_count=3,
+                    deadline_ns=None,
+                    timings={},
+                )
+        connection.rollback()
+    _assert_projection_database_is_empty(benchmark_projection_dsns["reader"])
 
 
 def test_binary_copy_specs_match_postgres_schema(
@@ -444,6 +584,31 @@ def test_snapshot_rows_are_grouped_in_one_pass() -> None:
     assert counts["drift_measurement_count"] == 0
 
 
+def test_snapshot_publication_precomputes_generation_id_once() -> None:
+    class CountingSnapshot:
+        rows = (SimpleNamespace(table="alert_event"),)
+        manifest = SimpleNamespace(
+            evidence=(SimpleNamespace(identity="evidence-1"),)
+        )
+        accesses = 0
+
+        @property
+        def generation_id(self) -> str:
+            self.accesses += 1
+            return "a" * 64
+
+    snapshot = CountingSnapshot()
+    generation_id, evidence_ids, grouped, counts = (
+        benchmark._prepare_snapshot_publication(snapshot)
+    )
+
+    assert generation_id == "a" * 64
+    assert snapshot.accesses == 1
+    assert evidence_ids == {"evidence-1": 1}
+    assert len(grouped["alert_event"]) == 1
+    assert counts["generation_evidence_count"] == 1
+
+
 def test_measurement_keeps_all_repetitions_but_shares_group_load(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -511,6 +676,91 @@ def test_runtime_limit_is_reported_as_sanitized_no_go(
     assert payload["failures"] == ["benchmark_runtime:query_measurement"]
     assert str(Path.cwd()).lower() not in captured.out.lower()
     assert "postgresql://" not in captured.out.lower()
+
+
+def test_probe_worker_dispatch_and_output_are_sanitized(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    observed: dict[str, object] = {}
+
+    def run_probe(
+        method: str,
+        association_count: int,
+        trial: int,
+        *,
+        max_runtime_seconds: float,
+    ) -> dict[str, object]:
+        observed.update(
+            {
+                "method": method,
+                "association_count": association_count,
+                "trial": trial,
+                "max_runtime_seconds": max_runtime_seconds,
+            }
+        )
+        return {
+            "schema_version": benchmark.GENERATION_EVIDENCE_PROBE_SCHEMA_VERSION,
+            "decision": "PASS",
+            "method": method,
+            "association_count": association_count,
+            "trial": trial,
+        }
+
+    monkeypatch.setattr(benchmark, "run_generation_evidence_probe", run_probe)
+    assert benchmark.main(
+        [
+            "--generation-evidence-probe-method",
+            "insert_select",
+            "--generation-evidence-probe-count",
+            "1000",
+            "--generation-evidence-probe-trial",
+            "2",
+            "--max-runtime-seconds",
+            "45",
+            "--worker",
+        ]
+    ) == 0
+
+    assert observed == {
+        "method": "insert_select",
+        "association_count": 1000,
+        "trial": 2,
+        "max_runtime_seconds": 45.0,
+    }
+    output = capsys.readouterr().out
+    assert json.loads(output)["decision"] == "PASS"
+    assert "postgresql://" not in output.lower()
+    assert str(Path.cwd()).lower() not in output.lower()
+
+
+def test_probe_supervisor_enforces_its_hard_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def expire(*args: object, **kwargs: object) -> None:
+        raise benchmark.subprocess.TimeoutExpired(cmd="probe", timeout=45)
+
+    monkeypatch.setattr(benchmark.subprocess, "run", expire)
+    assert benchmark.main(
+        [
+            "--generation-evidence-probe-method",
+            "binary_copy",
+            "--generation-evidence-probe-count",
+            "1000",
+            "--max-runtime-seconds",
+            "45",
+        ]
+    ) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "association_count": 1000,
+        "decision": "NO-GO",
+        "failures": ["generation_evidence_probe:hard_timeout"],
+        "method": "binary_copy",
+        "schema_version": benchmark.GENERATION_EVIDENCE_PROBE_SCHEMA_VERSION,
+        "trial": 1,
+    }
 
 
 def test_statement_timeout_is_translated_to_no_go() -> None:

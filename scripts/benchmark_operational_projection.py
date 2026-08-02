@@ -47,6 +47,15 @@ DEADLINE_MS = 5_000.0
 MINIMUM_SPEEDUP = 0.20
 DEFAULT_MAX_RUNTIME_SECONDS = 3_600.0
 COPY_DEADLINE_CHECK_INTERVAL = 4_096
+GENERATION_EVIDENCE_PROBE_METHODS = (
+    "binary_copy",
+    "text_copy",
+    "insert_select",
+)
+GENERATION_EVIDENCE_PROBE_MAX_ASSOCIATIONS = 61_004
+GENERATION_EVIDENCE_PROBE_SCHEMA_VERSION = (
+    "wind_forecast.operational_projection_generation_evidence_probe.v1"
+)
 TABLE_ORDER = (
     "model_era",
     "monitoring_report",
@@ -1135,6 +1144,384 @@ def _register_binary_copy_dumpers(connection: Any) -> None:
     connection.adapters.register_dumper(None, BpcharBinaryDumper)
 
 
+def _generation_evidence_identity_sha256(association_count: int) -> str:
+    digest = sha256()
+    for evidence_record_id in range(1, association_count + 1):
+        digest.update(evidence_record_id.to_bytes(8, "big"))
+    return digest.hexdigest()
+
+
+def _start_probe_step(
+    method: str,
+    association_count: int,
+    step: str,
+    deadline_ns: int | None,
+) -> int:
+    _check_runtime(deadline_ns, f"generation_evidence_probe:{step}")
+    _emit_progress(
+        "generation_evidence_probe_step_started",
+        method=method,
+        association_count=association_count,
+        step=step,
+    )
+    return perf_counter_ns()
+
+
+def _finish_probe_step(
+    method: str,
+    association_count: int,
+    step: str,
+    started_ns: int,
+    deadline_ns: int | None,
+    timings: dict[str, float],
+) -> None:
+    elapsed_ms = round((perf_counter_ns() - started_ns) / 1_000_000, 3)
+    timings[step] = elapsed_ms
+    _emit_progress(
+        "generation_evidence_probe_step_completed",
+        method=method,
+        association_count=association_count,
+        step=step,
+        elapsed_ms=elapsed_ms,
+    )
+    _check_runtime(deadline_ns, f"generation_evidence_probe:{step}")
+
+
+def _copy_generation_evidence_probe(
+    cursor: Any,
+    *,
+    method: str,
+    generation_id: str,
+    association_count: int,
+    deadline_ns: int | None,
+    timings: dict[str, float],
+) -> int:
+    if method not in {"binary_copy", "text_copy"}:
+        raise ValueError("Generation-evidence COPY probe method is unsupported.")
+    statement = (
+        "COPY operational_projection.generation_evidence "
+        "(generation_id, evidence_record_id) FROM STDIN"
+    )
+    if method == "binary_copy":
+        statement += " (FORMAT BINARY)"
+
+    opened_ns = _start_probe_step(
+        method, association_count, "copy_open", deadline_ns
+    )
+    with cursor.copy(statement) as copy:
+        _finish_probe_step(
+            method,
+            association_count,
+            "copy_open",
+            opened_ns,
+            deadline_ns,
+            timings,
+        )
+        if method == "binary_copy":
+            configured_ns = _start_probe_step(
+                method, association_count, "copy_configure", deadline_ns
+            )
+            copy.set_types(COPY_SPECS["generation_evidence"].postgres_types)
+            _finish_probe_step(
+                method,
+                association_count,
+                "copy_configure",
+                configured_ns,
+                deadline_ns,
+                timings,
+            )
+
+        first_ns = _start_probe_step(
+            method, association_count, "copy_first_row", deadline_ns
+        )
+        copy.write_row((generation_id, 1))
+        _finish_probe_step(
+            method,
+            association_count,
+            "copy_first_row",
+            first_ns,
+            deadline_ns,
+            timings,
+        )
+
+        remaining_ns = _start_probe_step(
+            method, association_count, "copy_remaining_rows", deadline_ns
+        )
+        for evidence_record_id in range(2, association_count + 1):
+            copy.write_row((generation_id, evidence_record_id))
+            if evidence_record_id % COPY_DEADLINE_CHECK_INTERVAL == 0:
+                _check_runtime(
+                    deadline_ns,
+                    "generation_evidence_probe:copy_remaining_rows",
+                )
+                _emit_progress(
+                    "generation_evidence_probe_batch_completed",
+                    method=method,
+                    association_count=association_count,
+                    rows_written=evidence_record_id,
+                )
+        _finish_probe_step(
+            method,
+            association_count,
+            "copy_remaining_rows",
+            remaining_ns,
+            deadline_ns,
+            timings,
+        )
+        finalized_ns = _start_probe_step(
+            method, association_count, "copy_finalize", deadline_ns
+        )
+    _finish_probe_step(
+        method,
+        association_count,
+        "copy_finalize",
+        finalized_ns,
+        deadline_ns,
+        timings,
+    )
+    return association_count
+
+
+def _insert_select_generation_evidence_probe(
+    cursor: Any,
+    *,
+    generation_id: str,
+    association_count: int,
+    deadline_ns: int | None,
+    timings: dict[str, float],
+) -> int:
+    method = "insert_select"
+    inserted_ns = _start_probe_step(
+        method, association_count, "insert_select", deadline_ns
+    )
+    cursor.execute(
+        "INSERT INTO operational_projection.generation_evidence "
+        "(generation_id, evidence_record_id) "
+        "SELECT %s, evidence_record_id "
+        "FROM operational_projection.evidence_record "
+        "WHERE evidence_record_id BETWEEN %s AND %s "
+        "ORDER BY evidence_record_id",
+        (generation_id, 1, association_count),
+    )
+    inserted = int(cursor.rowcount)
+    _finish_probe_step(
+        method,
+        association_count,
+        "insert_select",
+        inserted_ns,
+        deadline_ns,
+        timings,
+    )
+    return inserted
+
+
+def _assert_probe_database_empty(cursor: Any) -> None:
+    cursor.execute(
+        "SELECT "
+        "(SELECT count(*) FROM operational_projection.projection_generation), "
+        "(SELECT count(*) FROM operational_projection.evidence_record), "
+        "(SELECT count(*) FROM operational_projection.generation_evidence)"
+    )
+    if any(int(value) != 0 for value in cursor.fetchone()):
+        raise RuntimeError("Generation-evidence probe database is not empty.")
+
+
+def _seed_generation_evidence_probe(
+    cursor: Any,
+    *,
+    generation_id: str,
+    association_count: int,
+    deadline_ns: int | None,
+) -> None:
+    _copy_rows(
+        cursor,
+        "evidence_record",
+        (
+            (
+                evidence_record_id,
+                "probe",
+                "probe",
+                "probe.v1",
+                f"record-{evidence_record_id}",
+                f"{evidence_record_id:064x}",
+                "2026-08-02",
+                None,
+            )
+            for evidence_record_id in range(1, association_count + 1)
+        ),
+        deadline_ns=deadline_ns,
+    )
+    columns = (
+        "generation_id",
+        "environment_id",
+        "contract_version",
+        "schema_version",
+        "projector_version",
+        "source_git_commit",
+        "source_set_sha256",
+        "evidence_record_count",
+        "generation_evidence_count",
+        "model_era_count",
+        "monitoring_report_count",
+        "quality_issue_count",
+        "monitoring_window_count",
+        "performance_metric_count",
+        "drift_measurement_count",
+        "alert_event_count",
+        "active_alert_snapshot_count",
+        "reporting_attempt_count",
+        "lineage_edge_count",
+    )
+    cursor.execute(
+        "INSERT INTO operational_projection.projection_generation ("
+        + ", ".join(columns)
+        + ") VALUES ("
+        + ", ".join(["%s"] * len(columns))
+        + ")",
+        (
+            generation_id,
+            "local",
+            "probe.v1",
+            "probe.v1",
+            "probe.v1",
+            "0" * 40,
+            "0" * 64,
+            association_count,
+            association_count,
+            *(0 for _ in range(10)),
+        ),
+    )
+
+
+def _verify_generation_evidence_probe(
+    cursor: Any,
+    *,
+    generation_id: str,
+    association_count: int,
+) -> None:
+    cursor.execute(
+        "SELECT count(*) FROM operational_projection.generation_evidence "
+        "WHERE generation_id = %s",
+        (generation_id,),
+    )
+    if int(cursor.fetchone()[0]) != association_count:
+        raise RuntimeError("Generation-evidence probe cardinality differs.")
+    cursor.execute(
+        "SELECT count(*) FROM generate_series(%s::bigint, %s::bigint) "
+        "AS expected(id) "
+        "WHERE NOT EXISTS ("
+        "SELECT 1 FROM operational_projection.generation_evidence actual "
+        "WHERE actual.generation_id = %s "
+        "AND actual.evidence_record_id = expected.id) ",
+        (1, association_count, generation_id),
+    )
+    if int(cursor.fetchone()[0]) != 0:
+        raise RuntimeError("Generation-evidence probe identities differ.")
+
+
+def _verify_generation_evidence_probe_rollback(reader_dsn: str) -> None:
+    import psycopg
+
+    with psycopg.connect(reader_dsn) as connection:
+        with connection.cursor() as cursor:
+            _assert_probe_database_empty(cursor)
+
+
+def run_generation_evidence_probe(
+    method: str,
+    association_count: int,
+    trial: int,
+    *,
+    max_runtime_seconds: float,
+) -> dict[str, Any]:
+    if method not in GENERATION_EVIDENCE_PROBE_METHODS:
+        raise ValueError("Generation-evidence probe method is unsupported.")
+    if not 1 <= association_count <= GENERATION_EVIDENCE_PROBE_MAX_ASSOCIATIONS:
+        raise ValueError("Generation-evidence probe cardinality is invalid.")
+    if not 1 <= trial <= 3:
+        raise ValueError("Generation-evidence probe trial is invalid.")
+    if os.environ.get(ENVIRONMENT_ENV, "local") != "local":
+        raise ValueError("Generation-evidence probe environment is unsupported.")
+    dsns = {
+        "migrator": os.environ.get(MIGRATOR_DSN_ENV, ""),
+        "writer": os.environ.get(WRITER_DSN_ENV, ""),
+        "reader": os.environ.get(READER_DSN_ENV, ""),
+    }
+    if not all(dsns.values()):
+        raise ValueError("Required probe database configuration is unavailable.")
+
+    import psycopg
+
+    started_ns = perf_counter_ns()
+    deadline_ns = started_ns + int(max_runtime_seconds * 1_000_000_000)
+    migrate(dsns["migrator"])
+    _check_runtime(deadline_ns, "generation_evidence_probe:migration")
+    generation_id = sha256(
+        f"{method}:{association_count}:{trial}".encode("ascii")
+    ).hexdigest()
+    timings: dict[str, float] = {}
+    written = 0
+    with psycopg.connect(
+        dsns["writer"],
+        application_name="wind_forecast_generation_evidence_probe_writer",
+    ) as connection:
+        try:
+            _register_binary_copy_dumpers(connection)
+            with connection.cursor() as cursor:
+                cursor.execute("SET TIME ZONE 'UTC'")
+                cursor.execute("SET statement_timeout = '30s'")
+                _assert_probe_database_empty(cursor)
+                _seed_generation_evidence_probe(
+                    cursor,
+                    generation_id=generation_id,
+                    association_count=association_count,
+                    deadline_ns=deadline_ns,
+                )
+                if method in {"binary_copy", "text_copy"}:
+                    written = _copy_generation_evidence_probe(
+                        cursor,
+                        method=method,
+                        generation_id=generation_id,
+                        association_count=association_count,
+                        deadline_ns=deadline_ns,
+                        timings=timings,
+                    )
+                else:
+                    written = _insert_select_generation_evidence_probe(
+                        cursor,
+                        generation_id=generation_id,
+                        association_count=association_count,
+                        deadline_ns=deadline_ns,
+                        timings=timings,
+                    )
+                if written != association_count:
+                    raise RuntimeError("Generation-evidence probe write count differs.")
+                _verify_generation_evidence_probe(
+                    cursor,
+                    generation_id=generation_id,
+                    association_count=association_count,
+                )
+                _check_runtime(deadline_ns, "generation_evidence_probe:verify")
+            connection.rollback()
+        except Exception as exc:
+            connection.rollback()
+            _raise_statement_timeout(exc, "generation_evidence_probe:deadline")
+            raise
+    _verify_generation_evidence_probe_rollback(dsns["reader"])
+    return {
+        "schema_version": GENERATION_EVIDENCE_PROBE_SCHEMA_VERSION,
+        "decision": "PASS",
+        "method": method,
+        "association_count": association_count,
+        "trial": trial,
+        "rows_written": written,
+        "identity_sha256": _generation_evidence_identity_sha256(association_count),
+        "timings_ms": timings,
+        "total_runtime_ms": round((perf_counter_ns() - started_ns) / 1_000_000, 3),
+        "rolled_back": True,
+    }
+
+
 def _group_snapshot_rows(snapshot: Any) -> tuple[dict[str, tuple[Any, ...]], dict[str, int]]:
     grouped: dict[str, list[Any]] = {table: [] for table in TABLE_ORDER}
     for row in snapshot.rows:
@@ -1149,6 +1536,18 @@ def _group_snapshot_rows(snapshot: Any) -> tuple[dict[str, tuple[Any, ...]], dic
     return frozen, counts
 
 
+def _prepare_snapshot_publication(
+    snapshot: Any,
+) -> tuple[str, dict[Any, int], dict[str, tuple[Any, ...]], dict[str, int]]:
+    generation_id = snapshot.generation_id
+    evidence_ids = {
+        record.identity: index
+        for index, record in enumerate(snapshot.manifest.evidence, start=1)
+    }
+    rows_by_table, counts = _group_snapshot_rows(snapshot)
+    return generation_id, evidence_ids, rows_by_table, counts
+
+
 def _bulk_publish_snapshot(
     writer_dsn: str,
     snapshot: Any,
@@ -1161,19 +1560,11 @@ def _bulk_publish_snapshot(
 
     timings: dict[str, float] = {}
 
-    def prepare() -> tuple[dict[Any, int], dict[str, tuple[Any, ...]], dict[str, int]]:
-        evidence_ids = {
-            record.identity: index
-            for index, record in enumerate(snapshot.manifest.evidence, start=1)
-        }
-        rows_by_table, counts = _group_snapshot_rows(snapshot)
-        return evidence_ids, rows_by_table, counts
-
-    evidence_ids, rows_by_table, counts = _run_publication_step(
+    generation_id, evidence_ids, rows_by_table, counts = _run_publication_step(
         "prepare",
         timings,
         deadline_ns,
-        prepare,
+        lambda: _prepare_snapshot_publication(snapshot),
         row_count=len(snapshot.rows),
     )
     with psycopg.connect(
@@ -1246,7 +1637,7 @@ def _bulk_publish_snapshot(
                         + ", ".join(["%s"] * len(generation_columns))
                         + ")",
                         (
-                            snapshot.generation_id,
+                            generation_id,
                             snapshot.manifest.environment_id,
                             snapshot.manifest.contract_version,
                             snapshot.manifest.schema_version,
@@ -1273,7 +1664,7 @@ def _bulk_publish_snapshot(
                         "generation_evidence",
                         (
                             (
-                                snapshot.generation_id,
+                                generation_id,
                                 evidence_ids[record.identity],
                             )
                             for record in snapshot.manifest.evidence
@@ -1335,13 +1726,13 @@ def _bulk_publish_snapshot(
                     cursor.execute(
                         "UPDATE operational_projection.projection_generation "
                         "SET ready_at_utc = %s WHERE generation_id = %s",
-                        (ready_at, snapshot.generation_id),
+                        (ready_at, generation_id),
                     )
                     cursor.execute(
                         "INSERT INTO operational_projection.projection_head "
                         "(environment_id, generation_id, published_at_utc) "
                         "VALUES (%s, %s, %s)",
-                        ("local", snapshot.generation_id, ready_at),
+                        ("local", generation_id, ready_at),
                     )
 
                 _run_publication_step(
@@ -1512,6 +1903,12 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=tuple(PROFILES), default="full")
     parser.add_argument(
+        "--generation-evidence-probe-method",
+        choices=GENERATION_EVIDENCE_PROBE_METHODS,
+    )
+    parser.add_argument("--generation-evidence-probe-count", type=int)
+    parser.add_argument("--generation-evidence-probe-trial", type=int, default=1)
+    parser.add_argument(
         "--max-runtime-seconds",
         type=float,
         default=DEFAULT_MAX_RUNTIME_SECONDS,
@@ -1523,40 +1920,67 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _run_worker(args: argparse.Namespace) -> int:
+    is_probe = args.generation_evidence_probe_method is not None
     try:
-        summary = run_benchmark(
-            PROFILES[args.profile],
-            max_runtime_seconds=args.max_runtime_seconds,
-            workspace_token=args.workspace_token,
-        )
-    except BenchmarkNoGo as exc:
-        print(
-            json.dumps(
-                {
-                    "schema_version": "wind_forecast.operational_projection_benchmark.v1",
-                    "profile": args.profile,
-                    "decision": "NO-GO",
-                    "failures": exc.failures,
-                },
-                sort_keys=True,
+        if is_probe:
+            summary = run_generation_evidence_probe(
+                args.generation_evidence_probe_method,
+                args.generation_evidence_probe_count,
+                args.generation_evidence_probe_trial,
+                max_runtime_seconds=args.max_runtime_seconds,
             )
-        )
+        else:
+            summary = run_benchmark(
+                PROFILES[args.profile],
+                max_runtime_seconds=args.max_runtime_seconds,
+                workspace_token=args.workspace_token,
+            )
+    except BenchmarkNoGo as exc:
+        payload: dict[str, Any] = {
+            "schema_version": (
+                GENERATION_EVIDENCE_PROBE_SCHEMA_VERSION
+                if is_probe
+                else "wind_forecast.operational_projection_benchmark.v1"
+            ),
+            "decision": "NO-GO",
+            "failures": exc.failures,
+        }
+        if is_probe:
+            payload.update(
+                {
+                    "method": args.generation_evidence_probe_method,
+                    "association_count": args.generation_evidence_probe_count,
+                    "trial": args.generation_evidence_probe_trial,
+                }
+            )
+        else:
+            payload["profile"] = args.profile
+        print(json.dumps(payload, sort_keys=True))
         return 1
     except Exception:
-        print(
-            json.dumps(
+        payload = {
+            "schema_version": (
+                GENERATION_EVIDENCE_PROBE_SCHEMA_VERSION
+                if is_probe
+                else "wind_forecast.operational_projection_benchmark.v1"
+            ),
+            "decision": "ERROR",
+            "error": "Probe execution failed." if is_probe else "Benchmark setup or execution failed.",
+        }
+        if is_probe:
+            payload.update(
                 {
-                    "schema_version": "wind_forecast.operational_projection_benchmark.v1",
-                    "profile": args.profile,
-                    "decision": "ERROR",
-                    "error": "Benchmark setup or execution failed.",
-                },
-                sort_keys=True,
+                    "method": args.generation_evidence_probe_method,
+                    "association_count": args.generation_evidence_probe_count,
+                    "trial": args.generation_evidence_probe_trial,
+                }
             )
-        )
+        else:
+            payload["profile"] = args.profile
+        print(json.dumps(payload, sort_keys=True))
         return 2
     print(json.dumps(summary, sort_keys=True, separators=(",", ":"), default=str))
-    return 0 if summary["decision"] == "GO" else 1
+    return 0 if summary["decision"] in {"GO", "PASS"} else 1
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1564,20 +1988,47 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.max_runtime_seconds <= 0:
         parser.error("--max-runtime-seconds must be positive")
+    is_probe = args.generation_evidence_probe_method is not None
+    if is_probe != (args.generation_evidence_probe_count is not None):
+        parser.error("generation-evidence probe method and count are both required")
+    if is_probe and not (
+        1
+        <= args.generation_evidence_probe_count
+        <= GENERATION_EVIDENCE_PROBE_MAX_ASSOCIATIONS
+    ):
+        parser.error("generation-evidence probe count is outside the allowed range")
+    if not 1 <= args.generation_evidence_probe_trial <= 3:
+        parser.error("generation-evidence probe trial is outside the allowed range")
     if args.worker:
         return _run_worker(args)
     workspace_token = secrets.token_hex(8)
-    command = (
+    command = [
         sys.executable,
         str(Path(__file__).resolve()),
-        "--profile",
-        args.profile,
         "--max-runtime-seconds",
         str(args.max_runtime_seconds),
-        "--workspace-token",
-        workspace_token,
         "--worker",
-    )
+    ]
+    if is_probe:
+        command.extend(
+            [
+                "--generation-evidence-probe-method",
+                args.generation_evidence_probe_method,
+                "--generation-evidence-probe-count",
+                str(args.generation_evidence_probe_count),
+                "--generation-evidence-probe-trial",
+                str(args.generation_evidence_probe_trial),
+            ]
+        )
+    else:
+        command.extend(
+            [
+                "--profile",
+                args.profile,
+                "--workspace-token",
+                workspace_token,
+            ]
+        )
     timed_out = False
     try:
         return_code = subprocess.run(
@@ -1589,7 +2040,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         timed_out = True
         return_code = 1
     try:
-        _cleanup_worker_stores(workspace_token)
+        if not is_probe:
+            _cleanup_worker_stores(workspace_token)
     except Exception:
         print(
             json.dumps(
@@ -1604,17 +2056,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 2
     if timed_out:
-        print(
-            json.dumps(
+        payload = {
+            "schema_version": (
+                GENERATION_EVIDENCE_PROBE_SCHEMA_VERSION
+                if is_probe
+                else "wind_forecast.operational_projection_benchmark.v1"
+            ),
+            "decision": "NO-GO",
+            "failures": (
+                "generation_evidence_probe:hard_timeout"
+                if is_probe
+                else "benchmark_runtime:hard_timeout",
+            ),
+        }
+        if is_probe:
+            payload.update(
                 {
-                    "schema_version": "wind_forecast.operational_projection_benchmark.v1",
-                    "profile": args.profile,
-                    "decision": "NO-GO",
-                    "failures": ("benchmark_runtime:hard_timeout",),
-                },
-                sort_keys=True,
+                    "method": args.generation_evidence_probe_method,
+                    "association_count": args.generation_evidence_probe_count,
+                    "trial": args.generation_evidence_probe_trial,
+                }
             )
-        )
+        else:
+            payload["profile"] = args.profile
+        print(json.dumps(payload, sort_keys=True))
     return return_code
 
 

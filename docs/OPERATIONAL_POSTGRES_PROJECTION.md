@@ -613,6 +613,39 @@ therefore not complete, its readiness decision remains `NO-GO`, and Plan 5
 remains blocked. Any next attempt requires a separately reviewed plan focused
 on this substep without weakening the preserved constraints or transaction.
 
+#### Generation-evidence root-cause follow-up
+
+An opt-in PostgreSQL 16 probe compared the existing binary `COPY`, Psycopg text
+`COPY`, and an `INSERT ... SELECT` association through the real writer role,
+schema, PK, and both FKs. Each trial seeded valid synthetic evidence in one
+transaction, verified the exact association identities and cardinality, then
+deliberately rolled back and confirmed an empty database. All three methods
+completed at 1,000 and 10,000 associations and advanced to three independent
+61,004-association trials with a 45-second supervisor and 30-second statement
+timeout.
+
+| Method | Trial 1 (ms) | Trial 2 (ms) | Trial 3 (ms) |
+|---|---:|---:|---:|
+| Binary `COPY` | 879.107 | 846.876 | 882.014 |
+| Text `COPY` | 810.468 | 937.702 | 946.482 |
+| `INSERT ... SELECT` | 847.299 | 956.123 | 1,059.340 |
+
+The values above cover only association opening/configuration, row transfer,
+and server finalization. Every trial wrote exactly 61,004 rows with the same
+identity digest and rolled back cleanly. Because binary `COPY` passed every
+trial and neither alternative was faster than its best trial in all three
+measurements, the fail-closed selection rule retains binary `COPY`.
+
+Code inspection then identified the scale-dependent defect outside Psycopg:
+`ProjectionSnapshot.generation_id` is a computed property that canonically
+serializes and hashes the full manifest. The association generator referenced
+that property once per evidence row, recomputing the complete large-manifest
+digest 61,004 times. Publication now computes the generation ID once during
+preparation and reuses the immutable value for the manifest row, every
+generation-evidence association, ready marker, and head. A regression test
+requires exactly one property access. No schema, constraint, privilege,
+transaction, durability, cardinality, repetition, or query gate changes.
+
 ## Delivery Plans
 
 Each plan starts from updated `master`, uses a separate branch and draft pull
