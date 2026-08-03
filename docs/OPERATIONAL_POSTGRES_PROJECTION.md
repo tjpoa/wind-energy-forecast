@@ -10,7 +10,7 @@
 | Contract version | `operational_postgres_projection_v1` |
 | Audience | One authorized operator in a trusted local environment |
 | Operating mode | `retrospective_historical_batch_not_real_time` |
-| Implementation status | Dedicated foundation, migrations, manual projector, verifier, and deterministic benchmark harness implemented; the superseding mandatory full benchmark recorded `GO`, so query integration is eligible for a separate plan but remains unimplemented |
+| Implementation status | Dedicated foundation, migrations, manual projector, verifier, deterministic benchmark with a superseding `GO`, and optional `disabled|required` query-layer integration implemented; projection consumption remains disabled by default |
 
 ## Objective And Justification Gate
 
@@ -217,7 +217,7 @@ credential store. DSNs and credentials must not be logged, persisted, printed,
 or returned in failures. `search_path`, `statement_timeout`, `lock_timeout`, and
 application name are explicit.
 
-The exact future configuration keys are:
+The exact implemented configuration keys are:
 
 - `WIND_FORECAST_OPERATIONAL_PROJECTION_MODE`, exactly `disabled` or
   `required`, defaulting to `disabled`;
@@ -234,6 +234,40 @@ result. Manual migration and projection commands validate only their required
 DSN before acquiring a database connection and exit with a sanitized
 configuration error. A database statement timeout is capped by the remaining
 cooperative operational-query deadline.
+
+### Query-layer integration runbook
+
+Plan 5 implements the closed two-mode configuration without changing any
+public query, answer, citation, endpoint, OpenAPI, or HTTP status contract.
+`disabled` remains the default. In that mode operational service construction
+does not read the reader DSN, import `psycopg`, or contact PostgreSQL. To opt
+in, configure the dedicated reader credential and set the mode to exactly
+`required`; there is no `prefer` value.
+
+In `required`, `data_quality`, `monitoring_performance`,
+`monitoring_drift`, `monitoring_alerts`, and `reporting_run` use PostgreSQL
+only for current-generation identity selection, causal ordering, and bounded
+pagination. Every selected report, calibration, model era, reporting attempt,
+alert history, and active-alert state is then reloaded through the existing
+verified loaders. Loader-derived normalized values and original evidence
+identities must match the projection before the existing fact and citation
+logic runs. PostgreSQL is never cited.
+
+The reader opens read-only transactions, validates the exact bundled migration
+names and checksums, ready local head, contract/schema/projector versions,
+generation evidence count, and canonical source-set checksum, and joins every
+entity through the current head's `generation_evidence`. Its statement and
+lock timeouts are capped at the remaining query deadline. Alert selection uses
+the loader's deterministic `(through_date, rule_id, causal_depth,
+alert_event_id)` order; a missing predecessor, cross-rule edge, cycle, count
+mismatch, stale value, incompatible head, or invalid checksum fails closed as
+`unavailable` without a filesystem fallback. PostgreSQL deadline cancellation
+maps to `timeout`.
+
+`operational_summary`, `active_deployment`, and `active_model_metadata` remain
+on their unchanged direct loader and live Registry-verification path. An
+invalid or unavailable required projection therefore affects only the five
+projected query kinds.
 
 The normal service does not publish the PostgreSQL port. Ephemeral tests may
 bind a random port to `127.0.0.1` only. The existing local HTTP loopback
@@ -721,7 +755,8 @@ intended-index gates passed. `alert_interval_pagination` used
 `alert_event_date_idx` and `generation_evidence_evidence_idx`. The fail-closed
 decision is therefore `GO`, replacing the historical `NO-GO` above. Plan 4 is
 concluded. This result only makes Plan 5 eligible for a separate plan and
-explicit authorization; Plan 5 remains unimplemented and was not started.
+explicit authorization; at that benchmark decision, Plan 5 had not been
+started.
 
 ## Delivery Plans
 
@@ -734,7 +769,8 @@ request, passes independent review, and stops for explicit user approval:
 4. Deterministic benchmark and `GO`/`NO-GO` decision: implemented and concluded
    with a superseding `GO`; all six intended indexes and all other gates passed.
 5. Optional `disabled|required` query-layer integration after benchmark `GO`:
-   eligible for a separate plan and explicit authorization, but not implemented.
+   implemented with default-disabled, fail-closed consumption and authoritative
+   loader revalidation.
 
 No plan authorizes the next one implicitly. Observability, Copilot, MCP, RAG,
 staging, cloud, and production identity remain later independent decisions.
@@ -751,9 +787,9 @@ staging, cloud, and production identity remain later independent decisions.
 - Authentication, authorization, secret handling, data minimization, retention,
   migration, generation, concurrency, benchmark, rollback, and stop gates are
   decision-complete for Plans 2 through 5.
-- PostgreSQL foundation, roles, schema, migrations, manual projector, and
-  benchmark harness are implemented without a consumer; the benchmark decision
-  is `GO`, and query integration remains separately gated and unimplemented.
+- PostgreSQL foundation, roles, schema, migrations, manual projector, benchmark
+  harness, and optional query consumer are implemented; the benchmark decision
+  is `GO`, and the consumer remains disabled by default.
 - The projector is manual, reconstructible, loader-backed, serialized, and
   all-or-nothing. It introduces no consumer, pipeline, scheduler, artifact, or
   operational-state mutation.

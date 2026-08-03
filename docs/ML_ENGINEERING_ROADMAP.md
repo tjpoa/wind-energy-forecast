@@ -533,9 +533,10 @@ automatic model replacement remain out of scope.
 
 Status: product contract, ADR, typed operational query layer, local-only
 read-only API, and versioned offline evaluation dataset/harness implemented.
-The separate PostgreSQL operational-projection contract is accepted; its
-schema, migrations, projector, benchmark, and query integration are not
-implemented. Later product increments have not started.
+The separate PostgreSQL operational projection now includes its dedicated
+foundation and migrations, manual projector/verifier, deterministic benchmark
+with a superseding `GO`, and optional default-disabled `disabled|required`
+query integration. Later product increments have not started.
 
 This future extension must consume verified operational evidence through
 read-only contracts. It must not mutate Phase 8/9 stores, MLflow, deployment
@@ -572,10 +573,12 @@ the existing checksum-pinned loaders as the source of truth.
    sanitized stdout-only reports, and no Copilot candidate evaluated.
 5. Deliver the PostgreSQL relational projection through the separately accepted
    [`operational_postgres_projection_v1`](OPERATIONAL_POSTGRES_PROJECTION.md)
-   contract. Immutable files remain authoritative. Four implementation gates
-   remain pending: dedicated foundation and migrations, manual projector,
-   deterministic benchmark with a mandatory `GO`, and optional query-layer
-   integration only after that `GO`.
+   contract. Implemented through four separately reviewed gates: dedicated
+   foundation and migrations, manual projector/verifier, deterministic
+   benchmark with a superseding mandatory `GO`, and optional query-layer
+   integration after that `GO`. Immutable files and verified loaders remain
+   authoritative, PostgreSQL is never cited, and consumption is disabled by
+   default.
 6. Add local observability for requests and tool calls, including structured
    logs, correlation IDs, metrics, tracing, health checks, and secret/data
    sanitization.
@@ -593,7 +596,6 @@ the existing checksum-pinned loaders as the source of truth.
 Each item is an independent, reviewable increment. No item authorizes automatic
 training, lifecycle transitions, external notifications, live forecasting, or
 Airflow activation in an environment owned by Windows Task Scheduler.
-Items 1 through 4 are implemented. Item 5 has an accepted contract only; all
-PostgreSQL runtime work remains unimplemented. The projection implementation,
-observability, Copilot, MCP, RAG, and cloud design require separate reviewed
-increments.
+Items 1 through 5 are implemented. Projection consumption remains disabled by
+default. Observability, Copilot, MCP, RAG, and cloud design require separate
+reviewed increments.

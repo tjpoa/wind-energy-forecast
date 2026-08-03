@@ -10,7 +10,7 @@
 | Contract version | `operational_read_only_copilot_v1` |
 | Audience | One authorized operator in a trusted local environment |
 | Operating mode | `retrospective_historical_batch_not_real_time` |
-| Implementation status | Typed read-only Python query layer, local-only HTTP adapter, and versioned offline evaluation dataset/harness implemented and locally validated; the separate PostgreSQL projection contract is accepted, but no database, schema, migrations, projector, benchmark, or query integration exists; no Copilot or candidate has been evaluated, and no MCP, RAG, production authentication, observability, or deployment exists |
+| Implementation status | Typed read-only Python query layer, local-only HTTP adapter, versioned offline evaluation dataset/harness, dedicated PostgreSQL projection, benchmark `GO`, and optional default-disabled query integration implemented; no Copilot or candidate has been evaluated, and no MCP, RAG, production authentication, observability, or deployment exists |
 
 ## Objective
 
@@ -141,9 +141,11 @@ authorization path, or add business logic.
 Immutable local files remain authoritative. The separately accepted
 [`operational_postgres_projection_v1`](OPERATIONAL_POSTGRES_PROJECTION.md)
 contract defines a rebuildable derived PostgreSQL projection and a measured
-readiness gate. Its schema, migrations, projector, benchmark, and query
-integration remain unimplemented; the contract never replaces immutable
-evidence.
+readiness gate. Its schema, migrations, projector, benchmark, and optional
+`disabled|required` query integration are implemented. The integration uses
+PostgreSQL only to select current-generation identities, order, and pagination,
+then compares normalized rows with the verified loaders; the contract never
+replaces immutable evidence or citations.
 
 ### Authorized Loader Boundary
 
@@ -355,9 +357,7 @@ authorize or implement:
 - TypeScript code, new dependencies, frontend changes, additional endpoints,
   tools, prompts, or an LLM;
 - Copilot, MCP, RAG, embeddings, a document corpus, `pgvector`, observability,
-  staging, cloud, or CI/CD; the separate PostgreSQL projection contract is
-  accepted, but this increment does not authorize or implement its schema,
-  migrations, projector, benchmark, or query integration;
+  staging, cloud deployment, or a new CI/CD release path;
 - authentication beyond the accepted trusted-local expectation;
 - data/model/scaler changes, artifact generation, notebook execution,
   ingestion, provider calls, training, retraining, lifecycle transitions,
@@ -425,6 +425,15 @@ exist and do not create them. The five-second query deadline is cooperative:
 each dependency receives a timeout no greater than the service budget, but
 this increment does not add a pre-emptive wall-clock cancellation mechanism
 around the existing verified loaders.
+
+`WIND_FORECAST_OPERATIONAL_PROJECTION_MODE` defaults to exactly `disabled`.
+That mode does not read the reader DSN, import the PostgreSQL driver, or open a
+connection. With the mode explicitly set to `required`, the five projected
+query kinds require the dedicated local reader DSN and a compatible ready
+generation. Missing, incompatible, stale, divergent, or unavailable projection
+state fails those questions as sanitized `unavailable` without fallback;
+PostgreSQL statement cancellation maps to `timeout`. The three direct
+deployment/summary questions do not invoke the projection reader.
 
 `wind_forecast.operational_api` calls only
 `OperationalQueryService.answer()`. It creates no CLI, worker, cache,
@@ -587,9 +596,9 @@ reviewed increment:
    validated.
 4. Versioned evaluation dataset and harness: implemented and locally
    validated; no Copilot candidate evaluated.
-5. PostgreSQL operational projection contract: separately accepted; dedicated
-   foundation/migrations, projector, benchmark, and optional query integration
-   remain four separately reviewed and authorization-gated plans.
+5. PostgreSQL operational projection: foundation/migrations, manual projector,
+   deterministic benchmark `GO`, and optional default-disabled query
+   integration are implemented through separately reviewed gates.
 6. Local observability with sanitization.
 7. Copilot restricted to accepted deterministic tools.
 8. MCP adapter over the same contracts.
@@ -600,11 +609,10 @@ No later item may be started implicitly while delivering an earlier one.
 
 ## Stop Gate
 
-This increment stops at the versioned offline evaluation dataset and harness.
-It does not authorize implementation of the separately contracted PostgreSQL
-projection, observability, Copilot, MCP, RAG, staging, cloud work, or any other
-later delivery item. PostgreSQL implementation authority comes only from the
-separate plan sequence in
+The implemented delivery sequence stops after the separately authorized
+PostgreSQL query-integration gate. It does not authorize observability,
+Copilot, MCP, RAG, staging, cloud work, or any later delivery item. The
+completed projection gates remain recorded in
 [`operational_postgres_projection_v1`](OPERATIONAL_POSTGRES_PROJECTION.md).
 
 Future work must stop and return for review if it needs:
