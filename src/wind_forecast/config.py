@@ -33,6 +33,7 @@ OPERATIONAL_PROJECTION_WRITER_DSN_ENV = (
 OPERATIONAL_PROJECTION_READER_DSN_ENV = (
     "WIND_FORECAST_OPERATIONAL_PROJECTION_READER_DSN"
 )
+OPERATIONAL_PROJECTION_MODE_ENV = "WIND_FORECAST_OPERATIONAL_PROJECTION_MODE"
 SUPPORTED_OPERATIONAL_ENVIRONMENT_ID = "local"
 
 
@@ -68,6 +69,9 @@ class OperationalQueryConfig:
     monitoring_store_root: Path
     timeout_seconds: float
     registry_uri: str | None
+    projection_mode: str
+    projection_environment_id: str | None
+    projection_reader_dsn: str | None
 
 
 @dataclass(frozen=True)
@@ -191,11 +195,37 @@ def load_operational_query_config() -> OperationalQueryConfig:
         if _is_numeric_loopback_http_uri(tracking_uri.strip())
         else None
     )
+    projection_mode = os.getenv(
+        OPERATIONAL_PROJECTION_MODE_ENV,
+        "disabled",
+    )
+    if projection_mode not in {"disabled", "required"}:
+        raise ValueError(
+            f"{OPERATIONAL_PROJECTION_MODE_ENV} must be exactly 'disabled' "
+            "or 'required'."
+        )
+
+    projection_environment_id: str | None = None
+    projection_reader_dsn: str | None = None
+    if projection_mode == "required":
+        projection_environment_id = os.getenv(
+            OPERATIONAL_ENVIRONMENT_ID_ENV,
+            SUPPORTED_OPERATIONAL_ENVIRONMENT_ID,
+        ).strip()
+        reader_dsn = os.getenv(OPERATIONAL_PROJECTION_READER_DSN_ENV)
+        projection_reader_dsn = (
+            reader_dsn.strip()
+            if reader_dsn is not None and reader_dsn.strip()
+            else None
+        )
     return OperationalQueryConfig(
         deployment_root=deployment_root,
         monitoring_store_root=monitoring_root,
         timeout_seconds=timeout_seconds,
         registry_uri=registry_uri,
+        projection_mode=projection_mode,
+        projection_environment_id=projection_environment_id,
+        projection_reader_dsn=projection_reader_dsn,
     )
 
 
