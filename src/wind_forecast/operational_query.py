@@ -22,7 +22,7 @@ from wind_forecast.deployment_runtime import (
     same_model_era,
     verify_active_model_era,
 )
-from wind_forecast.monitoring import MonitoringError
+from wind_forecast.monitoring import MonitoringError, load_model_era
 from wind_forecast.monitoring_reporting import (
     MonitoringReportingConflictError,
     MonitoringReportingError,
@@ -53,6 +53,14 @@ from wind_forecast.operational_query_models import (
     OperationalQuery,
     Pagination,
     QueryKind,
+)
+from wind_forecast.operational_projection_reader import (
+    OperationalProjectionTimeoutError,
+    OperationalProjectionUnavailableError,
+    ProjectedAlerts,
+    ProjectedEvidence,
+    ProjectedReport,
+    ProjectedRow,
 )
 
 
@@ -112,6 +120,7 @@ class OperationalQueryService:
     calibration_dir: Path | None = None
     registry_client: Any | None = None
     registry_timeout_seconds: float | None = None
+    projection_reader: Any | None = None
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
 
     def __post_init__(self) -> None:
@@ -235,6 +244,26 @@ class OperationalQueryService:
                 message="The operational query deadline expired.",
                 retryable=True,
                 evidence_state=EvidenceState.TIMEOUT,
+            )
+        except OperationalProjectionTimeoutError:
+            return self._failure_answer(
+                query_kind=query.query_kind,
+                correlation_id=query.correlation_id,
+                status=AnswerStatus.TIMEOUT,
+                code="operational_query_timeout",
+                message="The operational query deadline expired.",
+                retryable=True,
+                evidence_state=EvidenceState.TIMEOUT,
+            )
+        except OperationalProjectionUnavailableError:
+            return self._failure_answer(
+                query_kind=query.query_kind,
+                correlation_id=query.correlation_id,
+                status=AnswerStatus.UNAVAILABLE,
+                code="required_projection_unavailable",
+                message="The required operational projection is unavailable.",
+                retryable=True,
+                evidence_state=EvidenceState.UNAVAILABLE,
             )
         except DeploymentRuntimeNotInitializedError:
             if query.query_kind in {
@@ -948,7 +977,20 @@ class OperationalQueryService:
         history = load_alert_history(self.monitoring_store_root)
         self._check_deadline(query)
         selector = query.selector
-        if isinstance(selector, LatestSelector):
+        projection = self._select_projected_alerts(
+            query,
+            active_before=active_before,
+            history=history,
+        )
+        if projection is not None:
+            by_id = {str(item["alert_event_id"]): item for item in history}
+            try:
+                selected = [by_id[item] for item in projection.selected_ids]
+            except KeyError as exc:
+                raise OperationalProjectionUnavailableError(
+                    "Projected alert selection is stale."
+                ) from exc
+        elif isinstance(selector, LatestSelector):
             ids = set(active_before.values())
             selected = [item for item in history if item.get("alert_event_id") in ids]
         elif isinstance(selector, ExactIdSelector):
@@ -957,9 +999,6 @@ class OperationalQueryService:
                 for item in history
                 if item.get("alert_event_id") == selector.identifier
             ]
-            if not selected:
-                self._assert_active_alerts_unchanged(query, active_before)
-                return _Result(AnswerStatus.NOT_FOUND)
         elif isinstance(selector, DateIntervalSelector):
             selected = [
                 item
@@ -970,13 +1009,16 @@ class OperationalQueryService:
             ]
         else:
             raise TypeError("Unsupported selector")
+        if isinstance(selector, ExactIdSelector) and not selected:
+            self._assert_active_alerts_unchanged(query, active_before)
+            return _Result(AnswerStatus.NOT_FOUND)
         if not selected:
             self._assert_active_alerts_unchanged(query, active_before)
             return _Result(AnswerStatus.EMPTY)
         pagination = query.pagination
-        if not isinstance(selector, ExactIdSelector):
+        if projection is None and not isinstance(selector, ExactIdSelector):
             pagination = pagination or Pagination()
-        if pagination is not None:
+        if projection is None and pagination is not None:
             selected = selected[pagination.offset : pagination.offset + pagination.limit]
         if not selected:
             self._assert_active_alerts_unchanged(query, active_before)
@@ -1038,8 +1080,10 @@ class OperationalQueryService:
             if selector.id_type == "reporting_run_id"
             else {"report_id": selector.identifier}
         )
+        projected_attempt = self._select_projected_attempt(query, selector)
         attempt = load_reporting_attempt(self.monitoring_store_root, **kwargs)
         self._check_deadline(query)
+        self._compare_projected_attempt(projected_attempt, attempt)
         if attempt is None:
             return _Result(AnswerStatus.NOT_FOUND)
         key, citation = _attempt_citation(attempt)
@@ -1083,7 +1127,19 @@ class OperationalQueryService:
         ]
         citations: list[tuple[str, _Citation]] = [(key, citation)]
         if attempt.get("report_id"):
-            report = self._load_report_id(str(attempt["report_id"]), query)
+            report_id = str(attempt["report_id"])
+            projected_report = self._select_projected_report_exact(
+                query,
+                report_id,
+                detail="quality",
+            )
+            report = self._load_report_id(report_id, query)
+            self._compare_projected_report(
+                projected_report,
+                report,
+                query=query,
+                detail="quality",
+            )
             report_key, report_citation = _report_citation(report)
             citations.append((report_key, report_citation))
             facts.append(
@@ -1126,39 +1182,325 @@ class OperationalQueryService:
         self, query: OperationalQuery, *, allow_run: bool = False
     ) -> tuple[dict[str, Any] | None, AnswerStatus]:
         selector = query.selector
+        detail = {
+            QueryKind.DATA_QUALITY: "quality",
+            QueryKind.MONITORING_PERFORMANCE: "performance",
+            QueryKind.MONITORING_DRIFT: "drift",
+        }[query.query_kind]
         if isinstance(selector, LatestSelector):
             state = load_monitoring_report_state(self.monitoring_store_root)
             self._check_deadline(query)
+            projected = self._select_projected_report_latest(
+                query,
+                state=state,
+                detail=detail,
+            )
             if state is None:
+                if projected is not None:
+                    raise OperationalProjectionUnavailableError(
+                        "Projected latest report is stale."
+                    )
+                state_after = load_monitoring_report_state(
+                    self.monitoring_store_root
+                )
+                self._check_deadline(query)
+                if state_after is not None:
+                    raise _QueryConflict
                 return None, AnswerStatus.EMPTY
-            report = self._load_report_id(str(state["latest_report_id"]), query)
+            report_id = str(state["latest_report_id"])
+            if projected is not None and (
+                projected.report.values.get("report_id") != report_id
+            ):
+                raise OperationalProjectionUnavailableError(
+                    "Projected latest report is stale."
+                )
+            report = self._load_report_id(report_id, query)
             if (
                 report.get("report_id") != state.get("latest_report_id")
                 or report.get("through_date") != state.get("latest_through_date")
             ):
                 raise _QueryConflict
+            self._compare_projected_report(
+                projected,
+                report,
+                query=query,
+                detail=detail,
+            )
             return report, AnswerStatus.EMPTY
         if not isinstance(selector, ExactIdSelector):
             raise TypeError("Report query requires an exact or latest selector")
         if selector.id_type == "reporting_run_id":
             if not allow_run:
                 raise TypeError("Reporting-run selector is not accepted")
+            projected_attempt = self._select_projected_attempt(query, selector)
             attempt = load_reporting_attempt(
                 self.monitoring_store_root,
                 reporting_run_id=selector.identifier,
             )
             self._check_deadline(query)
+            self._compare_projected_attempt(projected_attempt, attempt)
             if attempt is None:
                 return None, AnswerStatus.NOT_FOUND
             if not attempt.get("report_id"):
                 return None, AnswerStatus.EMPTY
-            return self._load_report_id(str(attempt["report_id"]), query), AnswerStatus.EMPTY
+            report_id = str(attempt["report_id"])
+            projected = self._select_projected_report_exact(
+                query,
+                report_id,
+                detail=detail,
+            )
+            report = self._load_report_id(report_id, query)
+            self._compare_projected_report(
+                projected,
+                report,
+                query=query,
+                detail=detail,
+            )
+            return report, AnswerStatus.EMPTY
+        projected = self._select_projected_report_exact(
+            query,
+            selector.identifier,
+            detail=detail,
+        )
         report = self._load_report_id(selector.identifier, query, exact=True)
+        self._compare_projected_report(
+            projected,
+            report,
+            query=query,
+            detail=detail,
+        )
         return (
             (None, AnswerStatus.NOT_FOUND)
             if report is None
             else (report, AnswerStatus.EMPTY)
         )
+
+    def _select_projected_report_latest(
+        self,
+        query: OperationalQuery,
+        *,
+        state: Mapping[str, Any] | None,
+        detail: str,
+    ) -> ProjectedReport | None:
+        if self.projection_reader is None:
+            return None
+        return self.projection_reader.select_report(
+            selector="latest",
+            report_id=None,
+            report_state_sha256=(None if state is None else _digest(state)),
+            report_state_schema_version=(
+                None if state is None else str(state["schema_version"])
+            ),
+            report_state_effective_at=(
+                None if state is None else str(state["latest_through_date"])
+            ),
+            detail=detail,
+            window_days=query.window_days,
+            timeout_seconds=self._remaining_seconds(query),
+        )
+
+    def _select_projected_report_exact(
+        self,
+        query: OperationalQuery,
+        report_id: str,
+        *,
+        detail: str,
+    ) -> ProjectedReport | None:
+        if self.projection_reader is None:
+            return None
+        return self.projection_reader.select_report(
+            selector="exact",
+            report_id=report_id,
+            report_state_sha256=None,
+            report_state_schema_version=None,
+            report_state_effective_at=None,
+            detail=detail,
+            window_days=query.window_days,
+            timeout_seconds=self._remaining_seconds(query),
+        )
+
+    def _select_projected_attempt(
+        self,
+        query: OperationalQuery,
+        selector: ExactIdSelector,
+    ) -> ProjectedRow | None:
+        if self.projection_reader is None:
+            return None
+        return self.projection_reader.select_attempt(
+            id_type=selector.id_type,
+            identifier=selector.identifier,
+            timeout_seconds=self._remaining_seconds(query),
+        )
+
+    def _select_projected_alerts(
+        self,
+        query: OperationalQuery,
+        *,
+        active_before: Mapping[str, Any],
+        history: list[dict[str, Any]],
+    ) -> ProjectedAlerts | None:
+        if self.projection_reader is None:
+            return None
+        selector = query.selector
+        pagination = query.pagination or Pagination()
+        kwargs: dict[str, Any] = {
+            "timeout_seconds": self._remaining_seconds(query),
+        }
+        if isinstance(selector, LatestSelector):
+            kwargs.update(
+                selector="latest",
+                limit=pagination.limit,
+                offset=pagination.offset,
+            )
+        elif isinstance(selector, ExactIdSelector):
+            kwargs.update(selector="exact", identifier=selector.identifier)
+        elif isinstance(selector, DateIntervalSelector):
+            kwargs.update(
+                selector="date_interval",
+                start_date=selector.start_date,
+                end_date=selector.end_date,
+                limit=pagination.limit,
+                offset=pagination.offset,
+            )
+        else:
+            raise TypeError("Unsupported selector")
+        projection = self.projection_reader.select_alerts(**kwargs)
+        expected_history = tuple(_normalized_alert(item) for item in history)
+        if projection.history != expected_history:
+            raise OperationalProjectionUnavailableError(
+                "Projected alert history is stale."
+            )
+        expected_active = {
+            str(key): str(value) for key, value in active_before.items()
+        }
+        if dict(projection.active) != expected_active:
+            raise OperationalProjectionUnavailableError(
+                "Projected active-alert state is stale."
+            )
+        if projection.active_evidence is not None:
+            active_digest = _digest(dict(sorted(expected_active.items())))
+            active_evidence = projection.active_evidence
+            if (
+                active_evidence.domain != "alert"
+                or active_evidence.source_kind != "load_active_alerts"
+                or active_evidence.schema_version
+                != "wind_forecast.verified_active_alert_binding.v1"
+                or active_evidence.record_id != active_digest
+                or active_evidence.sha256 != active_digest
+            ):
+                raise OperationalProjectionUnavailableError(
+                    "Projected active-alert evidence is stale."
+                )
+        return projection
+
+    def _compare_projected_attempt(
+        self,
+        projected: ProjectedRow | None,
+        attempt: Mapping[str, Any] | None,
+    ) -> None:
+        if self.projection_reader is None:
+            return
+        if projected is None or attempt is None:
+            if projected is None and attempt is None:
+                return
+            raise OperationalProjectionUnavailableError(
+                "Projected reporting attempt is stale."
+            )
+        if projected != _normalized_attempt(attempt):
+            raise OperationalProjectionUnavailableError(
+                "Projected reporting attempt is stale."
+            )
+
+    def _compare_projected_report(
+        self,
+        projected: ProjectedReport | None,
+        report: Mapping[str, Any] | None,
+        *,
+        query: OperationalQuery,
+        detail: str,
+    ) -> None:
+        if self.projection_reader is None:
+            return
+        if projected is None or report is None:
+            if projected is None and report is None:
+                return
+            raise OperationalProjectionUnavailableError(
+                "Projected monitoring report is stale."
+            )
+        resolved_era = resolve_report_model_era(
+            self.monitoring_store_root,
+            report,
+        )
+        model_era_id = (
+            str(resolved_era["model_era_id"])
+            if resolved_era.get("association_kind")
+            in {"active_deployment", "bootstrap_adopted"}
+            else None
+        )
+        if projected.report != _normalized_report(report, model_era_id):
+            raise OperationalProjectionUnavailableError(
+                "Projected monitoring report is stale."
+            )
+        if detail == "quality":
+            expected_issues = _normalized_quality_issues(report)
+            if projected.quality_issues != expected_issues:
+                raise OperationalProjectionUnavailableError(
+                    "Projected data-quality values are stale."
+                )
+            return
+
+        calibration = self._load_report_calibration(report, query)
+        expected_window = _normalized_window(
+            report,
+            int(query.window_days),
+        )
+        if projected.window != expected_window:
+            raise OperationalProjectionUnavailableError(
+                "Projected monitoring-window values are stale."
+            )
+        if projected.calibration != _normalized_calibration_evidence(calibration):
+            raise OperationalProjectionUnavailableError(
+                "Projected calibration lineage is stale."
+            )
+        if model_era_id is None:
+            if projected.model_era is not None:
+                raise OperationalProjectionUnavailableError(
+                    "Projected model-era association is stale."
+                )
+        else:
+            era = load_model_era(self.monitoring_store_root, model_era_id)
+            self._check_deadline(query)
+            if projected.model_era != _normalized_model_era(era):
+                raise OperationalProjectionUnavailableError(
+                    "Projected model-era values are stale."
+                )
+        if detail == "performance":
+            expected_metrics = _normalized_performance_metrics(
+                report,
+                calibration,
+                int(query.window_days),
+            )
+            if projected.performance_metrics != expected_metrics:
+                raise OperationalProjectionUnavailableError(
+                    "Projected performance values are stale."
+                )
+        else:
+            expected_drift = _normalized_drift_measurements(
+                report,
+                calibration,
+                int(query.window_days),
+            )
+            if projected.drift_measurements != expected_drift:
+                raise OperationalProjectionUnavailableError(
+                    "Projected drift values are stale."
+                )
+
+    def _remaining_seconds(self, query: OperationalQuery) -> float:
+        self._check_deadline(query)
+        remaining = (query.deadline - self._now()).total_seconds()
+        if remaining <= 0:
+            raise _QueryTimeout
+        return min(self.max_deadline_seconds, remaining)
 
     def _load_report_id(
         self, report_id: str, query: OperationalQuery, *, exact: bool = False
@@ -1355,6 +1697,393 @@ class OperationalQueryService:
             served_at_utc=self._now(),
             correlation_id=correlation_id,
         )
+
+
+def _normalized_report(
+    report: Mapping[str, Any],
+    model_era_id: str | None,
+) -> ProjectedRow:
+    quality = _required_mapping(report.get("quality"))
+    freshness = quality.get("freshness") or {}
+    coverage = quality.get("coverage") or {}
+    source = _required_mapping(report.get("source_batch"))
+    reference = _required_mapping(report.get("reference"))
+    quality_status = str(
+        quality.get("status") or quality.get("batch_status") or "not_available"
+    )
+    values = {
+        "report_id": str(report["report_id"]),
+        "reporting_run_id": str(report["run_id"]),
+        "created_at_utc": _projection_utc(report["created_at_utc"]),
+        "through_date": _projection_date(report["through_date"]),
+        "source_run_id": str(source["run_id"]),
+        "source_status": str(source["status"]),
+        "calibration_id": str(reference["calibration_id"]),
+        "reference_id": str(reference["reference_id"]),
+        "policy_sha256": str(reference["policy_sha256"]),
+        "quality_status": quality_status,
+        "batch_status": str(quality.get("batch_status") or source.get("status")),
+        "verdict": str(quality.get("verdict") or "not_available"),
+        "watermark_date": _optional_projection_date(
+            freshness.get("common_validated_watermark")
+        ),
+        "watermark_age_days": _optional_projection_int(
+            freshness.get("watermark_age_days")
+        ),
+        "objective_days": _optional_projection_int(freshness.get("objective_days")),
+        "late_days": _optional_projection_int(freshness.get("late_days")),
+        "objective_missed": bool(freshness.get("objective_missed") or False),
+        "unresolved_late_date_count": len(
+            freshness.get("unresolved_late_dates") or []
+        ),
+        "date_count": int(coverage.get("date_count") or 0),
+        "ren_complete_count": int(coverage.get("ren_complete_count") or 0),
+        "era5_complete_count": int(coverage.get("era5_complete_count") or 0),
+        "integration_ready_count": int(
+            coverage.get("integration_ready_count") or 0
+        ),
+        "feature_ready_count": int(coverage.get("feature_ready_count") or 0),
+        "model_era_id": model_era_id,
+    }
+    return ProjectedRow(values, _report_projection_evidence(report))
+
+
+def _normalized_quality_issues(
+    report: Mapping[str, Any],
+) -> tuple[ProjectedRow, ...]:
+    quality = _required_mapping(report.get("quality"))
+    evidence = _report_projection_evidence(report)
+    rows: list[ProjectedRow] = []
+    for position, issue in enumerate(quality.get("issues") or []):
+        if not isinstance(issue, Mapping) or issue.get("severity") not in {
+            "warning",
+            "critical",
+        }:
+            continue
+        rows.append(
+            ProjectedRow(
+                {
+                    "report_id": str(report["report_id"]),
+                    "position": position,
+                    "code": str(issue["code"]),
+                    "severity": str(issue["severity"]),
+                },
+                evidence,
+            )
+        )
+    return tuple(rows)
+
+
+def _normalized_window(
+    report: Mapping[str, Any],
+    window_days: int,
+) -> ProjectedRow:
+    payload = (report.get("windows") or {}).get(str(window_days)) or {}
+    configured = (report.get("config") or {}).get("minimum_samples") or {}
+    available = payload.get("status") == "available"
+    minimum = payload.get("minimum_samples", configured.get(str(window_days)))
+    return ProjectedRow(
+        {
+            "report_id": str(report["report_id"]),
+            "window_days": window_days,
+            "status": "available" if available else "not_available",
+            "sample_count": int(payload.get("sample_count") or 0),
+            "coverage_ratio": _optional_projection_float(
+                payload.get("coverage_ratio")
+            ),
+            "coverage_severity": (
+                str(payload.get("coverage_severity") or "not_available")
+                if available
+                else "not_available"
+            ),
+            "minimum_samples": int(minimum or 0),
+            "calendar_start": _optional_projection_date(
+                payload.get("calendar_start")
+            ),
+            "calendar_end": _optional_projection_date(payload.get("calendar_end")),
+        },
+        _report_projection_evidence(report),
+    )
+
+
+def _normalized_performance_metrics(
+    report: Mapping[str, Any],
+    calibration: Mapping[str, Any],
+    window_days: int,
+) -> tuple[ProjectedRow, ...]:
+    payload = (report.get("windows") or {}).get(str(window_days)) or {}
+    performance = payload.get("performance") or {}
+    metrics = performance.get("metrics") or {}
+    severities = performance.get("severity") or {}
+    thresholds = (
+        calibration.get("thresholds", {})
+        .get("performance", {})
+        .get(str(window_days), {})
+    )
+    evidence = _report_projection_evidence(report)
+    rows: list[ProjectedRow] = []
+    for metric in ("MAE", "RMSE", "bias", "MAPE_percent", "R2"):
+        limit_key = "absolute_bias" if metric == "bias" else metric
+        limits = thresholds.get(limit_key)
+        if not isinstance(limits, Mapping):
+            continue
+        value = _optional_projection_float(metrics.get(metric))
+        if performance.get("status") != "available":
+            value_status = (
+                "insufficient_data"
+                if performance.get("status") == "insufficient_data"
+                else "not_available"
+            )
+        elif value is None and metric == "R2":
+            candidate = str(metrics.get("R2_status") or "not_available")
+            value_status = (
+                candidate
+                if candidate in {"insufficient_data", "constant_target"}
+                else "not_available"
+            )
+        else:
+            value_status = "available" if value is not None else "not_available"
+        unit = (
+            TARGET_SCALE
+            if metric in {"MAE", "RMSE", "bias"}
+            else "percent"
+            if metric == "MAPE_percent"
+            else "not_applicable"
+        )
+        rows.append(
+            ProjectedRow(
+                {
+                    "report_id": str(report["report_id"]),
+                    "window_days": window_days,
+                    "metric_name": metric,
+                    "value": value,
+                    "value_status": value_status,
+                    "severity": str(severities.get(metric) or "not_available"),
+                    "warning_threshold": _optional_projection_float(
+                        limits.get("warning")
+                    ),
+                    "critical_threshold": _optional_projection_float(
+                        limits.get("critical")
+                    ),
+                    "direction": str(limits.get("direction") or "upper"),
+                    "unit_or_scale": unit,
+                },
+                evidence,
+            )
+        )
+    return tuple(sorted(rows, key=lambda item: str(item.values["metric_name"])))
+
+
+def _normalized_drift_measurements(
+    report: Mapping[str, Any],
+    calibration: Mapping[str, Any],
+    window_days: int,
+) -> tuple[ProjectedRow, ...]:
+    payload = (report.get("windows") or {}).get(str(window_days)) or {}
+    drift = payload.get("feature_drift") or {}
+    calibrated = calibration.get("thresholds", {}).get("feature_drift", {})
+    evidence = _report_projection_evidence(report)
+    rows: list[ProjectedRow] = []
+    position = 0
+    for feature in sorted(drift):
+        for comparator in sorted((drift.get(feature) or {})):
+            statistics = (drift[feature] or {}).get(comparator) or {}
+            for detector in ("ks_statistic", "normalized_wasserstein"):
+                value = _optional_projection_float(statistics.get(detector))
+                limits = (
+                    calibrated.get(feature, {})
+                    .get(str(window_days), {})
+                    .get(comparator, {})
+                    .get(detector)
+                )
+                if value is None or not isinstance(limits, Mapping):
+                    continue
+                rows.append(
+                    ProjectedRow(
+                        {
+                            "report_id": str(report["report_id"]),
+                            "window_days": window_days,
+                            "position": position,
+                            "feature": str(feature),
+                            "comparator": str(comparator),
+                            "detector": detector,
+                            "value": value,
+                            "severity": threshold_severity(value, limits),
+                            "warning_threshold": float(limits["warning"]),
+                            "critical_threshold": float(limits["critical"]),
+                            "direction": str(limits.get("direction") or "upper"),
+                        },
+                        evidence,
+                    )
+                )
+                position += 1
+    return tuple(rows)
+
+
+def _normalized_model_era(era: Mapping[str, Any]) -> ProjectedRow:
+    deployment = _required_mapping(era.get("deployment"))
+    registry = _required_mapping(era.get("registry"))
+    cutoffs = _required_mapping(era.get("cutoffs"))
+    pins = _required_mapping(era.get("pins"))
+    calibration = _required_mapping(era.get("calibration"))
+    model_era_id = str(era["model_era_id"])
+    return ProjectedRow(
+        {
+            "model_era_id": model_era_id,
+            "association_kind": str(era["association_kind"]),
+            "deployment_id": str(deployment["deployment_id"]),
+            "deployment_generation": int(deployment["generation"]),
+            "registered_model_name": str(registry["registered_model_name"]),
+            "model_version": str(registry["model_version"]),
+            "fit_cutoff": _projection_date(cutoffs["fit_cutoff"]),
+            "activation_cutoff": _projection_date(cutoffs["activation_cutoff"]),
+            "bundle_sha256": str(pins["bundle_sha256"]),
+            "model_sha256": str(pins["model_sha256"]),
+            "dataset_sha256": str(pins["dataset_sha256"]),
+            "feature_schema_sha256": str(pins["feature_schema_sha256"]),
+            "calibration_sha256": str(pins["calibration_sha256"]),
+            "ledger_sha256": str(pins["ledger_sha256"]),
+            "calibration_id": str(calibration["calibration_id"]),
+            "reference_id": str(calibration["reference_id"]),
+        },
+        ProjectedEvidence(
+            "prediction_model_era",
+            "load_model_era",
+            str(era["schema_version"]),
+            model_era_id,
+            model_era_id,
+            str(cutoffs["activation_cutoff"]),
+        ),
+    )
+
+
+def _normalized_attempt(attempt: Mapping[str, Any]) -> ProjectedRow:
+    failure = attempt.get("failure")
+    run_id = str(attempt["run_id"])
+    return ProjectedRow(
+        {
+            "reporting_run_id": run_id,
+            "attempted_at_utc": _projection_utc(attempt["attempted_at_utc"]),
+            "through_date": _projection_date(attempt["through_date"]),
+            "source_run_id": str(attempt["source_pipeline_run_id"]),
+            "source_status": str(attempt["source_pipeline_status"]),
+            "status": str(attempt["status"]),
+            "report_id": attempt.get("report_id"),
+            "active_alert_count": int(attempt.get("active_alert_count") or 0),
+            "failure_at_utc": (
+                _projection_utc(failure["failed_at_utc"])
+                if isinstance(failure, Mapping)
+                else None
+            ),
+            "failure_type": (
+                str(failure["error_type"])
+                if isinstance(failure, Mapping)
+                else None
+            ),
+            "failure_message": (
+                str(failure["message"])
+                if isinstance(failure, Mapping)
+                else None
+            ),
+        },
+        ProjectedEvidence(
+            "reporting_run",
+            "load_reporting_attempts",
+            "wind_forecast.monitoring_reporting_attempt_projection.v1",
+            run_id,
+            _digest(attempt),
+            str(attempt["attempted_at_utc"]),
+        ),
+    )
+
+
+def _normalized_alert(alert: Mapping[str, Any]) -> ProjectedRow:
+    alert_id = str(alert["alert_event_id"])
+    return ProjectedRow(
+        {
+            "alert_event_id": alert_id,
+            "rule_id": str(alert["rule_id"]),
+            "through_date": _projection_date(alert["through_date"]),
+            "event_type": str(alert["event_type"]),
+            "severity": str(alert["severity"]),
+            "previous_alert_event_id": alert.get("previous_alert_event_id"),
+        },
+        ProjectedEvidence(
+            "alert",
+            "load_alert_history",
+            str(alert["schema_version"]),
+            alert_id,
+            alert_id,
+            str(alert["through_date"]),
+        ),
+    )
+
+
+def _report_projection_evidence(report: Mapping[str, Any]) -> ProjectedEvidence:
+    report_id = str(report["report_id"])
+    return ProjectedEvidence(
+        "monitoring_report",
+        "load_monitoring_report",
+        str(report["schema_version"]),
+        report_id,
+        report_id,
+        str(report["through_date"]),
+    )
+
+
+def _normalized_calibration_evidence(
+    calibration: Mapping[str, Any],
+) -> ProjectedEvidence:
+    calibration_id = str(calibration["calibration_id"])
+    manifest = _required_mapping(calibration.get("_reference_manifest"))
+    period = _required_mapping(manifest.get("period"))
+    return ProjectedEvidence(
+        "calibration_reference",
+        "load_monitoring_calibration",
+        str(calibration["schema_version"]),
+        calibration_id,
+        calibration_id,
+        str(period["end"]),
+    )
+
+
+def _projection_date(value: Any) -> date:
+    if isinstance(value, datetime):
+        raise ValueError("Projection calendar value contains a time.")
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value))
+
+
+def _optional_projection_date(value: Any) -> date | None:
+    return None if value is None else _projection_date(value)
+
+
+def _projection_utc(value: Any) -> datetime:
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        raise ValueError("Projection timestamp is invalid.")
+    return value.astimezone(timezone.utc)
+
+
+def _optional_projection_int(value: Any) -> int | None:
+    return None if value is None else int(value)
+
+
+def _optional_projection_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("Projection number is invalid.")
+    return number
+
+
+def _required_mapping(value: Any) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError("Verified operational value is invalid.")
+    return value
 
 
 def _report_citation(report: Mapping[str, Any]) -> tuple[str, _Citation]:

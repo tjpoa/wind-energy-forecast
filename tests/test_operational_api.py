@@ -14,6 +14,9 @@ from wind_forecast.config import (
     DEPLOYMENT_ROOT_ENV,
     MLFLOW_TRACKING_URI_ENV,
     MONITORING_STORE_ROOT_ENV,
+    OPERATIONAL_ENVIRONMENT_ID_ENV,
+    OPERATIONAL_PROJECTION_MODE_ENV,
+    OPERATIONAL_PROJECTION_READER_DSN_ENV,
     OPERATIONAL_QUERY_TIMEOUT_ENV,
     load_operational_query_config,
 )
@@ -535,6 +538,8 @@ def test_operational_config_uses_local_defaults(monkeypatch):
         DEPLOYMENT_ROOT_ENV,
         MONITORING_STORE_ROOT_ENV,
         OPERATIONAL_QUERY_TIMEOUT_ENV,
+        OPERATIONAL_PROJECTION_MODE_ENV,
+        OPERATIONAL_PROJECTION_READER_DSN_ENV,
         MLFLOW_TRACKING_URI_ENV,
     ):
         monkeypatch.delenv(name, raising=False)
@@ -549,6 +554,53 @@ def test_operational_config_uses_local_defaults(monkeypatch):
     )
     assert config.timeout_seconds == 5.0
     assert config.registry_uri == "http://127.0.0.1:5000"
+    assert config.projection_mode == "disabled"
+    assert config.projection_environment_id is None
+    assert config.projection_reader_dsn is None
+
+
+def test_disabled_projection_does_not_read_reader_dsn(monkeypatch) -> None:
+    import wind_forecast.config as runtime_config
+
+    original_getenv = runtime_config.os.getenv
+
+    def guarded_getenv(name, default=None):
+        if name == OPERATIONAL_PROJECTION_READER_DSN_ENV:
+            raise AssertionError("disabled mode read the PostgreSQL DSN")
+        return original_getenv(name, default)
+
+    monkeypatch.delenv(OPERATIONAL_PROJECTION_MODE_ENV, raising=False)
+    monkeypatch.setattr(runtime_config.os, "getenv", guarded_getenv)
+
+    assert load_operational_query_config().projection_mode == "disabled"
+
+
+@pytest.mark.parametrize("mode", ("prefer", "REQUIRED", "", " required "))
+def test_operational_config_rejects_unsupported_projection_mode(
+    monkeypatch,
+    mode,
+) -> None:
+    monkeypatch.setenv(OPERATIONAL_PROJECTION_MODE_ENV, mode)
+
+    with pytest.raises(ValueError, match=OPERATIONAL_PROJECTION_MODE_ENV):
+        load_operational_query_config()
+
+
+def test_required_projection_loads_only_reader_configuration(monkeypatch) -> None:
+    monkeypatch.setenv(OPERATIONAL_PROJECTION_MODE_ENV, "required")
+    monkeypatch.setenv(OPERATIONAL_ENVIRONMENT_ID_ENV, "local")
+    monkeypatch.setenv(
+        OPERATIONAL_PROJECTION_READER_DSN_ENV,
+        "postgresql://reader:secret@127.0.0.1/projection",
+    )
+
+    config = load_operational_query_config()
+
+    assert config.projection_mode == "required"
+    assert config.projection_environment_id == "local"
+    assert config.projection_reader_dsn == (
+        "postgresql://reader:secret@127.0.0.1/projection"
+    )
 
 
 @pytest.mark.parametrize(
@@ -625,6 +677,79 @@ def test_service_factory_uses_configured_paths_timeout_and_registry_gate(
     assert service.max_deadline_seconds == 4.0
     assert service.registry_client is fake_registry
     assert service.registry_timeout_seconds == 4.0
+
+
+def test_required_projection_configuration_fails_closed_per_query_kind(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import wind_forecast.operational_api as operational_api
+    from wind_forecast.operational_projection_reader import (
+        UnavailableOperationalProjectionReader,
+    )
+
+    config = SimpleNamespace(
+        deployment_root=tmp_path / "deployment",
+        monitoring_store_root=tmp_path / "monitoring",
+        timeout_seconds=4.0,
+        registry_uri=None,
+        projection_mode="required",
+        projection_environment_id="not-local",
+        projection_reader_dsn=None,
+    )
+    monkeypatch.setattr(
+        operational_api,
+        "load_operational_query_config",
+        lambda: config,
+    )
+    operational_api.get_operational_query_service.cache_clear()
+    try:
+        service = operational_api.get_operational_query_service()
+    finally:
+        operational_api.get_operational_query_service.cache_clear()
+
+    assert isinstance(
+        service.projection_reader,
+        UnavailableOperationalProjectionReader,
+    )
+
+
+def test_disabled_service_factory_does_not_import_postgres_driver(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import builtins
+    import wind_forecast.operational_api as operational_api
+
+    config = SimpleNamespace(
+        deployment_root=tmp_path / "deployment",
+        monitoring_store_root=tmp_path / "monitoring",
+        timeout_seconds=4.0,
+        registry_uri=None,
+        projection_mode="disabled",
+        projection_environment_id=None,
+        projection_reader_dsn=None,
+    )
+    original_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name == "psycopg" or name.startswith("psycopg."):
+            raise AssertionError("disabled mode imported psycopg")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(
+        operational_api,
+        "load_operational_query_config",
+        lambda: config,
+    )
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    operational_api.get_operational_query_service.cache_clear()
+    try:
+        service = operational_api.get_operational_query_service()
+    finally:
+        operational_api.get_operational_query_service.cache_clear()
+
+    assert service.projection_reader is None
 
 
 def test_local_registry_adapter_disables_redirects(
