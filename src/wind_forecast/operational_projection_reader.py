@@ -380,7 +380,7 @@ class OperationalProjectionReader:
                             _PERFORMANCE_COLUMNS,
                         )
                         + " AND pm.report_id = %s AND pm.window_days = %s "
-                        "ORDER BY pm.metric_name",
+                        'ORDER BY pm.metric_name COLLATE "C"',
                         (head.generation_id, selected_report_id, window_days),
                     )
                     metrics = _projected_rows(
