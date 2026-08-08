@@ -379,6 +379,141 @@ def test_first_run_is_append_only_target_free_and_replayable(
     ).read_bytes() == prediction_bytes
 
 
+def test_era5_dependency_index_preserves_scan_results_and_order(
+    environment: tuple[MonitoringConfig, dict[str, object]],
+) -> None:
+    _, source = environment
+    era5 = source["sources"]["era5_land"]
+    existing = era5["station_id=1/month=2026-03"]
+    era5["station_id=2/month=2026-03"] = {
+        **existing,
+        "logical_key": "station_id=2/month=2026-03",
+        "revision_id": "era-r2",
+        "local_dates": [TARGET, TARGET, LAG_DAY],
+    }
+    era5["station_id=3/month=2026-03"] = {
+        **existing,
+        "logical_key": "station_id=3/month=2026-03",
+        "revision_id": "era-r3",
+        "status": "failed",
+    }
+
+    expected = sorted(
+        [
+            monitoring._source_dependency("era5_land", TARGET, ref)
+            for ref in era5.values()
+            if ref.get("status") == "complete"
+            and TARGET in (ref.get("local_dates") or [])
+        ],
+        key=lambda item: (item["source"], item["logical_key"]),
+    )
+    indexed = monitoring._index_era5_by_local_date(source)
+    dependencies = monitoring._dependency_map(
+        ["Average_Wind_Speed"],
+        TARGET,
+        source,
+        era5_by_local_date=indexed,
+    )
+
+    assert dependencies["Average_Wind_Speed"]["source_revisions"] == expected
+    assert [ref["logical_key"] for ref in indexed[TARGET]] == [
+        "station_id=1/month=2026-03",
+        "station_id=2/month=2026-03",
+    ]
+
+
+def test_era5_inventory_is_scanned_once_per_verified_source_snapshot(
+    environment: tuple[MonitoringConfig, dict[str, object]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, source = environment
+    run_historical_monitoring(config)
+
+    class CountingReferences(dict[str, object]):
+        scans = 0
+
+        def values(self):  # type: ignore[no-untyped-def]
+            self.scans += 1
+            return super().values()
+
+    era5 = CountingReferences(source["sources"]["era5_land"])
+    source["sources"]["era5_land"] = era5
+    monkeypatch.setattr(
+        monitoring,
+        "load_verified_current_state",
+        lambda _root: source,
+    )
+
+    plan_historical_monitoring(config)
+    assert era5.scans == 1
+
+    repeated = run_historical_monitoring(config)
+    assert repeated.status == "no_op"
+    assert era5.scans == 3
+
+
+def test_feature_row_cache_verifies_and_parses_reused_file_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    feature_path = tmp_path / "shared-features.csv"
+    pd.DataFrame(
+        {
+            "Date": [LAG_DAY, TARGET],
+            "feature": [4.0, 5.0],
+        }
+    ).to_csv(feature_path, index=False, lineterminator="\n")
+    ref = {
+        "files": {
+            "feature_ready": {
+                "path": str(feature_path),
+                "sha256": sha256_file(feature_path),
+            }
+        }
+    }
+    expected_lag = monitoring._read_feature_row(ref, LAG_DAY)
+    expected_target = monitoring._read_feature_row(ref, TARGET)
+    original_sha256_file = monitoring.sha256_file
+    original_read_csv = monitoring.pd.read_csv
+    calls = {"checksum": 0, "read": 0}
+
+    def counted_sha256_file(path: Path) -> str:
+        calls["checksum"] += 1
+        return original_sha256_file(path)
+
+    def counted_read_csv(path: Path) -> pd.DataFrame:
+        calls["read"] += 1
+        return original_read_csv(path)
+
+    monkeypatch.setattr(monitoring, "sha256_file", counted_sha256_file)
+    monkeypatch.setattr(monitoring.pd, "read_csv", counted_read_csv)
+    cache: monitoring._FeatureFrameCache = {}
+
+    assert monitoring._read_feature_row(ref, LAG_DAY, cache=cache) == expected_lag
+    assert monitoring._read_feature_row(ref, TARGET, cache=cache) == expected_target
+    assert calls == {"checksum": 1, "read": 1}
+
+    with pytest.raises(MonitoringError, match="exactly one target row"):
+        monitoring._read_feature_row(ref, LAG2_DAY, cache=cache)
+    assert calls == {"checksum": 1, "read": 1}
+
+    changed_checksum_ref = {
+        "files": {
+            "feature_ready": {
+                "path": str(feature_path),
+                "sha256": "0" * 64,
+            }
+        }
+    }
+    with pytest.raises(MonitoringError, match="missing or corrupt"):
+        monitoring._read_feature_row(
+            changed_checksum_ref,
+            TARGET,
+            cache=cache,
+        )
+    assert calls == {"checksum": 2, "read": 1}
+
+
 def test_actual_revision_adds_metric_without_changing_as_issued(
     environment: tuple[MonitoringConfig, dict[str, object]],
 ) -> None:
