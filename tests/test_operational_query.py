@@ -22,6 +22,14 @@ from wind_forecast.operational_query_models import (
     OperationalQuery,
     QueryKind,
 )
+from wind_forecast.operational_projection_reader import (
+    OperationalProjectionTimeoutError,
+    OperationalProjectionUnavailableError,
+    ProjectedAlerts,
+    ProjectedEvidence,
+    ProjectedReport,
+    ProjectedRow,
+)
 
 
 NOW = datetime(2026, 7, 30, 12, tzinfo=timezone.utc)
@@ -1077,6 +1085,285 @@ def test_every_query_kind_preserves_operational_store_bytes_and_metadata(
 
     assert answer.status == AnswerStatus.ANSWERED
     assert before == after
+
+
+class _MatchingProjectionReader:
+    def __init__(self, calibration: dict) -> None:
+        self.calibration = calibration
+        self.report_override: ProjectedRow | None = None
+
+    def select_report(self, **kwargs) -> ProjectedReport:
+        detail = kwargs["detail"]
+        window_days = kwargs["window_days"]
+        report = _report()
+        normalized_report = self.report_override or operational._normalized_report(
+            report,
+            "e" * 64,
+        )
+        if detail == "quality":
+            return ProjectedReport(
+                normalized_report,
+                quality_issues=operational._normalized_quality_issues(report),
+            )
+        return ProjectedReport(
+            normalized_report,
+            window=operational._normalized_window(report, window_days),
+            performance_metrics=(
+                operational._normalized_performance_metrics(
+                    report,
+                    self.calibration,
+                    window_days,
+                )
+                if detail == "performance"
+                else ()
+            ),
+            drift_measurements=(
+                operational._normalized_drift_measurements(
+                    report,
+                    self.calibration,
+                    window_days,
+                )
+                if detail == "drift"
+                else ()
+            ),
+            calibration=operational._normalized_calibration_evidence(
+                self.calibration
+            ),
+            model_era=operational._normalized_model_era(_era()),
+        )
+
+    def select_attempt(self, **_kwargs) -> ProjectedRow:
+        return operational._normalized_attempt(_attempt())
+
+    def select_alerts(self, **_kwargs) -> ProjectedAlerts:
+        active = {"feature_drift:wind_speed:30:global": ALERT_ID}
+        digest = operational._digest(active)
+        return ProjectedAlerts(
+            history=(operational._normalized_alert(_alert()),),
+            active=active,
+            active_evidence=ProjectedEvidence(
+                "alert",
+                "load_active_alerts",
+                "wind_forecast.verified_active_alert_binding.v1",
+                digest,
+                digest,
+                "2026-07-29",
+            ),
+            selected_ids=(ALERT_ID,),
+        )
+
+
+def _projection_calibration() -> dict:
+    calibration = _calibration()
+    calibration["_reference_manifest"] = {
+        "schema_version": "wind_forecast.monitoring_reference.v1",
+        "reference_id": "0" * 64,
+        "period": {"start": "2025-01-01", "end": "2026-07-29"},
+    }
+    return calibration
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        _query("data_quality"),
+        _query("monitoring_performance", window_days=30),
+        _query("monitoring_drift", window_days=30),
+        _query("monitoring_alerts"),
+        _query(
+            "reporting_run",
+            selector={
+                "kind": "exact_id",
+                "id_type": "reporting_run_id",
+                "identifier": RUN_ID,
+            },
+        ),
+    ),
+)
+def test_required_projection_preserves_filesystem_answers(
+    payload: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calibration = _projection_calibration()
+    monkeypatch.setattr(
+        operational,
+        "load_monitoring_calibration",
+        lambda _path: calibration,
+    )
+    monkeypatch.setattr(
+        operational,
+        "load_model_era",
+        lambda _root, _model_era_id: _era(),
+    )
+    monkeypatch.setattr(
+        operational,
+        "verify_active_model_era",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("projected queries called deployment or MLflow")
+        ),
+    )
+    context = AuthorizationContext(principal="operator", trusted_local=True)
+
+    filesystem = _service().answer(payload, context)
+    projected = _service(
+        projection_reader=_MatchingProjectionReader(calibration)
+    ).answer(payload, context)
+
+    assert projected == filesystem
+    assert all(
+        "postgres" not in citation.source_kind.lower()
+        for citation in projected.evidence
+    )
+
+
+def test_required_projection_divergence_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calibration = _projection_calibration()
+    projection = _MatchingProjectionReader(calibration)
+    expected = operational._normalized_report(_report(), "e" * 64)
+    projection.report_override = ProjectedRow(
+        {**expected.values, "verdict": "FAIL"},
+        expected.evidence,
+    )
+    monkeypatch.setattr(
+        operational,
+        "load_monitoring_calibration",
+        lambda _path: calibration,
+    )
+
+    answer = _service(projection_reader=projection).answer(
+        _query("data_quality"),
+        AuthorizationContext(principal="operator", trusted_local=True),
+    )
+
+    assert answer.status == AnswerStatus.UNAVAILABLE
+    assert answer.failure is not None
+    assert answer.failure.code == "required_projection_unavailable"
+
+
+def test_required_latest_empty_state_is_revalidated_after_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    states = [
+        None,
+        {
+            "schema_version": "wind_forecast.monitoring_report_state.v2",
+            "latest_report_id": REPORT_ID,
+            "latest_through_date": "2026-07-29",
+            "active_alerts": {},
+        },
+    ]
+
+    class EmptyProjectionReader:
+        def select_report(self, **_kwargs):
+            return None
+
+    monkeypatch.setattr(
+        operational,
+        "load_monitoring_report_state",
+        lambda _root: states.pop(0),
+    )
+
+    answer = _service(projection_reader=EmptyProjectionReader()).answer(
+        _query("data_quality"),
+        AuthorizationContext(principal="operator", trusted_local=True),
+    )
+
+    assert answer.status == AnswerStatus.CONFLICT
+    assert states == []
+
+
+def test_required_latest_stably_empty_state_is_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class EmptyProjectionReader:
+        def select_report(self, **_kwargs):
+            return None
+
+    monkeypatch.setattr(
+        operational,
+        "load_monitoring_report_state",
+        lambda _root: None,
+    )
+
+    answer = _service(projection_reader=EmptyProjectionReader()).answer(
+        _query("data_quality"),
+        AuthorizationContext(principal="operator", trusted_local=True),
+    )
+
+    assert answer.status == AnswerStatus.EMPTY
+
+
+def test_required_projection_preserves_authoritative_corrupt_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calibration = _projection_calibration()
+    projection = _MatchingProjectionReader(calibration)
+    monkeypatch.setattr(
+        operational,
+        "load_monitoring_report",
+        lambda _path: (_ for _ in ()).throw(
+            operational.MonitoringReportingError("corrupt")
+        ),
+    )
+
+    answer = _service(projection_reader=projection).answer(
+        _query("data_quality"),
+        AuthorizationContext(principal="operator", trusted_local=True),
+    )
+
+    assert answer.status == AnswerStatus.CORRUPT
+
+
+def test_required_projection_preserves_authoritative_conflict_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calibration = _projection_calibration()
+    projection = _MatchingProjectionReader(calibration)
+    conflicting_report = {**_report(), "through_date": "2026-07-28"}
+    monkeypatch.setattr(
+        operational,
+        "load_monitoring_report",
+        lambda _path: conflicting_report,
+    )
+
+    answer = _service(projection_reader=projection).answer(
+        _query("data_quality"),
+        AuthorizationContext(principal="operator", trusted_local=True),
+    )
+
+    assert answer.status == AnswerStatus.CONFLICT
+
+
+def test_projection_failure_affects_only_projected_query_kinds() -> None:
+    class UnavailableReader:
+        def select_report(self, **_kwargs):
+            raise OperationalProjectionUnavailableError("secret")
+
+    service = _service(projection_reader=UnavailableReader())
+    context = AuthorizationContext(principal="operator", trusted_local=True)
+
+    projected = service.answer(_query("data_quality"), context)
+    direct = service.answer(_query("active_deployment"), context)
+
+    assert projected.status == AnswerStatus.UNAVAILABLE
+    assert direct.status == AnswerStatus.ANSWERED
+
+
+def test_projection_statement_timeout_maps_to_operational_timeout() -> None:
+    class TimedOutReader:
+        def select_report(self, **_kwargs):
+            raise OperationalProjectionTimeoutError("secret")
+
+    answer = _service(projection_reader=TimedOutReader()).answer(
+        _query("data_quality"),
+        AuthorizationContext(principal="operator", trusted_local=True),
+    )
+
+    assert answer.status == AnswerStatus.TIMEOUT
+    assert answer.failure is not None
+    assert answer.failure.code == "operational_query_timeout"
 
 
 def test_import_has_no_filesystem_side_effects(tmp_path: Path) -> None:

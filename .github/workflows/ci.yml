@@ -180,8 +180,9 @@ jobs:
       - name: Install projection test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "psycopg[binary]>=3,<4" "pytest>=8,<9" "pytest-cov>=7,<8" "ruff>=0.8,<1"
-          python -m pip install --no-deps -e .
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+          python -m pip install -e .
 
       - name: Select an ephemeral loopback port
         run: |
@@ -214,16 +215,25 @@ jobs:
             -f operational_projection/docker-compose.test.yml \
             up --detach --wait
 
-      - name: Test migrations, schema, and roles
-        run: python -m pytest --no-cov tests/test_operational_projection_migrations.py
+      - name: Test migrations, schema, roles, and query reader
+        run: |
+          python -m pytest --no-cov \
+            tests/test_operational_projection_migrations.py \
+            tests/test_operational_projection_reader.py
 
       - name: Run projection lint
         run: |
           python -m ruff check \
             src/wind_forecast/config.py \
+            src/wind_forecast/operational_api.py \
+            src/wind_forecast/operational_query.py \
+            src/wind_forecast/operational_projection_reader.py \
             src/wind_forecast/operational_projection_migrations.py \
             scripts/manage_operational_projection.py \
-            tests/test_operational_projection_migrations.py
+            tests/test_operational_api.py \
+            tests/test_operational_query.py \
+            tests/test_operational_projection_migrations.py \
+            tests/test_operational_projection_reader.py
 
       - name: Show PostgreSQL logs on failure
         if: failure()

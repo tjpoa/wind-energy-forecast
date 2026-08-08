@@ -165,6 +165,23 @@ def _registry_client(registry_uri: str | None) -> Any | None:
 def get_operational_query_service() -> OperationalQueryService:
     """Return the configured, read-only operational query service."""
     config = load_operational_query_config()
+    projection_reader = None
+    if getattr(config, "projection_mode", "disabled") == "required":
+        from .operational_projection_reader import (
+            OperationalProjectionReader,
+            UnavailableOperationalProjectionReader,
+        )
+
+        if (
+            config.projection_environment_id == "local"
+            and config.projection_reader_dsn is not None
+        ):
+            projection_reader = OperationalProjectionReader(
+                config.projection_reader_dsn,
+                environment_id=config.projection_environment_id,
+            )
+        else:
+            projection_reader = UnavailableOperationalProjectionReader()
     return OperationalQueryService(
         deployment_root=config.deployment_root,
         monitoring_store_root=config.monitoring_store_root,
@@ -174,6 +191,7 @@ def get_operational_query_service() -> OperationalQueryService:
         registry_timeout_seconds=(
             config.timeout_seconds if config.registry_uri is not None else None
         ),
+        projection_reader=projection_reader,
     )
 
 
