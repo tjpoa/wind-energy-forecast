@@ -1,6 +1,6 @@
 # Project Status
 
-Last reviewed: 2026-07-31.
+Last reviewed: 2026-08-08.
 
 This document summarizes the current state of the wind-energy forecasting
 repository for portfolio and hiring-review purposes. It is a factual status
@@ -90,11 +90,19 @@ The standard local validation commands are:
 .\venv\Scripts\python.exe -m ruff check .
 ```
 
-The 2026-07-28 final controlled-retraining acceptance ran both complete
-bootstrap-to-stability and bootstrap-to-rollback paths. The dedicated suite
-passed `7` tests; the full backend suite passed `388` tests with `4` skipped
-and `70.74%` total coverage. It also pinned the tracked v1 raw data,
-model/scaler artifacts, and modelling notebook by SHA-256.
+The current backend validation snapshot is pinned to merged PR #42 and master
+commit `271ed3a09cdabb3fbcec756f2a3121c642f07921`. The PR validation and a local
+Windows rerun on 2026-08-08 both reported `624` passed tests, `17` skipped
+tests, and `71.41%` total coverage; the PR's GitHub Actions CI workflow also
+completed successfully.
+
+The earlier 2026-07-28 final controlled-retraining acceptance remains a
+separate historical checkpoint. It ran both complete bootstrap-to-stability
+and bootstrap-to-rollback paths: the dedicated suite passed `7` tests, while
+the then-current full backend suite passed `388` tests with `4` skipped and
+`70.74%` total coverage. It also pinned the tracked v1 raw data, model/scaler
+artifacts, and modelling notebook by SHA-256. The complete dated evidence
+remains in `docs/CONTROLLED_RETRAINING.md`.
 
 ### Governed local v2 snapshot
 
