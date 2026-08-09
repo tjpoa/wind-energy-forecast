@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from hashlib import sha256
 import json
 from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -495,6 +497,17 @@ def test_cli_failure_does_not_expose_raw_database_error(
 
 
 def test_projection_imports_do_not_import_psycopg() -> None:
-    import sys
+    code = (
+        "import sys; "
+        "import wind_forecast.operational_projection_cli; "
+        "import wind_forecast.operational_projection_projector; "
+        "assert 'psycopg' not in sys.modules"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
-    assert "psycopg" not in sys.modules
+    assert completed.returncode == 0, completed.stderr
