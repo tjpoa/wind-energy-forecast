@@ -21,6 +21,7 @@ from wind_forecast.monitoring import (
     ConcurrentMonitoringError,
     MonitoringConfig,
     MonitoringError,
+    load_prediction_core_evidence,
     load_prediction_evidence,
     plan_historical_monitoring,
     replay_prediction,
@@ -377,6 +378,41 @@ def test_first_run_is_append_only_target_free_and_replayable(
         / "predictions"
         / f"{first.prediction_ids[0]}.json"
     ).read_bytes() == prediction_bytes
+
+
+def test_prediction_core_loader_matches_full_loader_without_inventory_scans(
+    environment: tuple[MonitoringConfig, dict[str, object]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, _ = environment
+    result = run_historical_monitoring(config)
+    prediction_id = result.prediction_ids[0]
+    complete = load_prediction_evidence(config.monitoring_store_root, prediction_id)
+    original_glob = Path.glob
+    inventory_scans: list[tuple[str, str]] = []
+
+    def tracked_glob(path: Path, pattern: str):  # type: ignore[no-untyped-def]
+        if path.name in {"metrics", "actuals"}:
+            inventory_scans.append((path.name, pattern))
+        return original_glob(path, pattern)
+
+    monkeypatch.setattr(Path, "glob", tracked_glob)
+
+    core = load_prediction_core_evidence(
+        config.monitoring_store_root, prediction_id
+    )
+
+    assert core == {
+        "prediction": complete["prediction"],
+        "model_input_snapshot": complete["model_input_snapshot"],
+        "model_snapshot": complete["model_snapshot"],
+    }
+    assert inventory_scans == []
+
+    assert load_prediction_evidence(
+        config.monitoring_store_root, prediction_id
+    ) == complete
+    assert inventory_scans == [("metrics", "*.json")]
 
 
 def test_era5_dependency_index_preserves_scan_results_and_order(
@@ -805,8 +841,9 @@ def test_corrupt_snapshot_fails_closed(
     evidence = load_prediction_evidence(config.monitoring_store_root, result.prediction_ids[0])
     model_path = Path(evidence["model_snapshot"]["files"]["model.joblib"]["path"])
     model_path.write_bytes(model_path.read_bytes() + b"corrupt")
-    with pytest.raises(MonitoringError, match="corrupt"):
-        load_prediction_evidence(config.monitoring_store_root, result.prediction_ids[0])
+    for loader in (load_prediction_core_evidence, load_prediction_evidence):
+        with pytest.raises(MonitoringError, match="corrupt"):
+            loader(config.monitoring_store_root, result.prediction_ids[0])
 
 
 def test_rejected_bundle_fails_before_ledger_writes(
@@ -834,8 +871,9 @@ def test_content_addressed_path_id_and_input_corruption_fail_closed(
     wrong_id = "f" * 64
     wrong_path = config.monitoring_store_root / "predictions" / f"{wrong_id}.json"
     wrong_path.write_bytes(prediction_path.read_bytes())
-    with pytest.raises(MonitoringError, match="corrupt"):
-        load_prediction_evidence(config.monitoring_store_root, wrong_id)
+    for loader in (load_prediction_core_evidence, load_prediction_evidence):
+        with pytest.raises(MonitoringError, match="corrupt"):
+            loader(config.monitoring_store_root, wrong_id)
 
     prediction = json.loads(prediction_path.read_text())
     input_path = (
@@ -846,8 +884,9 @@ def test_content_addressed_path_id_and_input_corruption_fail_closed(
     input_snapshot = json.loads(input_path.read_text())
     input_snapshot["feature_values"][0] = 99.0
     _write_json(input_path, input_snapshot)
-    with pytest.raises(MonitoringError, match="corrupt"):
-        load_prediction_evidence(config.monitoring_store_root, prediction_id)
+    for loader in (load_prediction_core_evidence, load_prediction_evidence):
+        with pytest.raises(MonitoringError, match="corrupt"):
+            loader(config.monitoring_store_root, prediction_id)
 
 
 def test_bundle_manifest_checksum_and_feature_order_corruption_fail_closed(
