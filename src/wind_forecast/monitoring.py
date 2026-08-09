@@ -168,6 +168,7 @@ class MonitoringResult:
 
 
 FailureHook = Callable[[str], None]
+_FeatureFrameCache = dict[tuple[Path, str], pd.DataFrame]
 
 
 def plan_historical_monitoring(config: MonitoringConfig) -> MonitoringPlan:
@@ -175,6 +176,8 @@ def plan_historical_monitoring(config: MonitoringConfig) -> MonitoringPlan:
     bundle = _validate_model_bundle(config.model_bundle)
     era = _verify_model_era(config)
     source = load_verified_current_state(config.source_store_root)
+    era5_by_local_date = _index_era5_by_local_date(source)
+    feature_frame_cache: _FeatureFrameCache = {}
     activation = _resolve_activation(config, write=False)
     current = _load_current(config.monitoring_store_root, verify=True)
     expected_model = _model_snapshot_record(bundle)
@@ -192,7 +195,13 @@ def plan_historical_monitoring(config: MonitoringConfig) -> MonitoringPlan:
     date_states: dict[str, str] = {}
     for day in targets:
         issued = day in ((current or {}).get("as_issued") or {})
-        sources_ready = _sources_eligible(day, source, bundle)
+        sources_ready = _sources_eligible(
+            day,
+            source,
+            bundle,
+            era5_by_local_date=era5_by_local_date,
+            feature_frame_cache=feature_frame_cache,
+        )
         due = config.now_utc >= _scheduled(_parse_date(day)).astimezone(timezone.utc)
         if sources_ready:
             if due:
@@ -212,7 +221,12 @@ def plan_historical_monitoring(config: MonitoringConfig) -> MonitoringPlan:
                 if config.now_utc >= late_at
                 else "pending_source"
             )
-    restatements = _restatement_dates(current, source, bundle)
+    restatements = _restatement_dates(
+        current,
+        source,
+        bundle,
+        era5_by_local_date=era5_by_local_date,
+    )
     return MonitoringPlan(
         status="planned",
         activation_date=activation["activation_date"],
@@ -260,6 +274,8 @@ def run_historical_monitoring(
             },
         )
         source = load_verified_current_state(config.source_store_root)
+        era5_by_local_date = _index_era5_by_local_date(source)
+        feature_frame_cache: _FeatureFrameCache = {}
         bundle = _validate_model_bundle(config.model_bundle)
         activation = _resolve_activation(config, write=True)
         model = _persist_model_snapshot(config.monitoring_store_root, bundle)
@@ -276,7 +292,14 @@ def run_historical_monitoring(
         target_set = set(plan.eligible_dates)
         target_set.update((state.get("as_issued") or {}).keys())
         for day in sorted(target_set):
-            if not _is_eligible(day, config.now_utc, source, bundle):
+            if not _is_eligible(
+                day,
+                config.now_utc,
+                source,
+                bundle,
+                era5_by_local_date=era5_by_local_date,
+                feature_frame_cache=feature_frame_cache,
+            ):
                 continue
             try:
                 prediction, created = _ensure_prediction(
@@ -289,6 +312,8 @@ def run_historical_monitoring(
                     model_era=era,
                     state=state,
                     backfill=day in plan.backfill_dates,
+                    era5_by_local_date=era5_by_local_date,
+                    feature_frame_cache=feature_frame_cache,
                 )
                 if created:
                     prediction_ids.append(prediction["prediction_id"])
@@ -734,16 +759,28 @@ def _is_eligible(
     now_utc: datetime,
     source: Mapping[str, Any],
     bundle: Mapping[str, Any],
+    *,
+    era5_by_local_date: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
+    feature_frame_cache: _FeatureFrameCache | None = None,
 ) -> bool:
     if now_utc < _scheduled(_parse_date(day)).astimezone(timezone.utc):
         return False
-    return _sources_eligible(day, source, bundle)
+    return _sources_eligible(
+        day,
+        source,
+        bundle,
+        era5_by_local_date=era5_by_local_date,
+        feature_frame_cache=feature_frame_cache,
+    )
 
 
 def _sources_eligible(
     day: str,
     source: Mapping[str, Any],
     bundle: Mapping[str, Any],
+    *,
+    era5_by_local_date: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
+    feature_frame_cache: _FeatureFrameCache | None = None,
 ) -> bool:
     features = dict((source.get("partitions") or {}).get("features") or {})
     ref = dict(features.get(day) or {})
@@ -752,14 +789,15 @@ def _sources_eligible(
     ren = dict((source.get("sources") or {}).get("ren") or {}).get(day) or {}
     if ren.get("status") != "complete":
         return False
-    era = dict((source.get("sources") or {}).get("era5_land") or {})
-    if not any(
-        item.get("status") == "complete" and day in (item.get("local_dates") or [])
-        for item in era.values()
-    ):
+    era5_index = (
+        era5_by_local_date
+        if era5_by_local_date is not None
+        else _index_era5_by_local_date(source)
+    )
+    if not era5_index.get(day):
         return False
     try:
-        row = _read_feature_row(ref, day)
+        row = _read_feature_row(ref, day, cache=feature_frame_cache)
     except MonitoringError:
         return False
     return all(name in row for name in bundle["feature_names"])
@@ -840,6 +878,8 @@ def _ensure_prediction(
     model_era: Mapping[str, Any],
     state: Mapping[str, Any],
     backfill: bool,
+    era5_by_local_date: Mapping[str, Sequence[Mapping[str, Any]]],
+    feature_frame_cache: _FeatureFrameCache,
 ) -> tuple[dict[str, Any], bool]:
     current_id = (state.get("as_issued") or {}).get(target_date)
     view = "as_issued"
@@ -854,7 +894,10 @@ def _ensure_prediction(
             "model_input_snapshot",
         )
         current_dependencies = _dependency_map(
-            bundle["feature_names"], target_date, source
+            bundle["feature_names"],
+            target_date,
+            source,
+            era5_by_local_date=era5_by_local_date,
         )
         latest_id = (state.get("restated") or {}).get(target_date)
         latest = None
@@ -888,12 +931,17 @@ def _ensure_prediction(
         ((source.get("partitions") or {}).get("features") or {}).get(target_date)
         or {}
     )
-    row = _read_feature_row(ref, target_date)
+    row = _read_feature_row(ref, target_date, cache=feature_frame_cache)
     names = list(bundle["feature_names"])
     values = [float(row[name]) for name in names]
     if not np.isfinite(np.asarray(values, dtype=float)).all():
         raise MonitoringError("Model input contains non-finite values.")
-    dependencies = _dependency_map(names, target_date, source)
+    dependencies = _dependency_map(
+        names,
+        target_date,
+        source,
+        era5_by_local_date=era5_by_local_date,
+    )
     transformation = _transformation_evidence(source)
     if transformation["version"] != bundle["dataset_manifest"][
         "transformation_version"
@@ -1171,9 +1219,18 @@ def _resolve_prediction_model_era(
 
 
 def _dependency_map(
-    feature_names: Sequence[str], day: str, source: Mapping[str, Any]
+    feature_names: Sequence[str],
+    day: str,
+    source: Mapping[str, Any],
+    *,
+    era5_by_local_date: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     target = _parse_date(day)
+    era5_index = (
+        era5_by_local_date
+        if era5_by_local_date is not None
+        else _index_era5_by_local_date(source)
+    )
     result: dict[str, Any] = {}
     for name in feature_names:
         source_name, dates = _feature_dependency_dates(name, target)
@@ -1191,11 +1248,7 @@ def _dependency_map(
             elif source_name == "era5_land":
                 matches = [
                     _source_dependency("era5_land", text, ref)
-                    for ref in (
-                        ((source.get("sources") or {}).get("era5_land") or {})
-                    ).values()
-                    if ref.get("status") == "complete"
-                    and text in (ref.get("local_dates") or [])
+                    for ref in era5_index.get(text, ())
                 ]
                 if not matches:
                     raise MonitoringError(f"ERA5-Land dependency {text} is not complete.")
@@ -1207,6 +1260,27 @@ def _dependency_map(
             ),
         }
     return result
+
+
+def _index_era5_by_local_date(
+    source: Mapping[str, Any],
+) -> dict[str, tuple[Mapping[str, Any], ...]]:
+    """Index complete ERA5-Land references once for constant-time date lookup."""
+    indexed: dict[str, list[Mapping[str, Any]]] = {}
+    era5 = (source.get("sources") or {}).get("era5_land") or {}
+    for ref in era5.values():
+        if ref.get("status") != "complete":
+            continue
+        local_dates = ref.get("local_dates") or []
+        if isinstance(local_dates, str):
+            local_dates = (local_dates,)
+        seen_dates: set[str] = set()
+        for local_date in local_dates:
+            if not isinstance(local_date, str) or local_date in seen_dates:
+                continue
+            seen_dates.add(local_date)
+            indexed.setdefault(local_date, []).append(ref)
+    return {day: tuple(refs) for day, refs in indexed.items()}
 
 
 def _feature_dependency_dates(
@@ -1321,13 +1395,23 @@ def _transformation_evidence(source: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _read_feature_row(ref: Mapping[str, Any], day: str) -> dict[str, Any]:
+def _read_feature_row(
+    ref: Mapping[str, Any],
+    day: str,
+    *,
+    cache: _FeatureFrameCache | None = None,
+) -> dict[str, Any]:
     file_ref = dict((ref.get("files") or {}).get("feature_ready") or {})
     path = Path(str(file_ref.get("path") or ""))
     checksum = str(file_ref.get("sha256") or "")
-    if not path.is_file() or not checksum or sha256_file(path) != checksum:
-        raise MonitoringError("Feature partition is missing or corrupt.")
-    frame = pd.read_csv(path)
+    cache_key = (path, checksum)
+    frame = cache.get(cache_key) if cache is not None else None
+    if frame is None:
+        if not path.is_file() or not checksum or sha256_file(path) != checksum:
+            raise MonitoringError("Feature partition is missing or corrupt.")
+        frame = pd.read_csv(path)
+        if cache is not None:
+            cache[cache_key] = frame
     if DATE_COLUMN not in frame:
         raise MonitoringError("Feature partition lacks Date.")
     rows = frame.loc[frame[DATE_COLUMN].astype(str).eq(day)]
@@ -1340,6 +1424,8 @@ def _restatement_dates(
     current: Mapping[str, Any] | None,
     source: Mapping[str, Any],
     bundle: Mapping[str, Any],
+    *,
+    era5_by_local_date: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
 ) -> list[str]:
     if not current:
         return []
@@ -1356,7 +1442,12 @@ def _restatement_dates(
             "model_input_snapshot_id",
             "model_input_snapshot",
         )
-        dependencies = _dependency_map(bundle["feature_names"], day, source)
+        dependencies = _dependency_map(
+            bundle["feature_names"],
+            day,
+            source,
+            era5_by_local_date=era5_by_local_date,
+        )
         if _dependency_identity(snapshot["dependencies"]) != _dependency_identity(
             dependencies
         ):
