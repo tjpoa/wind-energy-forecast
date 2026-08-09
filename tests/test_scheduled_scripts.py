@@ -4,8 +4,12 @@ from pathlib import Path
 SCRIPTS = Path(__file__).parents[1] / "scripts"
 
 
+def _script(name: str) -> str:
+    return (SCRIPTS / name).read_text(encoding="utf-8")
+
+
 def test_windows_daily_runner_is_owner_guarded() -> None:
-    source = (SCRIPTS / "run_scheduled_batch.ps1").read_text(encoding="utf-8")
+    source = _script("run_scheduled_batch.ps1")
     assert "manage_scheduler_owner.py" in source
     assert "--scheduler windows_task_scheduler" in source
     assert "--workflow historical_daily_batch" in source
@@ -13,12 +17,8 @@ def test_windows_daily_runner_is_owner_guarded() -> None:
 
 
 def test_windows_monthly_task_runs_recommendations_only() -> None:
-    runner = (
-        SCRIPTS / "run_scheduled_monthly_governance.ps1"
-    ).read_text(encoding="utf-8")
-    registration = (
-        SCRIPTS / "register_local_monthly_governance_task.ps1"
-    ).read_text(encoding="utf-8")
+    runner = _script("run_scheduled_monthly_governance.ps1")
+    registration = _script("register_local_monthly_governance_task.ps1")
     assert "run_monthly_governance.py" in runner
     assert "--workflow monthly_governance" in runner
     assert "MSFT_TaskMonthlyTrigger" in registration
@@ -32,3 +32,60 @@ def test_windows_monthly_task_runs_recommendations_only() -> None:
         "manage_v2_deployment.py",
     ):
         assert prohibited not in runner
+
+
+def test_local_mlflow_runner_is_fixed_to_existing_loopback_store() -> None:
+    source = _script("run_local_mlflow.ps1")
+    assert 'sqlite:///var/mlflow/mlflow.db' in source
+    assert './var/mlflow/artifacts' in source
+    assert '--host "127.0.0.1"' in source
+    assert '--port "5000"' in source
+    assert 'var\\local_services' in source
+    assert '*>> $logFile' in source
+    assert 'Resolve-Path -LiteralPath $PythonExecutable' not in source
+    for prohibited in ("--serve-artifacts", "0.0.0.0", "Start-Process"):
+        assert prohibited not in source
+
+
+def test_local_operational_api_runner_has_bounded_explicit_configuration() -> None:
+    source = _script("run_local_operational_api.ps1")
+    assert '[ValidateRange(1, 600)]' in source
+    assert '$MlflowHealthTimeoutSeconds = 120' in source
+    assert 'if ($remaining -lt 1)' in source
+    assert 'http://127.0.0.1:5000/health' in source
+    assert 'WIND_FORECAST_DEPLOYMENT_ROOT' in source
+    assert 'WIND_FORECAST_MONITORING_STORE_ROOT' in source
+    assert '$env:MLFLOW_TRACKING_URI = "http://127.0.0.1:5000"' in source
+    assert '$env:WIND_FORECAST_OPERATIONAL_PROJECTION_MODE = "disabled"' in source
+    assert 'wind_forecast.api:app' in source
+    assert '--host "127.0.0.1"' in source
+    assert '--port "8000"' in source
+    assert 'var\\local_services' in source
+    for prohibited in ("--reload", "--env-file", "0.0.0.0", "docker", "proxy"):
+        assert prohibited not in source.lower()
+
+
+def test_local_service_registrations_are_reviewable_and_do_not_start_tasks() -> None:
+    contracts = {
+        "register_local_mlflow_task.ps1": "WindForecastMlflow",
+        "register_local_operational_api_task.ps1": (
+            "WindForecastOperationalApi"
+        ),
+    }
+    for filename, task_name in contracts.items():
+        source = _script(filename)
+        assert 'SupportsShouldProcess = $true' in source
+        assert f'$TaskName = "{task_name}"' in source
+        assert 'New-ScheduledTaskTrigger -AtLogOn -User $currentUser' in source
+        assert '-LogonType Interactive' in source
+        assert '-RunLevel Limited' in source
+        assert '-ExecutionTimeLimit (New-TimeSpan -Seconds 0)' in source
+        assert '-RestartCount 3' in source
+        assert '-RestartInterval (New-TimeSpan -Minutes 1)' in source
+        assert '-MultipleInstances IgnoreNew' in source
+        assert '-StartWhenAvailable' in source
+        assert '$powershell = Join-Path $PSHOME "powershell.exe"' in source
+        assert '-Execute $powershell' in source
+        assert 'Register-ScheduledTask' in source
+        assert 'Start-ScheduledTask' not in source
+        assert 'Unregister-ScheduledTask' not in source

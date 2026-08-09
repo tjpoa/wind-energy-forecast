@@ -53,6 +53,90 @@ Disabling the task is the safe operational rollback. Do not unregister it or
 remove data during incident response. Re-registration replaces only the task
 definition and must first be reviewed with `-WhatIf`.
 
+## Persistent local MLflow and operational API
+
+MLflow and the read-only operational API are separate logon-triggered tasks.
+Both run under the current interactive identity with `RunLevel Limited`, bind
+only to IPv4 loopback, never overlap a running instance, and have no execution
+time limit. They do not run before that user logs on. The registration scripts
+create or replace task definitions but do not start them.
+
+The MLflow runner requires the existing ignored SQLite database and artifact
+directory below `var/mlflow/`. The API runner sets only its process-local
+deployment, monitoring, tracking, and projection-mode variables. It does not
+load a general `.env`; PostgreSQL projection consumption remains disabled.
+Each process appends to a uniquely named log below ignored
+`var/local_services/`.
+
+Review both exact task definitions before registration:
+
+```powershell
+.\scripts\register_local_mlflow_task.ps1 `
+  -PythonExecutable .\venv\Scripts\python.exe `
+  -RepositoryRoot $PWD `
+  -WhatIf
+
+.\scripts\register_local_operational_api_task.ps1 `
+  -PythonExecutable .\venv\Scripts\python.exe `
+  -RepositoryRoot $PWD `
+  -DeploymentRoot .\data\processed\v2\deployment `
+  -MonitoringStoreRoot .\data\processed\v2\monitoring `
+  -WhatIf
+```
+
+After reviewing the resolved executable, arguments, identity, logon trigger,
+restart policy, zero execution limit, and `IgnoreNew`, repeat each command
+without `-WhatIf`. Stop if the displayed identity is a sandbox, automation,
+service, or different Windows account instead of the intended interactive
+operator; registration must be performed from that operator's own session.
+Registration is not a health check. Start and verify MLflow first, then start
+the API, whose runner waits at most 120 seconds for MLflow:
+
+```powershell
+Start-ScheduledTask -TaskName WindForecastMlflow
+Invoke-RestMethod -Method Get -Uri http://127.0.0.1:5000/health
+
+$env:MLFLOW_TRACKING_URI = "http://127.0.0.1:5000"
+.\venv\Scripts\python.exe .\scripts\verify_active_deployment.py `
+  --deployment-root .\data\processed\v2\deployment `
+  --model-bundle .\outputs\training\v2_reference_mlflow `
+  --calibration-dir `
+    .\data\processed\v2\monitoring\reporting\calibrations\<CALIBRATION_ID>
+
+Start-ScheduledTask -TaskName WindForecastOperationalApi
+Invoke-RestMethod -Method Get -Uri http://127.0.0.1:8000/health
+Invoke-RestMethod -Method Get `
+  -Uri http://127.0.0.1:8000/api/v1/monitoring/latest
+```
+
+Use `Get-ScheduledTask`, `Get-ScheduledTaskInfo`, the ignored service logs, and
+the health responses together when diagnosing startup. A configuration change
+does not alter an already running API process: stop it and start its task again
+so Uvicorn inherits the reviewed environment.
+
+An `empty` operational answer is valid only when the configured, verified store
+has no matching accepted evidence. Compare the API task's resolved
+`MonitoringStoreRoot` and `DeploymentRoot` with the in-process configuration,
+then use the supported Phase 9 loader or monitoring endpoint to verify the same
+current pointer and report. Also compare the deployment loader with live MLflow
+aliases. Do not infer a cause from an older `empty`: if the original process
+configuration cannot be reproduced, record only that the current store has
+evidence while the earlier process was stopped, stale, or selected another
+root. Restart the API after every environment or task-action change.
+
+Operational rollback is limited to stopping and disabling the two tasks:
+
+```powershell
+Stop-ScheduledTask -TaskName WindForecastOperationalApi
+Disable-ScheduledTask -TaskName WindForecastOperationalApi
+Stop-ScheduledTask -TaskName WindForecastMlflow
+Disable-ScheduledTask -TaskName WindForecastMlflow
+```
+
+Do not unregister tasks or delete SQLite, artifacts, reports, pointers,
+manifests, aliases, or append-only evidence during rollback. The monthly
+governance task is outside this service-restoration scope.
+
 ## Airflow operations
 
 Use exactly one scheduler. Disable the Windows task before unpausing
