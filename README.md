@@ -383,7 +383,7 @@ sets `candidate`. This is a one-time command: do not rerun it in an environment
 that already has a deployment pointer or v2 Registry state. See
 `docs/CONTROLLED_RETRAINING.md` for the full fail-closed and recovery contract.
 
-### Verified local v2 operating snapshot
+### Verified local v2 operating snapshots
 
 At 2026-07-30 00:25 `Europe/Lisbon`, the ignored local operational state was
 verified as follows:
@@ -402,15 +402,37 @@ verified as follows:
   enabled and `Ready`, but had never run at the snapshot time. Their next
   scheduled starts were 2026-07-30 12:00 and 2026-08-08 13:00 local time.
 
-This snapshot is local evidence, not repository content. Deployment,
-monitoring, scheduler, and MLflow state are ignored by Git and do not accompany
-a clone. The v2 model remains a retrospective hindcast ending on 2026-06-27,
-not a D+1 forecast. The 2026-07 monthly-governance dry-run could not select the
-required 2026-06-30 report because that report is outside the available
-hindcast. The monthly task was registered through an equivalent Windows Task
-Scheduler COM fallback after the script's CIM registration path proved
-incompatible on this machine. The local MLflow service must be reachable for
-deployment verification and scheduled operation.
+That dated snapshot is retained as the pre-operation baseline. On 2026-08-08,
+an assisted local cycle used real REN and ERA5-Land provider access after
+audited recovery `0ec0e5ddb73f3b6d8fe333b1a0255d5e5ac7c7213d45d67e1d01548336fbbbb9`
+of an abandoned scheduler lease. The recovery evidence states that both
+configured Windows scheduler tasks were then absent, so this is not evidence
+of a successful Task Scheduler execution. The assisted cycle recorded:
+
+- source run `20260808T182255Z-cdd58769f31d`, manifest SHA-256
+  `afbd58f7f184dbccdfa05af3a1568ad70dc877f31b7095d75ea5d15da6d0505b`,
+  technical status `succeeded`, generation 2, and a common validated watermark
+  advanced from 2026-06-27 to 2026-06-28;
+- quality verdict `FAIL`: six `source_late` critical findings, six
+  `incomplete_source_coverage` warnings, and a resulting active
+  `quality:source_late` alert;
+- monitoring run `20260808T212647Z-fe38fb4105ac`, whose result SHA-256 is
+  `c6df214c032a726d3289c3b560bcddd36ed49be862486b44af1967934179a977`,
+  with one prediction, one actual, and one metric for 2026-06-28; and
+- report run `20260808T214827096913Z-86c1e2ada396`, report ID
+  `240ff4039c3f55045420b2ee4db47305c8415824b26b40c3e99c616d804687f4`,
+  and result SHA-256
+  `3c58000997ff5e61df1a79b231e3583e4dfb1f764c233b94deeb59f2a8c1731a`,
+  with status `succeeded` and one active alert.
+
+The 2026-08-09 rerun converged without source refresh to `no_op` as run
+`20260809T102023Z-2239ea7854eb`, with manifest SHA-256
+`095128609373facca71d4ffa50a43eb33f50a8bb444879c2ee55585bfe27a198`.
+This is local ignored evidence, not repository content or a production claim.
+The model remains a retrospective hindcast, not a D+1 forecast. The earlier
+2026-07 monthly-governance dry-run could not select the required 2026-06-30
+report, and the local MLflow service must remain reachable for deployment
+verification and scheduled operation.
 
 Plan the complete local historical batch without writes or provider calls:
 
@@ -632,10 +654,11 @@ does not publish or deploy them.
 3. Extend the baseline training CLI toward the tuned notebook workflow while
    preserving the existing contracts.
 4. Use the versioned offline evaluation harness as a mandatory gate for any
-   separately approved future Operational Read-only Copilot candidate. No
-   candidate has been evaluated, and no Copilot, MCP, RAG, relational
-   projection, observability, production authentication, remote exposure, or
-   cloud implementation exists.
+   separately approved future Operational Read-only Copilot candidate. The
+   dedicated PostgreSQL projection and optional `disabled|required` query
+   integration are implemented, with consumption disabled by default. No
+   candidate has been evaluated, and no Copilot, MCP, RAG, observability,
+   production authentication, remote exposure, or cloud implementation exists.
 5. Add interactive prediction only after a reviewed UI/API contract, then
    progress through cloud deployment design as an explicit future phase.
 
