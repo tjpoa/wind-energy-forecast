@@ -8,6 +8,11 @@ reviewed and merged as PR #19. Its required synthetic three-date real-CLI
 offline backfill gate passed. Both operating modes call the same stable CLIs,
 but only one scheduler may own an environment.
 
+An assisted local cycle on 2026-08-08 subsequently exercised the real REN and
+ERA5-Land refresh, monitoring, and reporting paths, followed by an idempotent
+`no_op` rerun on 2026-08-09. It followed an audited abandoned-lease recovery
+and is not evidence of a successful Windows Task Scheduler or Airflow run.
+
 The operating mode remains the Phase 9 delayed historical hindcast. This work
 does not introduce D+1 forecasting, retraining, model promotion, external
 notifications, or notebook execution.
@@ -97,7 +102,7 @@ It runs on day 8 at 13:00 local time and invokes only
 `run_monthly_governance.py`. Training, backtesting, Registry operations and
 deployment transitions are not scheduled.
 
-### Verified local scheduler snapshot
+### Historical local scheduler snapshot
 
 At 2026-07-30 00:25 `Europe/Lisbon`, the ignored `local` scheduler state was
 verified at generation 1 with owner `windows_task_scheduler`. The tasks
@@ -116,6 +121,39 @@ The v2 store currently ends on 2026-06-27. Consequently, the governance
 dry-run for evaluation period 2026-07 could not select the required report
 dated 2026-06-30. This is an expected data-availability warning, not evidence
 that the monthly task has run successfully.
+
+### Assisted real-provider cycle evidence
+
+On 2026-08-08, audited recovery
+`0ec0e5ddb73f3b6d8fe333b1a0255d5e5ac7c7213d45d67e1d01548336fbbbb9`
+released an abandoned scheduler lease. Its sanitized record states that both
+configured Windows scheduler tasks were absent. The following steps were then
+run with operator assistance; they do not establish unattended scheduler
+operation:
+
+- real REN + ERA5-Land refresh run `20260808T182255Z-cdd58769f31d` succeeded,
+  published generation 2, and advanced the common validated watermark from
+  2026-06-27 to 2026-06-28; its manifest SHA-256 is
+  `afbd58f7f184dbccdfa05af3a1568ad70dc877f31b7095d75ea5d15da6d0505b`;
+- the source quality sidecar returned `FAIL`, with six critical `source_late`
+  findings and six `incomplete_source_coverage` warnings;
+- monitoring run `20260808T212647Z-fe38fb4105ac` succeeded with one prediction,
+  one actual, and one metric for 2026-06-28; its result SHA-256 is
+  `c6df214c032a726d3289c3b560bcddd36ed49be862486b44af1967934179a977`;
+- reporting run `20260808T214827096913Z-86c1e2ada396` succeeded with report ID
+  `240ff4039c3f55045420b2ee4db47305c8415824b26b40c3e99c616d804687f4`
+  and one active `quality:source_late` alert; its result SHA-256 is
+  `3c58000997ff5e61df1a79b231e3583e4dfb1f764c233b94deeb59f2a8c1731a`;
+  and
+- the 2026-08-09 rerun `20260809T102023Z-2239ea7854eb` performed no source
+  refresh and converged to `no_op`; its manifest SHA-256 is
+  `095128609373facca71d4ffa50a43eb33f50a8bb444879c2ee55585bfe27a198`.
+
+The technical update and monitoring steps therefore completed while their
+quality contract correctly preserved a critical source-lateness signal. All
+referenced operational evidence is local, ignored by Git, and absent from a
+fresh clone. It neither changes the retrospective-hindcast contract nor
+constitutes a production claim.
 
 Model, calibration, and deployment paths may alternatively be supplied through
 `WIND_FORECAST_BATCH_MODEL_BUNDLE` and
@@ -229,9 +267,9 @@ fixtures. Never use this validation command with live REN/CDS access.
 - the local `GET /api/v1/monitoring/latest` projection returned HTTP 200 for
   the resulting immutable evidence.
 
-No live provider refresh is part of this evidence. The accepted three-date
-backfill exercised the real CLIs over a generated synthetic fixture; its
-observations and evidence were temporary ignored artifacts, not committed
-demonstration data. A live-provider backfill remains a separate, explicitly
-authorized operation and is not required to close the synthetic Phase 10
+No live provider refresh is part of this Airflow acceptance evidence. The
+accepted three-date backfill exercised the real CLIs over a generated synthetic
+fixture; its observations and evidence were temporary ignored artifacts, not
+committed demonstration data. The later assisted real-provider cycle documented
+above was not an Airflow backfill and does not alter the synthetic Phase 10
 acceptance gate.

@@ -1,6 +1,6 @@
 # Project Status
 
-Last reviewed: 2026-08-08.
+Last reviewed: 2026-08-09.
 
 This document summarizes the current state of the wind-energy forecasting
 repository for portfolio and hiring-review purposes. It is a factual status
@@ -24,8 +24,11 @@ artifact demonstration.
 The accepted v2 historical hindcast is also operational in one governed local
 environment. Its checksum-pinned Phase 8/9 evidence, generation-one deployment,
 MLflow aliases, and Windows Task Scheduler ownership were verified on
-2026-07-30. This does not change the v1 API or turn the hindcast into a live or
-day-ahead forecast.
+2026-07-30. An assisted real-provider cycle on 2026-08-08 advanced the verified
+source and monitoring evidence through 2026-06-28, raised the expected
+fail-closed source-lateness alert, and converged to `no_op` on 2026-08-09. It
+does not prove a successful Task Scheduler execution, change the v1 API, or
+turn the hindcast into a live or day-ahead forecast.
 
 The project should not be presented as a deployed production system. Cloud
 deployment, production operation, real-time data, enterprise scalability,
@@ -77,7 +80,7 @@ each checkpoint was written. This file reflects the latest repository state.
 | 7 | GitHub Actions continuous integration | Implemented matrix backend CI plus frontend tests, linting, build, container build, Compose validation, and backend health checks. |
 | 8 | Idempotency, safe reruns, and observability | Implemented for the accepted v2 dataset with dry-run planning, immutable revisions, atomic publication, structured run evidence, and failure recovery tests. |
 | 9 | Data drift and model-performance monitoring | Completed locally for the accepted historical-batch contract: quality evidence, calibrated 30/90-day drift, as-issued performance, immutable JSON/Markdown reports, and persistent local alerts. |
-| 10 | Batch orchestration with Apache Airflow | Completed locally: Airflow 3.3.0 build/import checks and a serial real-CLI three-date synthetic backfill passed; no live provider refresh or production deployment is claimed. |
+| 10 | Batch orchestration with Apache Airflow | Completed locally: Airflow 3.3.0 build/import checks and a serial real-CLI three-date synthetic backfill passed. A later assisted local cycle exercised real REN and ERA5-Land refresh plus monitoring, but did not prove Task Scheduler or Airflow execution. No production deployment is claimed. |
 | 11 | PySpark data-processing implementation | Not implemented. |
 | 12 | Azure and Databricks deployment design | Not implemented. |
 
@@ -104,7 +107,7 @@ the then-current full backend suite passed `388` tests with `4` skipped and
 artifacts, and modelling notebook by SHA-256. The complete dated evidence
 remains in `docs/CONTROLLED_RETRAINING.md`.
 
-### Governed local v2 snapshot
+### Governed local v2 snapshots
 
 At 2026-07-30 00:25 `Europe/Lisbon`, read-only verification recorded:
 
@@ -130,16 +133,44 @@ At 2026-07-30 00:25 `Europe/Lisbon`, read-only verification recorded:
   executions. Their next starts were 2026-07-30 12:00 and 2026-08-08 13:00
   local time.
 
+This is retained as the historical pre-operation snapshot. The subsequent
+assisted local cycle produced the following ignored, checksum-pinned evidence:
+
+- audited scheduler-lease recovery
+  `0ec0e5ddb73f3b6d8fe333b1a0255d5e5ac7c7213d45d67e1d01548336fbbbb9`
+  on 2026-08-08; its record states that both configured Windows scheduler
+  tasks were absent, so no successful scheduled execution is claimed;
+- real REN + ERA5-Land source run `20260808T182255Z-cdd58769f31d`, manifest
+  SHA-256
+  `afbd58f7f184dbccdfa05af3a1568ad70dc877f31b7095d75ea5d15da6d0505b`,
+  status `succeeded`, generation 2, and common validated watermark advanced
+  from 2026-06-27 to 2026-06-28;
+- quality verdict `FAIL`, with six critical `source_late` findings, six
+  `incomplete_source_coverage` warnings, and one active
+  `quality:source_late` alert;
+- monitoring run `20260808T212647Z-fe38fb4105ac`, result SHA-256
+  `c6df214c032a726d3289c3b560bcddd36ed49be862486b44af1967934179a977`,
+  which succeeded with one prediction, one actual, and one metric for
+  2026-06-28;
+- reporting run `20260808T214827096913Z-86c1e2ada396`, report ID
+  `240ff4039c3f55045420b2ee4db47305c8415824b26b40c3e99c616d804687f4`,
+  and result SHA-256
+  `3c58000997ff5e61df1a79b231e3583e4dfb1f764c233b94deeb59f2a8c1731a`,
+  which succeeded with the active quality alert; and
+- idempotency rerun `20260809T102023Z-2239ea7854eb`, status `no_op`, no source
+  refresh, and manifest SHA-256
+  `095128609373facca71d4ffa50a43eb33f50a8bb444879c2ee55585bfe27a198`.
+
 The Airflow implementation has passed its synthetic three-date real-CLI
 acceptance, but its DAGs are inactive in this environment. The owner/lease
 contract prevents it from competing with Windows Task Scheduler.
 
-Operational cautions remain: the v2 evidence ends on 2026-06-27; the 2026-07
-governance dry-run could not find a report dated 2026-06-30; the monthly task
-required an equivalent Windows Task Scheduler COM registration fallback
-because the script's CIM path was incompatible on this machine; and MLflow
-must be reachable during verification and scheduled runs. All of this local
-state is ignored by Git and is absent from a fresh clone.
+Operational cautions remain: the verified source and monitoring horizon is now
+2026-06-28, but source lateness remains critical; the earlier 2026-07 governance
+dry-run could not find a report dated 2026-06-30; the scheduler tasks were
+absent when the lease was recovered; and MLflow must be reachable during
+verification and scheduled runs. All of this local state is ignored by Git and
+is absent from a fresh clone.
 
 The standard CI checks are:
 
@@ -231,8 +262,10 @@ This repository demonstrates:
   recommendation-only; no lifecycle transition is automatic.
 - The v2 reference is independent of v1 scalers/models and is active only in
   the local governed historical batch; it is not connected to API serving.
-- The Phase 8 live provider refresh path requires approved credentials/network
-  access and has only synthetic, offline test coverage in this repository.
+- The Phase 8 live-provider path requires approved credentials and network
+  access. One assisted local cycle has exercised it, but the result is ignored
+  machine-local evidence, retained a critical source-lateness alert, and is not
+  a production or unattended-scheduler claim.
 - A fresh clone may need local generated artifacts before the full prediction
   workflow can be demonstrated end to end.
 
