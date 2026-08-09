@@ -14,6 +14,7 @@ htmlcov/
 .ipynb_checkpoints/
 mlruns/
 var/mlflow/
+var/local_services/
 dist/
 artifacts/releases/
 outputs/registry/
