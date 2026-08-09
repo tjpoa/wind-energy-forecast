@@ -397,10 +397,10 @@ def run_historical_monitoring(
         _release_lock(lock, run_id)
 
 
-def load_prediction_evidence(
+def load_prediction_core_evidence(
     store_root: str | Path, prediction_id: str
 ) -> dict[str, Any]:
-    """Resolve and verify the complete immutable evidence chain for a prediction."""
+    """Resolve and verify immutable prediction, input, and model evidence."""
     root = Path(store_root)
     prediction = _load_prediction(root, prediction_id)
     snapshot = _load_typed_record(
@@ -421,6 +421,20 @@ def load_prediction_evidence(
         "dataset_sha256"
     ):
         raise MonitoringError("Prediction and model dataset identities differ.")
+    return {
+        "prediction": prediction,
+        "model_input_snapshot": snapshot,
+        "model_snapshot": model,
+    }
+
+
+def load_prediction_evidence(
+    store_root: str | Path, prediction_id: str
+) -> dict[str, Any]:
+    """Resolve and verify the complete immutable evidence chain for a prediction."""
+    root = Path(store_root)
+    core = load_prediction_core_evidence(root, prediction_id)
+    prediction = core["prediction"]
     metrics: list[dict[str, Any]] = []
     actuals: dict[str, dict[str, Any]] = {}
     for path in sorted((root / "metrics").glob("*.json")):
@@ -452,9 +466,7 @@ def load_prediction_evidence(
         ):
             raise MonitoringError("Stored metric values do not match their evidence.")
     return {
-        "prediction": prediction,
-        "model_input_snapshot": snapshot,
-        "model_snapshot": model,
+        **core,
         "actual_revisions": list(actuals.values()),
         "metric_revisions": metrics,
     }
@@ -1831,6 +1843,7 @@ __all__ = [
     "MonitoringError",
     "MonitoringPlan",
     "MonitoringResult",
+    "load_prediction_core_evidence",
     "load_prediction_evidence",
     "load_model_era",
     "list_model_eras",

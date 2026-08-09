@@ -14,7 +14,7 @@ from wind_forecast.config import (
 )
 from wind_forecast.monitoring import (
     MonitoringError,
-    load_prediction_evidence,
+    load_prediction_core_evidence,
 )
 from wind_forecast.monitoring_reporting import (
     MonitoringReportingError,
@@ -289,10 +289,15 @@ class MonitoringProjectionService:
             ),
             "status": "selected_not_promoted",
         }
-        prediction_ids = list((report.get("lineage") or {}).get("prediction_ids") or [])
+        prediction_ids = dict.fromkeys(
+            str(prediction_id)
+            for prediction_id in (
+                (report.get("lineage") or {}).get("prediction_ids") or []
+            )
+        )
         snapshots: dict[str, Mapping[str, Any]] = {}
         for prediction_id in prediction_ids:
-            evidence = load_prediction_evidence(self.store_root, str(prediction_id))
+            evidence = load_prediction_core_evidence(self.store_root, prediction_id)
             snapshot = evidence["model_snapshot"]
             snapshots[str(snapshot.get("model_snapshot_id") or "")] = snapshot
         association = resolve_report_model_era(self.store_root, report)

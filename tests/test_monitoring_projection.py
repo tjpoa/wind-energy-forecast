@@ -245,7 +245,7 @@ def test_latest_projects_freshness_model_metrics_drift_and_alerts(
     monkeypatch.setattr(projection, "load_monitoring_calibration", lambda _path: _calibration())
     monkeypatch.setattr(
         projection,
-        "load_prediction_evidence",
+        "load_prediction_core_evidence",
         lambda _root, _prediction_id: {
             "model_snapshot": {
                 "model_snapshot_id": "snapshot-id",
@@ -290,6 +290,156 @@ def test_latest_projects_freshness_model_metrics_drift_and_alerts(
         now_utc=datetime(2026, 4, 7, 11, 0, tzinfo=timezone.utc)
     )
 
+    assert before_objective == {
+        "state": "available",
+        "mode": MONITORING_MODE,
+        "served_at_utc": "2026-04-05T10:59:00Z",
+        "message": None,
+        "latest_attempt": {
+            "run_id": "report-run",
+            "attempted_at_utc": "2026-04-07T11:00:00Z",
+            "through_date": "2026-03-31",
+            "source_pipeline_run_id": "source-run",
+            "source_pipeline_status": "succeeded",
+            "status": "succeeded",
+            "report_id": "report-id",
+            "active_alert_count": 1,
+            "failure": None,
+        },
+        "report": {
+            "report_id": "report-id",
+            "reporting_run_id": "report-run",
+            "created_at_utc": "2026-04-07T11:00:00Z",
+            "as_of_date": "2026-03-31",
+            "source_pipeline": {"run_id": "source-run", "status": "succeeded"},
+            "freshness": {
+                "status": "within_objective",
+                "watermark_date": "2026-03-31",
+                "objective_at": "2026-04-05T12:00:00+01:00",
+                "late_at": "2026-04-07T12:00:00+01:00",
+                "timezone": "Europe/Lisbon",
+                "objective_days": 5,
+                "late_days": 7,
+            },
+            "model": {
+                "snapshot_id": "snapshot-id",
+                "checksum": "a" * 64,
+                "model_type": "RandomForestRegressor",
+                "dataset_version": "v2",
+                "dataset_checksum": "b" * 64,
+                "transformation_version": "transform-v2",
+                "status": "selected_not_promoted",
+            },
+            "model_era": {"association_kind": "legacy_unassociated"},
+            "windows": {
+                "30": {
+                    "window_days": 30,
+                    "status": "available",
+                    "sample_count": 30,
+                    "minimum_samples": None,
+                    "calendar_start": "2026-03-02",
+                    "calendar_end": "2026-03-31",
+                    "coverage_ratio": 1.0,
+                    "coverage_severity": "ok",
+                    "performance": [
+                        {
+                            "metric": "MAE",
+                            "label": "MAE",
+                            "value": 12.0,
+                            "status": "available",
+                            "severity": "warning",
+                            "warning": 10.0,
+                            "critical": 20.0,
+                            "direction": "upper",
+                        },
+                        {
+                            "metric": "RMSE",
+                            "label": "RMSE",
+                            "value": 15.0,
+                            "status": "available",
+                            "severity": "ok",
+                            "warning": 10.0,
+                            "critical": 20.0,
+                            "direction": "upper",
+                        },
+                        {
+                            "metric": "bias",
+                            "label": "Bias",
+                            "value": -2.0,
+                            "status": "available",
+                            "severity": "ok",
+                            "warning": 10.0,
+                            "critical": 20.0,
+                            "direction": "upper",
+                        },
+                        {
+                            "metric": "MAPE_percent",
+                            "label": "MAPE",
+                            "value": 4.0,
+                            "status": "available",
+                            "severity": "ok",
+                            "warning": 10.0,
+                            "critical": 20.0,
+                            "direction": "upper",
+                        },
+                        {
+                            "metric": "R2",
+                            "label": "R²",
+                            "value": None,
+                            "status": "insufficient_data",
+                            "severity": "not_available",
+                            "warning": 0.5,
+                            "critical": 0.2,
+                            "direction": "lower",
+                        },
+                    ],
+                    "top_drift": [
+                        {
+                            "feature": "z",
+                            "comparator": "global",
+                            "detector": "normalized_wasserstein",
+                            "value": 0.5,
+                            "severity": "critical",
+                            "threshold": 0.2,
+                            "threshold_ratio": 2.5,
+                        },
+                        {
+                            "feature": "wind_direction_current",
+                            "comparator": "global",
+                            "detector": "normalized_wasserstein",
+                            "value": 0.2,
+                            "severity": "critical",
+                            "threshold": 0.2,
+                            "threshold_ratio": 1.0,
+                        },
+                    ],
+                },
+                "90": {
+                    "window_days": 90,
+                    "status": "insufficient_data",
+                    "sample_count": 30,
+                    "minimum_samples": 45,
+                    "calendar_start": None,
+                    "calendar_end": None,
+                    "coverage_ratio": None,
+                    "coverage_severity": None,
+                    "performance": [],
+                    "top_drift": [],
+                },
+            },
+            "active_alerts": [
+                {
+                    "alert_event_id": "alert-id",
+                    "rule_id": "feature_drift:z:30:global",
+                    "through_date": "2026-03-31",
+                    "event_type": "opened",
+                    "severity": "critical",
+                    "previous_alert_event_id": None,
+                }
+            ],
+            "target_scale": "sum_of_15_minute_MW_observations",
+        },
+    }
     report = before_objective["report"]
     assert report["freshness"]["status"] == "within_objective"
     assert at_objective["report"]["freshness"]["status"] == "behind_objective"
@@ -363,6 +513,51 @@ def test_reporting_runs_delegate_to_verified_public_loader(
     assert MonitoringProjectionService(tmp_path)._runs() == expected
 
 
+def test_model_projection_loads_unique_normalized_core_evidence_in_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = MonitoringProjectionService(tmp_path)
+    report = _report()
+    report["lineage"]["prediction_ids"] = [1, "1", "prediction-b", 1]
+    calls: list[str] = []
+    snapshot = {
+        "model_snapshot_id": "snapshot-id",
+        "model": {
+            "model_sha256": "a" * 64,
+            "model_type": "RandomForestRegressor",
+            "reference_status": "selected_not_promoted",
+        },
+        "dataset": {
+            "dataset_version": "v2",
+            "dataset_sha256": "b" * 64,
+        },
+        "transformation": {"version": "transform-v2"},
+    }
+
+    def load_core(_root: Path, prediction_id: str) -> dict:
+        calls.append(prediction_id)
+        return {"model_snapshot": snapshot}
+
+    monkeypatch.setattr(projection, "load_prediction_core_evidence", load_core)
+    monkeypatch.setattr(
+        projection,
+        "resolve_report_model_era",
+        lambda _root, _report: {"association_kind": "active_deployment"},
+    )
+
+    assert "load_prediction_evidence" not in projection.__dict__
+    assert service._model(report, _calibration()) == {
+        "snapshot_id": "snapshot-id",
+        "checksum": "a" * 64,
+        "model_type": "RandomForestRegressor",
+        "dataset_version": "v2",
+        "dataset_checksum": "b" * 64,
+        "transformation_version": "transform-v2",
+        "status": "champion",
+    }
+    assert calls == ["1", "prediction-b"]
+
+
 def test_freshness_is_unknown_without_verified_source_watermark() -> None:
     report = _report()
     report["quality"] = {"status": "not_available", "issues": []}
@@ -434,7 +629,7 @@ def test_report_rejects_mismatched_model_lineage(
     snapshot[section][field] = value
     monkeypatch.setattr(
         projection,
-        "load_prediction_evidence",
+        "load_prediction_core_evidence",
         lambda _root, _prediction_id: {"model_snapshot": snapshot},
     )
 
