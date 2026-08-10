@@ -434,6 +434,7 @@ def run_v2_update(
             refresh=refresh,
         )
         state["sources"] = candidate_sources
+        affected_dates = _integration_ready_dates(candidate_sources, affected_dates)
         quality_state = state
         _emit_event(
             events,
@@ -1296,6 +1297,22 @@ def _build_integrated_partitions(
             },
         }
     return updates
+
+
+def _integration_ready_dates(
+    sources: Mapping[str, Any],
+    affected_dates: set[str],
+) -> set[str]:
+    ren = dict(sources.get("ren") or {})
+    era = dict(sources.get("era5_land") or {})
+    ready: set[str] = set()
+    for day in affected_dates:
+        if str((ren.get(day) or {}).get("status")) != "complete":
+            continue
+        parsed_day = parse_local_date(day)
+        if not _era_gaps(parsed_day, parsed_day, era):
+            ready.add(day)
+    return ready
 
 
 def _build_feature_partitions(
