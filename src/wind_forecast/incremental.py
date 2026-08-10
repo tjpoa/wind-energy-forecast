@@ -19,6 +19,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import time as monotonic_time
 from typing import Any, Callable, Iterable, Mapping, Sequence
 from uuid import uuid4
@@ -2330,7 +2331,7 @@ def _emit_event(
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(event, ensure_ascii=True, sort_keys=True) + "\n")
-    print(json.dumps(event, ensure_ascii=True, sort_keys=True))
+    print(json.dumps(event, ensure_ascii=True, sort_keys=True), file=sys.stderr)
 
 
 def _elapsed_ms(started: float) -> float:

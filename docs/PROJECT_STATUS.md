@@ -21,18 +21,17 @@ opens on a read-only retrospective monitoring projection and retains the typed
 historical-performance view, completing a local frontend-to-API-to-verified
 artifact demonstration.
 
-The accepted v2 historical hindcast is also operational in one governed local
-environment. Its checksum-pinned Phase 8/9 evidence, generation-one deployment,
-MLflow aliases, and Windows Task Scheduler ownership were verified on
-2026-07-30. An assisted real-provider cycle on 2026-08-08 advanced the verified
-source and monitoring evidence through 2026-06-28, raised the expected
-fail-closed source-lateness alert, and converged to `no_op` on 2026-08-09. It
-does not prove a successful scheduled batch, change the v1 API, or turn the
-hindcast into a live or day-ahead forecast. On 2026-08-10, Task Scheduler did
-prove persistent loopback startup of MLflow and the read-only operational API,
-including live deployment/model answers. A real scheduled batch start then
-failed closed on incomplete ERA5-Land coverage before source-data publication;
-the daily task is disabled pending evidence-based source recovery.
+The accepted v2 historical hindcast is operational in one governed local
+environment. On 2026-08-10, PR #50 corrected the observed REN-ahead/ERA5-pending
+integration defect, a provider-backed update published generation 3, and a
+Windows Task Scheduler cycle completed with alerts and `LastTaskResult=0`.
+MLflow and the read-only operational API were also healthy on exclusive
+loopback listeners and answered the three typed deployment/model queries.
+The current decision is conditional GO only for local delayed historical
+hindcast, orchestration, and read-only API use. The active source-lateness
+alert, a one-day miss against the authoritative D+5 objective, and six
+historical REN gaps remain accepted limitations; this is explicit NO-GO for
+real-time, D+1, or production claims.
 
 The project should not be presented as a deployed production system. Cloud
 deployment, production operation, real-time data, enterprise scalability,
@@ -54,7 +53,7 @@ each checkpoint was written. This file reflects the latest repository state.
 | V2 data-source work | Substantial local progress | REN and ERA5-Land source modules, Phase 2 acceptance docs | V2 does not replace v1; the accepted model is valid only for the documented historical-hindcast contract and has no scaler. |
 | V2 incremental updates | Implemented and synthetically validated | `wind_forecast.incremental`, batch-quality sidecars, Phase 8 docs and tests | Live REN/CDS refresh was not exercised by the repository test suite. |
 | Historical monitoring | Immutable quality, prediction evidence, drift, performance, reports, and local alerts implemented | `wind_forecast.monitoring`, `wind_forecast.monitoring_reporting`, Phase 9 CLIs/docs/tests | It is delayed historical hindcast monitoring, not live forecasting or external notification. |
-| Batch orchestration | Local CLI, Windows Task Scheduler, and Airflow 3.3.0 local stack implemented | `wind_forecast.orchestration`, `wind_forecast.airflow_orchestration`, `airflow/`, Phase 10 docs/tests | The 2026-08-10 scheduled batch invoked providers but failed closed on incomplete ERA5-Land coverage; it is disabled pending recovery. Airflow remains inactive, and the shared owner pointer and lease prevent concurrent schedulers. |
+| Batch orchestration | Local CLI, Windows Task Scheduler, and Airflow 3.3.0 local stack implemented | `wind_forecast.orchestration`, `wind_forecast.airflow_orchestration`, `airflow/`, Phase 10 docs/tests | A 2026-08-10 Scheduler cycle completed with alerts and exit code 0 after recovery. Acceptance is local and conditional; Airflow remains inactive, and the shared owner pointer and lease prevent concurrent schedulers. |
 | Controlled retraining | Contract, eligibility, backtesting, candidate registration, bootstrap, model-era monitoring, manual lifecycle, recommendation-only monthly scheduling, and final synthetic lifecycle acceptance implemented | Controlled-retraining modules, manual/scheduled CLIs, Airflow DAGs, `tests/test_controlled_retraining_acceptance.py`, and `docs/CONTROLLED_RETRAINING.md` | The one-time local bootstrap completed from the accepted Phase 9 ledger. Training and every later lifecycle transition still require explicit operator action and exact evidence. The final lifecycle acceptance remains synthetic and uses an in-memory Registry boundary. |
 | Automated tests | Implemented | `tests/`, pytest and pytest-cov configuration | Coverage has a conservative baseline gate; source-ingestion and v2 modules still need deeper tests. |
 | Code quality | Implemented baseline | Ruff configuration in `pyproject.toml` | Ruff rule set is intentionally minimal. |
@@ -84,7 +83,7 @@ each checkpoint was written. This file reflects the latest repository state.
 | 7 | GitHub Actions continuous integration | Implemented matrix backend CI plus frontend tests, linting, build, container build, Compose validation, and backend health checks. |
 | 8 | Idempotency, safe reruns, and observability | Implemented for the accepted v2 dataset with dry-run planning, immutable revisions, atomic publication, structured run evidence, and failure recovery tests. |
 | 9 | Data drift and model-performance monitoring | Completed locally for the accepted historical-batch contract: quality evidence, calibrated 30/90-day drift, as-issued performance, immutable JSON/Markdown reports, and persistent local alerts. |
-| 10 | Batch orchestration with Apache Airflow | Completed locally: Airflow 3.3.0 build/import checks and a serial real-CLI three-date synthetic backfill passed. Task Scheduler service persistence and batch invocation were proved on 2026-08-10, but that real batch failed fail-closed before source-data publication; no successful unattended batch or production deployment is claimed. |
+| 10 | Batch orchestration with Apache Airflow | Completed locally: Airflow 3.3.0 build/import checks and a serial real-CLI three-date synthetic backfill passed. On 2026-08-10, Task Scheduler also completed an end-to-end local delayed-hindcast cycle with alerts and exit code 0. This is conditional local acceptance, not production deployment. |
 | 11 | PySpark data-processing implementation | Not implemented. |
 | 12 | Azure and Databricks deployment design | Not implemented. |
 
@@ -173,42 +172,56 @@ contract prevents it from competing with Windows Task Scheduler.
 
 - `WindForecastMlflow` and `WindForecastOperationalApi` were registered under
   the interactive operator, `RunLevel Limited`, and loopback-only bindings.
-  After a controlled stop, closed-port check, and `Start-ScheduledTask`
-  restart, both were `Running`; health and monitoring endpoints returned HTTP
-  200.
+  Final verification found both tasks `Running`, one listener each on
+  `127.0.0.1:5000` and `127.0.0.1:8000`, and HTTP 200 health responses.
 - `operational_summary`, `active_deployment`, and `active_model_metadata`
-  returned HTTP 200 with status `answered`. Deployment ID
-  `87c25b9b9cf23cb85799ce23f7306c40399fbb4c14dec5a5ac9a2136614d4159`
-  remained verified against model `wind-forecast-v2-hindcast` version 1,
-  `champion=1`, `stable=1`, and no `candidate`.
-- `WindForecastHistoricalBatch` was started exactly once. Coordinator run
-  `20260810T094943124488Z-3e7965d1` reached real provider retrieval, but failed
-  closed at `dataset_update` because the integrated 2026-08-05 ERA5-Land
-  partition lacked complete station-day/hour coverage. Its manifest SHA-256 is
-  `d296b60868eef4ffe2af16a1d542fe28712f2bba9db061b05286a5d7e7976427`.
-  It returned `LastTaskResult=1`. The coordinator current pointer advanced to
-  this immutable failed manifest; the source dataset remained at generation 2,
-  and deployment, monitoring, and Registry-alias pointers remained unchanged.
-  It released its lease and lock, left no child process, was disabled to
-  prevent retries, and was not rerun.
+  returned HTTP 200 with typed status `answered`. Deployment generation 1,
+  model `wind-forecast-v2-hindcast` version 1, `champion=1`, `stable=1`, and no
+  `candidate` remained unchanged.
+- The first batch evidence, coordinator
+  `20260810T094943124488Z-3e7965d1`, is preserved as a fail-closed attempt. Its
+  cause was asymmetric source lag: REN had advanced while ERA5-Land for
+  2026-08-05 was pending. PR #50 now limits downstream integration to dates
+  complete in both sources.
+- Provider-backed source run `20260810T160650Z-4b94be9391ff` succeeded,
+  published generation 3, and validated 141 rows. REN is validated through
+  2026-08-09; ERA5-Land and the common watermark are 2026-08-04. Its manifest
+  SHA-256 prefix is `d9c3d39`. The enclosing batch then exposed a separate
+  stdout-contract defect: event JSONL preceded the child's final JSON. The
+  working-tree recovery fix retains file JSONL and routes events to stderr.
+- The Scheduler cycle started at 2026-08-10 17:24:37 `Europe/Lisbon`.
+  Coordinator `20260810T162437840444Z-e84c8f23` completed with alerts,
+  manifest SHA-256 prefix `cba08ab`, and `LastTaskResult=0`. The enabled daily
+  task returned to `Ready`, next start 2026-08-11 12:00. Source child
+  `20260810T162529Z-62bb6c3c3135` was `no_op` (manifest prefix `0bd1`);
+  monitoring `20260810T162550Z-25ba7c6af311` succeeded with 36 predictions,
+  37 actuals, and 37 metrics (result prefix `11655`); reporting
+  `20260810T164401115962Z-008883b7813d` succeeded with report ID prefix
+  `6f8ca` and result prefix `34a3`. The active `quality:source_late` alert was
+  preserved.
 - `WindForecastMonthlyGovernance` remains enabled and `Ready` but was not
-  manually triggered during this validation: the store ends on 2026-06-28 and
-  lacks the required month-close report. Its pre-existing 2026-08-08 run has
-  `LastTaskResult=1`; no successful governance run is claimed. Airflow remains
-  inactive.
+  manually triggered. Its pre-existing `LastTaskResult=1` is not successful
+  evidence and its impact must be re-evaluated separately against the advanced
+  horizon. Airflow remains inactive.
 
-Consequently, the service runtime and read-only deployment/alias questions are
-demonstrated in the current interactive runtime, while a successful scheduled
-batch and the requested four-enabled final state are not. MLflow and the API
-remain enabled and `Running`; monthly governance is enabled and `Ready`; the
-daily batch is disabled and `Ready` pending source recovery.
+Task Scheduler's Operational event channel was disabled, so the successful
+cycle is correlated through `LastRunTime`, scheduler lease, and immutable
+manifests. `Stop-ScheduledTask` did not terminate the native MLflow/API child
+processes; exact PID-tree verification and termination were required before a
+clean restart. The service evidence must not be represented as a clean
+scheduler stop.
 
-Operational cautions remain: the verified source and monitoring horizon is now
-2026-06-28, but source lateness remains critical; the earlier 2026-07 governance
-dry-run could not find a report dated 2026-06-30; the scheduler tasks were
-absent when the lease was recovered; and MLflow must be reachable during
-verification and scheduled runs. All of this local state is ignored by Git and
-is absent from a fresh clone.
+The formal decision is **CONDITIONAL GO** for the local delayed historical
+hindcast, Windows orchestration, and read-only API only, and **NO-GO** for
+real-time, D+1, or production. Phase 9 D+5 is the authoritative SLO and required
+data through 2026-08-05; the common watermark of 2026-08-04 misses it by one
+day. Phase 8 D-6 remains only the conservative recovery-time gate; changing it
+requires a separate policy/code decision, with review or expiry at 2026-08-12
+12:30 `Europe/Lisbon`. Six historical REN dates remain unavailable:
+2014-05-03, 2016-02-03, 2016-02-04, 2021-10-03, 2023-08-30, and 2025-08-02.
+The quality verdict remains `FAIL` as an accepted limitation only; gaps and
+alerts are not suppressed. All local evidence is ignored by Git and absent
+from a fresh clone.
 
 The standard CI checks are:
 
@@ -301,14 +314,15 @@ This repository demonstrates:
 - The v2 reference is independent of v1 scalers/models and is active only in
   the local governed historical batch; it is not connected to API serving.
 - The Phase 8 live-provider path requires approved credentials and network
-  access. One assisted local cycle has exercised it, but the result is ignored
-  machine-local evidence, retained a critical source-lateness alert, and is not
-  a production or unattended-scheduler claim.
+  access. Local provider-backed and Task Scheduler cycles have exercised it,
+  but their ignored machine-local evidence retains a critical source-lateness
+  alert and supports only the conditional delayed-hindcast decision.
 - A fresh clone may need local generated artifacts before the full prediction
   workflow can be demonstrated end to end.
-- The 2026-08-10 real Task Scheduler batch failed closed on incomplete
-  ERA5-Land coverage for 2026-08-05. The daily task is intentionally disabled,
-  so successful scheduled-batch end-to-end acceptance remains open.
+- The 2026-08-10 Scheduler recovery reached exit code 0, but the common
+  watermark was one day behind the authoritative D+5 objective and six
+  historical REN gaps remain. Successful local execution is not evidence of
+  real-time, D+1, or production readiness.
 
 ## Recommended Next Steps
 
