@@ -16,6 +16,10 @@ from .tracking import DEFAULT_TRACKING_URI
 PERFORMANCE_ARTIFACT_DIR_ENV = "WIND_FORECAST_PERFORMANCE_ARTIFACT_DIR"
 MONITORING_STORE_ROOT_ENV = "WIND_FORECAST_MONITORING_STORE_ROOT"
 DEPLOYMENT_ROOT_ENV = "WIND_FORECAST_DEPLOYMENT_ROOT"
+OPERATIONAL_MODEL_BUNDLE_ENV = "WIND_FORECAST_OPERATIONAL_MODEL_BUNDLE"
+OPERATIONAL_CALIBRATION_DIR_ENV = (
+    "WIND_FORECAST_OPERATIONAL_CALIBRATION_DIR"
+)
 OPERATIONAL_QUERY_TIMEOUT_ENV = (
     "WIND_FORECAST_OPERATIONAL_QUERY_TIMEOUT_SECONDS"
 )
@@ -67,6 +71,8 @@ class OperationalQueryConfig:
 
     deployment_root: Path
     monitoring_store_root: Path
+    model_bundle: Path
+    calibration_dir: Path
     timeout_seconds: float
     registry_uri: str | None
     projection_mode: str
@@ -168,6 +174,8 @@ def load_operational_query_config() -> OperationalQueryConfig:
         default="data/processed/v2/deployment",
     )
     monitoring_root = load_monitoring_store_config().store_root
+    model_bundle = _required_project_path(OPERATIONAL_MODEL_BUNDLE_ENV)
+    calibration_dir = _required_project_path(OPERATIONAL_CALIBRATION_DIR_ENV)
     timeout_raw = os.getenv(
         OPERATIONAL_QUERY_TIMEOUT_ENV,
         str(DEFAULT_OPERATIONAL_QUERY_TIMEOUT_SECONDS),
@@ -221,6 +229,8 @@ def load_operational_query_config() -> OperationalQueryConfig:
     return OperationalQueryConfig(
         deployment_root=deployment_root,
         monitoring_store_root=monitoring_root,
+        model_bundle=model_bundle,
+        calibration_dir=calibration_dir,
         timeout_seconds=timeout_seconds,
         registry_uri=registry_uri,
         projection_mode=projection_mode,
@@ -315,6 +325,16 @@ def _resolved_project_path(raw_path: str | None, *, default: str) -> Path:
         if raw_path is not None and raw_path.strip()
         else Path(default)
     )
+    if not configured_path.is_absolute():
+        configured_path = project_root() / configured_path
+    return configured_path.resolve()
+
+
+def _required_project_path(variable: str) -> Path:
+    raw_path = os.getenv(variable)
+    if raw_path is None or not raw_path.strip():
+        raise ValueError(f"{variable} must be configured.")
+    configured_path = Path(raw_path.strip())
     if not configured_path.is_absolute():
         configured_path = project_root() / configured_path
     return configured_path.resolve()

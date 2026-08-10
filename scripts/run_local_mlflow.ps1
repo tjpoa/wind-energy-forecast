@@ -33,7 +33,12 @@ $logFile = Join-Path $logDirectory "mlflow-$stamp-$PID.log"
 
 Push-Location $repository
 $exitCode = 1
+$nativeErrorActionPreference = $ErrorActionPreference
 try {
+    # Windows PowerShell 5.1 promotes native stderr to an ErrorRecord. Keep
+    # setup fail-closed, but do not terminate a healthy long-running service
+    # merely because it writes normal diagnostics to stderr.
+    $ErrorActionPreference = "Continue"
     & $python -m mlflow server `
         --backend-store-uri "sqlite:///var/mlflow/mlflow.db" `
         --artifacts-destination "./var/mlflow/artifacts" `
@@ -42,6 +47,7 @@ try {
     $exitCode = $LASTEXITCODE
 }
 finally {
+    $ErrorActionPreference = $nativeErrorActionPreference
     Pop-Location
 }
 exit $exitCode

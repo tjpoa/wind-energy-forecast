@@ -81,6 +81,9 @@ Review both exact task definitions before registration:
   -RepositoryRoot $PWD `
   -DeploymentRoot .\data\processed\v2\deployment `
   -MonitoringStoreRoot .\data\processed\v2\monitoring `
+  -ModelBundle .\outputs\training\v2_reference_mlflow `
+  -CalibrationDirectory `
+    .\data\processed\v2\monitoring\reporting\calibrations\<CALIBRATION_ID> `
   -WhatIf
 ```
 
@@ -117,7 +120,14 @@ so Uvicorn inherits the reviewed environment.
 An `empty` operational answer is valid only when the configured, verified store
 has no matching accepted evidence. Compare the API task's resolved
 `MonitoringStoreRoot` and `DeploymentRoot` with the in-process configuration,
-then use the supported Phase 9 loader or monitoring endpoint to verify the same
+and confirm that its resolved model bundle and calibration directory match the
+active deployment. These two selections are mandatory and are passed only to
+the API process as `WIND_FORECAST_OPERATIONAL_MODEL_BUNDLE` and
+`WIND_FORECAST_OPERATIONAL_CALIBRATION_DIR`; absence or a blank value is a
+lazy operational-query service configuration failure, surfaced as HTTP 503
+when that service is first required. The API process and `/health` endpoint can
+already be running because configuration is loaded lazily. Then use the
+supported Phase 9 loader or monitoring endpoint to verify the same
 current pointer and report. Also compare the deployment loader with live MLflow
 aliases. Do not infer a cause from an older `empty`: if the original process
 configuration cannot be reproduced, record only that the current store has
@@ -167,3 +177,22 @@ Recovery is complete only when the coordinator returns `succeeded`,
 `completed_with_alerts`, or a verified no-op child update; all current pointers
 verify; no lock remains; and Task Scheduler records exit code `0` unless
 alert-failure behavior was explicitly requested.
+
+### Recorded fail-closed example: 2026-08-10
+
+A real `WindForecastHistoricalBatch` start reached provider retrieval and base
+validation, then rejected the integrated 2026-08-05 ERA5-Land partition for
+incomplete station-day/hour coverage. It ended with coordinator status
+`failed`, stage `dataset_update`, and `LastTaskResult=1`. No current pointer
+for the source dataset, deployment, monitoring, or Registry aliases changed.
+The coordinator current pointer did advance to immutable failed run
+`20260810T094943124488Z-3e7965d1`, recorded with manifest checksum
+`d296b60868eef4ffe2af16a1d542fe28712f2bba9db061b05286a5d7e7976427`.
+The scheduler lease, batch lock, and child processes were absent after exit.
+The task was disabled to prevent its configured retry and was not rerun.
+Recovery is not complete, and this event must not be represented as a
+successful scheduler batch. Preserve its immutable manifests and reacquire or
+correct the source in a new revision before an explicitly authorized identical
+retry. Monthly governance was not manually triggered during this validation;
+its pre-existing 2026-08-08 run remains `LastTaskResult=1` and is not evidence
+of successful governance.
