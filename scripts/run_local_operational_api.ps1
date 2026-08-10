@@ -8,6 +8,10 @@ param(
     [string]$DeploymentRoot,
     [Parameter(Mandatory = $true)]
     [string]$MonitoringStoreRoot,
+    [Parameter(Mandatory = $true)]
+    [string]$ModelBundle,
+    [Parameter(Mandatory = $true)]
+    [string]$CalibrationDirectory,
     [ValidateRange(1, 600)]
     [int]$MlflowHealthTimeoutSeconds = 120
 )
@@ -26,6 +30,8 @@ function Resolve-RepositoryPath([string]$Value) {
 $python = Resolve-RepositoryPath $PythonExecutable
 $deployment = Resolve-RepositoryPath $DeploymentRoot
 $monitoring = Resolve-RepositoryPath $MonitoringStoreRoot
+$model = Resolve-RepositoryPath $ModelBundle
+$calibration = Resolve-RepositoryPath $CalibrationDirectory
 $apiModule = Join-Path $repository "src\wind_forecast\api.py"
 if (-not (Test-Path -LiteralPath $apiModule -PathType Leaf)) {
     throw "Operational API module was not found: $apiModule"
@@ -74,6 +80,8 @@ if (-not $mlflowReady) {
 # These assignments affect only this runner and the Uvicorn child process.
 $env:WIND_FORECAST_DEPLOYMENT_ROOT = $deployment
 $env:WIND_FORECAST_MONITORING_STORE_ROOT = $monitoring
+$env:WIND_FORECAST_OPERATIONAL_MODEL_BUNDLE = $model
+$env:WIND_FORECAST_OPERATIONAL_CALIBRATION_DIR = $calibration
 $env:MLFLOW_TRACKING_URI = "http://127.0.0.1:5000"
 $env:WIND_FORECAST_OPERATIONAL_PROJECTION_MODE = "disabled"
 
@@ -84,13 +92,19 @@ $logFile = Join-Path $logDirectory "operational-api-$stamp-$PID.log"
 
 Push-Location $repository
 $exitCode = 1
+$nativeErrorActionPreference = $ErrorActionPreference
 try {
+    # Windows PowerShell 5.1 promotes native stderr to an ErrorRecord. Keep
+    # setup fail-closed, but do not terminate a healthy long-running service
+    # merely because it writes normal diagnostics to stderr.
+    $ErrorActionPreference = "Continue"
     & $python -m uvicorn wind_forecast.api:app `
         --host "127.0.0.1" `
         --port "8000" *>> $logFile
     $exitCode = $LASTEXITCODE
 }
 finally {
+    $ErrorActionPreference = $nativeErrorActionPreference
     Pop-Location
 }
 exit $exitCode

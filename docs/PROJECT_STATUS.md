@@ -1,6 +1,6 @@
 # Project Status
 
-Last reviewed: 2026-08-09.
+Last reviewed: 2026-08-10.
 
 This document summarizes the current state of the wind-energy forecasting
 repository for portfolio and hiring-review purposes. It is a factual status
@@ -27,8 +27,12 @@ MLflow aliases, and Windows Task Scheduler ownership were verified on
 2026-07-30. An assisted real-provider cycle on 2026-08-08 advanced the verified
 source and monitoring evidence through 2026-06-28, raised the expected
 fail-closed source-lateness alert, and converged to `no_op` on 2026-08-09. It
-does not prove a successful Task Scheduler execution, change the v1 API, or
-turn the hindcast into a live or day-ahead forecast.
+does not prove a successful scheduled batch, change the v1 API, or turn the
+hindcast into a live or day-ahead forecast. On 2026-08-10, Task Scheduler did
+prove persistent loopback startup of MLflow and the read-only operational API,
+including live deployment/model answers. A real scheduled batch start then
+failed closed on incomplete ERA5-Land coverage before source-data publication;
+the daily task is disabled pending evidence-based source recovery.
 
 The project should not be presented as a deployed production system. Cloud
 deployment, production operation, real-time data, enterprise scalability,
@@ -50,14 +54,14 @@ each checkpoint was written. This file reflects the latest repository state.
 | V2 data-source work | Substantial local progress | REN and ERA5-Land source modules, Phase 2 acceptance docs | V2 does not replace v1; the accepted model is valid only for the documented historical-hindcast contract and has no scaler. |
 | V2 incremental updates | Implemented and synthetically validated | `wind_forecast.incremental`, batch-quality sidecars, Phase 8 docs and tests | Live REN/CDS refresh was not exercised by the repository test suite. |
 | Historical monitoring | Immutable quality, prediction evidence, drift, performance, reports, and local alerts implemented | `wind_forecast.monitoring`, `wind_forecast.monitoring_reporting`, Phase 9 CLIs/docs/tests | It is delayed historical hindcast monitoring, not live forecasting or external notification. |
-| Batch orchestration | Local CLI, Windows Task Scheduler, and Airflow 3.3.0 local stack implemented | `wind_forecast.orchestration`, `wind_forecast.airflow_orchestration`, `airflow/`, Phase 10 docs/tests | Airflow uses temporary synthetic fixtures for offline validation; a shared owner pointer and lease prevent both schedulers from executing concurrently. |
+| Batch orchestration | Local CLI, Windows Task Scheduler, and Airflow 3.3.0 local stack implemented | `wind_forecast.orchestration`, `wind_forecast.airflow_orchestration`, `airflow/`, Phase 10 docs/tests | The 2026-08-10 scheduled batch invoked providers but failed closed on incomplete ERA5-Land coverage; it is disabled pending recovery. Airflow remains inactive, and the shared owner pointer and lease prevent concurrent schedulers. |
 | Controlled retraining | Contract, eligibility, backtesting, candidate registration, bootstrap, model-era monitoring, manual lifecycle, recommendation-only monthly scheduling, and final synthetic lifecycle acceptance implemented | Controlled-retraining modules, manual/scheduled CLIs, Airflow DAGs, `tests/test_controlled_retraining_acceptance.py`, and `docs/CONTROLLED_RETRAINING.md` | The one-time local bootstrap completed from the accepted Phase 9 ledger. Training and every later lifecycle transition still require explicit operator action and exact evidence. The final lifecycle acceptance remains synthetic and uses an in-memory Registry boundary. |
 | Automated tests | Implemented | `tests/`, pytest and pytest-cov configuration | Coverage has a conservative baseline gate; source-ingestion and v2 modules still need deeper tests. |
 | Code quality | Implemented baseline | Ruff configuration in `pyproject.toml` | Ruff rule set is intentionally minimal. |
 | Prediction API | Implemented for local/container use | `wind_forecast.api`, `docs/PHASE_5.md`, API tests | The API is not deployed and depends on local mounted artifacts for full serving. |
 | Historical performance API | Implemented and consumed by the dashboard | `GET /api/v1/performance`, `wind_forecast.performance`, backend contract tests | It reads explicitly selected local evaluation artifacts; it is not live monitoring. |
 | Historical monitoring API | Implemented as a read-only verified projection | `GET /api/v1/monitoring/latest`, `/history`, `/runs/{run_id}`, `wind_forecast.monitoring_projection` | It projects immutable local batch evidence; it is not real time and performs no writes. |
-| Operational Read-only Copilot | Typed deterministic query layer, local-only read-only API, versioned offline evaluation harness, and optional default-disabled PostgreSQL query projection implemented; no Copilot evaluated | `POST /api/v1/operational-query`, `wind_forecast.operational_query`, `wind_forecast.operational_projection_reader`, `wind_forecast.operational_evaluation`, 88-case synthetic dataset, dedicated tests, `docs/OPERATIONAL_COPILOT.md`, `docs/OPERATIONAL_POSTGRES_PROJECTION.md` | Dedicated PostgreSQL schema/migrations, projector/verifier, benchmark `GO`, and `disabled|required` integration are implemented. Files/loaders remain authoritative and PostgreSQL is never cited. Copilot, MCP, RAG, observability, production authentication, remote exposure, and cloud design remain future work. |
+| Operational Read-only Copilot | Typed deterministic query layer, persistent local-only read-only API, versioned offline evaluation harness, and optional default-disabled PostgreSQL query projection implemented; no Copilot evaluated | `POST /api/v1/operational-query`, `wind_forecast.operational_query`, `wind_forecast.operational_projection_reader`, `wind_forecast.operational_evaluation`, 88-case synthetic dataset, dedicated tests, `docs/OPERATIONAL_COPILOT.md`, `docs/OPERATIONAL_POSTGRES_PROJECTION.md` | Task Scheduler restart and three deployment/model queries were verified locally on loopback. Files/loaders remain authoritative and PostgreSQL is never cited. Copilot, MCP, RAG, observability, production authentication, remote exposure, and cloud design remain future work. |
 | React dashboard | Implemented for local/container demonstration | `frontend/`, frontend tests, `docs/DEMO.md` | It shows retrospective monitoring and historical holdout performance; it does not call `/predict`. |
 | Training CLIs | V1 baseline preserved; first v2 reference accepted and bootstrapped locally | `wind_forecast.training`, `wind_forecast.v2_training`, dedicated scripts, and `docs/PHASE_4.md` | The v2 result is a historical hindcast used by the local batch, not by API serving; tuned ANN/Optuna remains notebook-based. |
 | Docker support | Implemented baseline with runtime hardening | Backend and frontend Dockerfiles, Compose stack, CI image builds, and backend smoke test | No image publishing, digest pinning, or production deployment workflow yet. |
@@ -80,7 +84,7 @@ each checkpoint was written. This file reflects the latest repository state.
 | 7 | GitHub Actions continuous integration | Implemented matrix backend CI plus frontend tests, linting, build, container build, Compose validation, and backend health checks. |
 | 8 | Idempotency, safe reruns, and observability | Implemented for the accepted v2 dataset with dry-run planning, immutable revisions, atomic publication, structured run evidence, and failure recovery tests. |
 | 9 | Data drift and model-performance monitoring | Completed locally for the accepted historical-batch contract: quality evidence, calibrated 30/90-day drift, as-issued performance, immutable JSON/Markdown reports, and persistent local alerts. |
-| 10 | Batch orchestration with Apache Airflow | Completed locally: Airflow 3.3.0 build/import checks and a serial real-CLI three-date synthetic backfill passed. A later assisted local cycle exercised real REN and ERA5-Land refresh plus monitoring, but did not prove Task Scheduler or Airflow execution. No production deployment is claimed. |
+| 10 | Batch orchestration with Apache Airflow | Completed locally: Airflow 3.3.0 build/import checks and a serial real-CLI three-date synthetic backfill passed. Task Scheduler service persistence and batch invocation were proved on 2026-08-10, but that real batch failed fail-closed before source-data publication; no successful unattended batch or production deployment is claimed. |
 | 11 | PySpark data-processing implementation | Not implemented. |
 | 12 | Azure and Databricks deployment design | Not implemented. |
 
@@ -164,6 +168,40 @@ assisted local cycle produced the following ignored, checksum-pinned evidence:
 The Airflow implementation has passed its synthetic three-date real-CLI
 acceptance, but its DAGs are inactive in this environment. The owner/lease
 contract prevents it from competing with Windows Task Scheduler.
+
+### 2026-08-10 local scheduler runtime
+
+- `WindForecastMlflow` and `WindForecastOperationalApi` were registered under
+  the interactive operator, `RunLevel Limited`, and loopback-only bindings.
+  After a controlled stop, closed-port check, and `Start-ScheduledTask`
+  restart, both were `Running`; health and monitoring endpoints returned HTTP
+  200.
+- `operational_summary`, `active_deployment`, and `active_model_metadata`
+  returned HTTP 200 with status `answered`. Deployment ID
+  `87c25b9b9cf23cb85799ce23f7306c40399fbb4c14dec5a5ac9a2136614d4159`
+  remained verified against model `wind-forecast-v2-hindcast` version 1,
+  `champion=1`, `stable=1`, and no `candidate`.
+- `WindForecastHistoricalBatch` was started exactly once. Coordinator run
+  `20260810T094943124488Z-3e7965d1` reached real provider retrieval, but failed
+  closed at `dataset_update` because the integrated 2026-08-05 ERA5-Land
+  partition lacked complete station-day/hour coverage. Its manifest SHA-256 is
+  `d296b60868eef4ffe2af16a1d542fe28712f2bba9db061b05286a5d7e7976427`.
+  It returned `LastTaskResult=1`. The coordinator current pointer advanced to
+  this immutable failed manifest; the source dataset remained at generation 2,
+  and deployment, monitoring, and Registry-alias pointers remained unchanged.
+  It released its lease and lock, left no child process, was disabled to
+  prevent retries, and was not rerun.
+- `WindForecastMonthlyGovernance` remains enabled and `Ready` but was not
+  manually triggered during this validation: the store ends on 2026-06-28 and
+  lacks the required month-close report. Its pre-existing 2026-08-08 run has
+  `LastTaskResult=1`; no successful governance run is claimed. Airflow remains
+  inactive.
+
+Consequently, the service runtime and read-only deployment/alias questions are
+demonstrated in the current interactive runtime, while a successful scheduled
+batch and the requested four-enabled final state are not. MLflow and the API
+remain enabled and `Running`; monthly governance is enabled and `Ready`; the
+daily batch is disabled and `Ready` pending source recovery.
 
 Operational cautions remain: the verified source and monitoring horizon is now
 2026-06-28, but source lateness remains critical; the earlier 2026-07 governance
@@ -268,6 +306,9 @@ This repository demonstrates:
   a production or unattended-scheduler claim.
 - A fresh clone may need local generated artifacts before the full prediction
   workflow can be demonstrated end to end.
+- The 2026-08-10 real Task Scheduler batch failed closed on incomplete
+  ERA5-Land coverage for 2026-08-05. The daily task is intentionally disabled,
+  so successful scheduled-batch end-to-end acceptance remains open.
 
 ## Recommended Next Steps
 

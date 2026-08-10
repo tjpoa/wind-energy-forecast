@@ -13,6 +13,16 @@ ERA5-Land refresh, monitoring, and reporting paths, followed by an idempotent
 `no_op` rerun on 2026-08-09. It followed an audited abandoned-lease recovery
 and is not evidence of a successful Windows Task Scheduler or Airflow run.
 
+On 2026-08-10 the four `WindForecast*` definitions were audited in the
+interactive operator session. MLflow and the operational API
+were started, stopped, and restarted through Task Scheduler, with exclusive
+loopback listeners and healthy read-only responses. A real scheduled batch was
+also started exactly once, but failed closed while validating the integrated
+ERA5-Land partition for 2026-08-05. The daily task was disabled to prevent its
+configured retries. This proves the service runtime and the scheduler's batch
+invocation boundary, but does not satisfy successful batch end-to-end
+acceptance.
+
 The operating mode remains the Phase 9 delayed historical hindcast. This work
 does not introduce D+1 forecasting, retraining, model promotion, external
 notifications, or notebook execution.
@@ -154,6 +164,70 @@ quality contract correctly preserved a critical source-lateness signal. All
 referenced operational evidence is local, ignored by Git, and absent from a
 fresh clone. It neither changes the retrospective-hindcast contract nor
 constitutes a production claim.
+
+### 2026-08-10 Task Scheduler runtime validation
+
+All registration commands were reviewed with `-WhatIf` using model bundle
+SHA-256 `0cf133d73b2c9c949899bc3bc89c7ab4c76c8c641246f7cc157d88fed596a96d`
+and calibration ID
+`ff56dd507607a95aea81f76ab6ce694f1fd8eb51a97175f834bdb83c16b2fe58`.
+The two logon tasks use the interactive operator, `RunLevel Limited`,
+`IgnoreNew`, and loopback-only bindings. The daily task retains its 12:00
+trigger, six-hour limit, two 30-minute retries, and owner
+`windows_task_scheduler`; the monthly recommendation-only task retains day 8
+at 13:00, a two-hour limit, two 15-minute retries, and its reviewed COM
+definition. Monthly governance was not manually triggered during this
+validation because the verified reporting horizon remains 2026-06-28 and the
+required month-close report is absent. Its pre-existing 2026-08-08 execution
+record remains `LastTaskResult=1`; this validation does not claim it succeeded.
+
+The local service runners now preserve setup-time fail-fast handling while
+allowing PowerShell 5.1 to append native-process stderr to the ignored service
+log without converting normal MLflow/Uvicorn diagnostics into terminating
+errors. The operational API task passes an explicit, resolved model bundle and
+calibration directory through process-local environment variables; missing
+values fail closed. No user-level logging or service environment override
+remains configured.
+
+At `2026-08-10T09:36:10.9603473Z`, both service tasks were stopped, ports 5000
+and 8000 were confirmed closed, and both were restarted with
+`Start-ScheduledTask`. Task Scheduler reported both `Running`; the only
+listeners were `127.0.0.1:5000` and `127.0.0.1:8000`. MLflow `/health`, API
+`/health`, and `/api/v1/monitoring/latest` returned HTTP 200. The monitoring
+response selected report
+`240ff4039c3f55045420b2ee4db47305c8415824b26b40c3e99c616d804687f4`.
+The `operational_summary`, `active_deployment`, and `active_model_metadata`
+queries each returned HTTP 200 with status `answered`. Live Registry
+observation remained `wind-forecast-v2-hindcast` version 1 with
+`champion=1`, `stable=1`, no `candidate`, and run
+`aaedd79348ee404880a4608760cebafd`, consistent with verified deployment ID
+`87c25b9b9cf23cb85799ce23f7306c40399fbb4c14dec5a5ac9a2136614d4159`.
+
+The daily task was started exactly once at
+`2026-08-10T09:49:42.1669194Z`. Scheduler run
+`windows-daily-0108a6d735db45d39f07fb42ce660447` acquired lease
+`90d1c5365126ae22ee695af6250abe1bd5fca3a88e8ddb9132d488c4d5896865`;
+coordinator run `20260810T094943124488Z-3e7965d1` invoked source run
+`20260810T095059Z-8699026fcbce`. Provider retrieval completed and base
+validation recorded 141 rows, but integrated validation rejected 2026-08-05
+because its ERA5 station-day/hour coverage was incomplete. The coordinator
+manifest is checksum-pinned by
+`d296b60868eef4ffe2af16a1d542fe28712f2bba9db061b05286a5d7e7976427`
+and the failed source manifest by
+`89c1549aa5d83d228f58fbddeb0fa20685f349dfead2a9606d0f086ea1e67922`.
+Task Scheduler returned `LastTaskResult=1`; the coordinator status is
+`failed` at `dataset_update`. The coordinator `state/current.json` advanced to
+this immutable failed manifest, run
+`20260810T094943124488Z-3e7965d1`, whose recorded checksum is
+`d296b60868eef4ffe2af16a1d542fe28712f2bba9db061b05286a5d7e7976427`.
+The source dataset remained on generation 2, and the deployment, monitoring,
+and Registry-alias pointers remained unchanged. No lease, lock, or child
+process remains. The daily task was disabled immediately to block automatic
+retry and was not rerun. Final runtime state is therefore:
+MLflow and API enabled and `Running`; monthly governance enabled and `Ready`;
+historical batch disabled and `Ready`. The requested four-enabled final state
+and accepted successful scheduled batch were not achieved. Airflow remains
+inactive.
 
 Model, calibration, and deployment paths may alternatively be supplied through
 `WIND_FORECAST_BATCH_MODEL_BUNDLE` and

@@ -185,6 +185,8 @@ def get_operational_query_service() -> OperationalQueryService:
     return OperationalQueryService(
         deployment_root=config.deployment_root,
         monitoring_store_root=config.monitoring_store_root,
+        model_bundle=config.model_bundle,
+        calibration_dir=config.calibration_dir,
         max_deadline_seconds=config.timeout_seconds,
         authorization_policy=_allow_local_operator,
         registry_client=_registry_client(config.registry_uri),

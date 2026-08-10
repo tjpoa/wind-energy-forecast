@@ -1,4 +1,8 @@
+import os
 from pathlib import Path
+import subprocess
+
+import pytest
 
 
 SCRIPTS = Path(__file__).parents[1] / "scripts"
@@ -42,6 +46,9 @@ def test_local_mlflow_runner_is_fixed_to_existing_loopback_store() -> None:
     assert '--port "5000"' in source
     assert 'var\\local_services' in source
     assert '*>> $logFile' in source
+    assert '$nativeErrorActionPreference = $ErrorActionPreference' in source
+    assert '$ErrorActionPreference = "Continue"' in source
+    assert '$ErrorActionPreference = $nativeErrorActionPreference' in source
     assert 'Resolve-Path -LiteralPath $PythonExecutable' not in source
     for prohibited in ("--serve-artifacts", "0.0.0.0", "Start-Process"):
         assert prohibited not in source
@@ -55,12 +62,17 @@ def test_local_operational_api_runner_has_bounded_explicit_configuration() -> No
     assert 'http://127.0.0.1:5000/health' in source
     assert 'WIND_FORECAST_DEPLOYMENT_ROOT' in source
     assert 'WIND_FORECAST_MONITORING_STORE_ROOT' in source
+    assert 'WIND_FORECAST_OPERATIONAL_MODEL_BUNDLE' in source
+    assert 'WIND_FORECAST_OPERATIONAL_CALIBRATION_DIR' in source
     assert '$env:MLFLOW_TRACKING_URI = "http://127.0.0.1:5000"' in source
     assert '$env:WIND_FORECAST_OPERATIONAL_PROJECTION_MODE = "disabled"' in source
     assert 'wind_forecast.api:app' in source
     assert '--host "127.0.0.1"' in source
     assert '--port "8000"' in source
     assert 'var\\local_services' in source
+    assert '$nativeErrorActionPreference = $ErrorActionPreference' in source
+    assert '$ErrorActionPreference = "Continue"' in source
+    assert '$ErrorActionPreference = $nativeErrorActionPreference' in source
     for prohibited in ("--reload", "--env-file", "0.0.0.0", "docker", "proxy"):
         assert prohibited not in source.lower()
 
@@ -89,3 +101,50 @@ def test_local_service_registrations_are_reviewable_and_do_not_start_tasks() -> 
         assert 'Register-ScheduledTask' in source
         assert 'Start-ScheduledTask' not in source
         assert 'Unregister-ScheduledTask' not in source
+    api_registration = _script("register_local_operational_api_task.ps1")
+    assert '[string]$ModelBundle' in api_registration
+    assert '[string]$CalibrationDirectory' in api_registration
+    assert '"-ModelBundle", (Quote-TaskArgument $model)' in api_registration
+    assert (
+        '"-CalibrationDirectory", (Quote-TaskArgument $calibration)'
+        in api_registration
+    )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1")
+def test_mlflow_runner_preserves_native_stderr_and_exit_code(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    (repository / "var" / "mlflow" / "artifacts").mkdir(parents=True)
+    (repository / "var" / "mlflow" / "mlflow.db").touch()
+    fake_python = tmp_path / "fake-python.cmd"
+    fake_python.write_text(
+        "@echo off\n"
+        "echo native-stderr-evidence 1>&2\n"
+        "exit /b 7\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(SCRIPTS / "run_local_mlflow.ps1"),
+            "-PythonExecutable",
+            str(fake_python),
+            "-RepositoryRoot",
+            str(repository),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert completed.returncode == 7
+    logs = list((repository / "var" / "local_services").glob("mlflow-*.log"))
+    assert len(logs) == 1
+    assert "native-stderr-evidence" in logs[0].read_text(encoding="utf-16")

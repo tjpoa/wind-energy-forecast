@@ -8,6 +8,10 @@ param(
     [string]$DeploymentRoot,
     [Parameter(Mandatory = $true)]
     [string]$MonitoringStoreRoot,
+    [Parameter(Mandatory = $true)]
+    [string]$ModelBundle,
+    [Parameter(Mandatory = $true)]
+    [string]$CalibrationDirectory,
     [ValidateRange(1, 600)]
     [int]$MlflowHealthTimeoutSeconds = 120,
     [string]$TaskName = "WindForecastOperationalApi"
@@ -38,6 +42,8 @@ function Quote-TaskArgument([string]$Value) {
 $python = Resolve-RepositoryPath $PythonExecutable
 $deployment = Resolve-RepositoryPath $DeploymentRoot
 $monitoring = Resolve-RepositoryPath $MonitoringStoreRoot
+$model = Resolve-RepositoryPath $ModelBundle
+$calibration = Resolve-RepositoryPath $CalibrationDirectory
 $powershell = Join-Path $PSHOME "powershell.exe"
 if (-not (Test-Path -LiteralPath $powershell -PathType Leaf)) {
     throw "Windows PowerShell executable was not found: $powershell"
@@ -52,6 +58,8 @@ $actionArguments = @(
     "-RepositoryRoot", (Quote-TaskArgument $repository),
     "-DeploymentRoot", (Quote-TaskArgument $deployment),
     "-MonitoringStoreRoot", (Quote-TaskArgument $monitoring),
+    "-ModelBundle", (Quote-TaskArgument $model),
+    "-CalibrationDirectory", (Quote-TaskArgument $calibration),
     "-MlflowHealthTimeoutSeconds", $MlflowHealthTimeoutSeconds.ToString()
 )
 $actionArgumentText = $actionArguments -join " "

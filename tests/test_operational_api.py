@@ -14,7 +14,9 @@ from wind_forecast.config import (
     DEPLOYMENT_ROOT_ENV,
     MLFLOW_TRACKING_URI_ENV,
     MONITORING_STORE_ROOT_ENV,
+    OPERATIONAL_CALIBRATION_DIR_ENV,
     OPERATIONAL_ENVIRONMENT_ID_ENV,
+    OPERATIONAL_MODEL_BUNDLE_ENV,
     OPERATIONAL_PROJECTION_MODE_ENV,
     OPERATIONAL_PROJECTION_READER_DSN_ENV,
     OPERATIONAL_QUERY_TIMEOUT_ENV,
@@ -42,6 +44,18 @@ from wind_forecast.operational_query_models import (
 NOW = datetime(2026, 7, 31, 12, 0, tzinfo=timezone.utc)
 REPORT_ID = "a" * 64
 RUN_ID = "20260731T120000000000Z-abcdef123456"
+
+
+@pytest.fixture(autouse=True)
+def _explicit_operational_artifacts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        OPERATIONAL_MODEL_BUNDLE_ENV,
+        "outputs/training/v2_reference_mlflow",
+    )
+    monkeypatch.setenv(
+        OPERATIONAL_CALIBRATION_DIR_ENV,
+        "data/processed/v2/monitoring/reporting/calibrations/test-calibration",
+    )
 
 
 def _payload(query_kind: str, **overrides) -> dict:
@@ -552,11 +566,51 @@ def test_operational_config_uses_local_defaults(monkeypatch):
     assert config.monitoring_store_root.as_posix().endswith(
         "data/processed/v2/monitoring"
     )
+    assert config.model_bundle.as_posix().endswith(
+        "outputs/training/v2_reference_mlflow"
+    )
+    assert config.calibration_dir.as_posix().endswith(
+        "data/processed/v2/monitoring/reporting/calibrations/test-calibration"
+    )
     assert config.timeout_seconds == 5.0
     assert config.registry_uri == "http://127.0.0.1:5000"
     assert config.projection_mode == "disabled"
     assert config.projection_environment_id is None
     assert config.projection_reader_dsn is None
+
+
+@pytest.mark.parametrize(
+    "variable",
+    (OPERATIONAL_MODEL_BUNDLE_ENV, OPERATIONAL_CALIBRATION_DIR_ENV),
+)
+def test_operational_config_requires_explicit_artifact_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    variable: str,
+) -> None:
+    monkeypatch.delenv(variable)
+
+    with pytest.raises(ValueError, match=variable):
+        load_operational_query_config()
+
+
+@pytest.mark.parametrize(
+    ("variable", "configured_value"),
+    (
+        (OPERATIONAL_MODEL_BUNDLE_ENV, ""),
+        (OPERATIONAL_MODEL_BUNDLE_ENV, "   "),
+        (OPERATIONAL_CALIBRATION_DIR_ENV, ""),
+        (OPERATIONAL_CALIBRATION_DIR_ENV, "   "),
+    ),
+)
+def test_operational_config_rejects_blank_artifact_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    variable: str,
+    configured_value: str,
+) -> None:
+    monkeypatch.setenv(variable, configured_value)
+
+    with pytest.raises(ValueError, match=variable):
+        load_operational_query_config()
 
 
 def test_disabled_projection_does_not_read_reader_dsn(monkeypatch) -> None:
@@ -653,6 +707,8 @@ def test_service_factory_uses_configured_paths_timeout_and_registry_gate(
     config = SimpleNamespace(
         deployment_root=tmp_path / "deployment",
         monitoring_store_root=tmp_path / "monitoring",
+        model_bundle=tmp_path / "model-bundle",
+        calibration_dir=tmp_path / "calibration",
         timeout_seconds=4.0,
         registry_uri="http://127.0.0.1:5000",
     )
@@ -674,6 +730,8 @@ def test_service_factory_uses_configured_paths_timeout_and_registry_gate(
 
     assert service.deployment_root == config.deployment_root
     assert service.monitoring_store_root == config.monitoring_store_root
+    assert service.model_bundle == config.model_bundle
+    assert service.calibration_dir == config.calibration_dir
     assert service.max_deadline_seconds == 4.0
     assert service.registry_client is fake_registry
     assert service.registry_timeout_seconds == 4.0
@@ -691,6 +749,8 @@ def test_required_projection_configuration_fails_closed_per_query_kind(
     config = SimpleNamespace(
         deployment_root=tmp_path / "deployment",
         monitoring_store_root=tmp_path / "monitoring",
+        model_bundle=tmp_path / "model-bundle",
+        calibration_dir=tmp_path / "calibration",
         timeout_seconds=4.0,
         registry_uri=None,
         projection_mode="required",
@@ -724,6 +784,8 @@ def test_disabled_service_factory_does_not_import_postgres_driver(
     config = SimpleNamespace(
         deployment_root=tmp_path / "deployment",
         monitoring_store_root=tmp_path / "monitoring",
+        model_bundle=tmp_path / "model-bundle",
+        calibration_dir=tmp_path / "calibration",
         timeout_seconds=4.0,
         registry_uri=None,
         projection_mode="disabled",
