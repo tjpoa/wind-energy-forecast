@@ -229,6 +229,50 @@ def _era_segment_refresh(
     return root
 
 
+def _write_era_days(
+    root: Path,
+    station_ids: list[str],
+    *,
+    start: str,
+    end: str,
+) -> None:
+    timestamps = pd.date_range(
+        start,
+        pd.Timestamp(end) + pd.Timedelta(days=1),
+        freq="h",
+        inclusive="left",
+        tz="UTC",
+    )
+    for index, station_id in enumerate(station_ids):
+        radians = np.linspace(0.0, 1.0, len(timestamps))
+        frame = pd.DataFrame(
+            {
+                "timestamp_utc": timestamps.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "station_id": station_id,
+                "station_name": f"Station {index}",
+                "station_latitude": 39.0 + index * 0.01,
+                "station_longitude": -8.0 - index * 0.01,
+                "grid_latitude": 39.0 + index * 0.01,
+                "grid_longitude": -8.0 - index * 0.01,
+                "temperature_2m_k": 285.0 + np.sin(radians),
+                "temperature_2m_c": 11.85 + np.sin(radians),
+                "u10_m_s": 3.0 + np.sin(radians),
+                "v10_m_s": 2.0 + np.cos(radians),
+                "wind_speed_m_s": 4.0 + np.sin(radians),
+                "is_calm_or_near_calm": False,
+            }
+        )
+        path = (
+            root
+            / "hourly"
+            / f"station_id={station_id}"
+            / f"period={start}_{end}"
+            / "hourly.csv"
+        )
+        path.parent.mkdir(parents=True)
+        frame.to_csv(path, index=False)
+
+
 def test_dry_run_is_read_only_and_reports_plan(environment: UpdateConfig) -> None:
     config = replace(environment, dry_run=True)
     before = set(environment.store_root.parent.rglob("*"))
@@ -410,6 +454,82 @@ def test_partial_era_month_extension_merges_per_station_without_duplicates(
     merged, coverage = materialize_current_integrated(environment.store_root)
     assert len(merged) == len(coverage) == 20
     assert not merged["date_local"].duplicated().any()
+
+
+def test_ren_can_advance_while_era5_is_pending_then_integrates_on_catch_up(
+    environment: UpdateConfig,
+) -> None:
+    bootstrap = run_v2_update(environment)
+    ren_ahead_root = environment.store_root.parent / "ren-ahead"
+    pending_dates = ("2026-01-21", "2026-01-22")
+    for day in pending_dates:
+        _write_ren_day(ren_ahead_root, day, value=30.0)
+
+    ren_ahead = replace(
+        environment,
+        through_date=pending_dates[-1],
+        now_utc=datetime(2026, 1, 27, 12, tzinfo=timezone.utc),
+    )
+    ren_result = run_v2_update(
+        ren_ahead,
+        source_refresher=lambda *_: RefreshResult(ren_roots=(ren_ahead_root,)),
+    )
+    state_after_ren = load_verified_current_state(environment.store_root)
+
+    assert bootstrap.status == "succeeded"
+    assert ren_result.status == "succeeded"
+    assert ren_result.affected_dates == ()
+    assert ren_result.feature_dates == ()
+    assert set(pending_dates).issubset(state_after_ren["sources"]["ren"])
+    assert all(
+        state_after_ren["sources"]["ren"][day]["status"] == "complete"
+        for day in pending_dates
+    )
+    assert all(
+        day not in state_after_ren["partitions"]["integrated"]
+        for day in pending_dates
+    )
+    assert state_after_ren["watermarks"]["ren"]["observed_through"] == pending_dates[-1]
+    assert state_after_ren["watermarks"]["common_validated_watermark"] == END
+
+    pointer_before_no_op = (
+        environment.store_root / "state" / "current.json"
+    ).read_bytes()
+    repeated = run_v2_update(
+        ren_ahead,
+        source_refresher=lambda *_: RefreshResult(ren_roots=(ren_ahead_root,)),
+    )
+    assert repeated.status == "no_op"
+    assert (
+        environment.store_root / "state" / "current.json"
+    ).read_bytes() == pointer_before_no_op
+
+    era_catch_up_root = environment.store_root.parent / "era-catch-up"
+    station_ids = [f"{1200000 + index}" for index in range(17)]
+    _write_era_days(
+        era_catch_up_root,
+        station_ids,
+        start=pending_dates[0],
+        end=pending_dates[-1],
+    )
+    caught_up = replace(
+        ren_ahead,
+        now_utc=datetime(2026, 1, 28, 12, tzinfo=timezone.utc),
+    )
+    era_result = run_v2_update(
+        caught_up,
+        source_refresher=lambda *_: RefreshResult(era5_roots=(era_catch_up_root,)),
+    )
+    final_state = load_verified_current_state(environment.store_root)
+
+    assert era_result.status == "succeeded"
+    assert era_result.affected_dates == pending_dates
+    assert all(
+        final_state["partitions"]["integrated"][day]["integration_ready"]
+        for day in pending_dates
+    )
+    assert final_state["watermarks"]["common_validated_watermark"] == pending_dates[-1]
+    assert run_v2_update(caught_up).status == "no_op"
 
 
 def test_era_preliminary_to_consolidated_is_versioned_without_recalculation(
