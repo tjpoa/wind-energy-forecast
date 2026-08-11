@@ -999,8 +999,12 @@ def test_current_reader_rejects_checksum_corruption(environment: UpdateConfig) -
         path.write_bytes(original)
 
 
-def test_manifest_checksum_matches_current_pointer(environment: UpdateConfig) -> None:
+def test_manifest_checksum_matches_current_pointer(
+    environment: UpdateConfig,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     result = run_v2_update(environment)
+    captured = capsys.readouterr()
     pointer = json.loads((environment.store_root / "state" / "current.json").read_text())
     assert result.manifest_sha256 == pointer["manifest_sha256"]
     assert sha256_file(Path(pointer["manifest_path"])) == pointer["manifest_sha256"]
@@ -1008,12 +1012,14 @@ def test_manifest_checksum_matches_current_pointer(environment: UpdateConfig) ->
     started = datetime.fromisoformat(manifest["started_at_utc"].replace("Z", "+00:00"))
     finished = datetime.fromisoformat(manifest["finished_at_utc"].replace("Z", "+00:00"))
     assert finished >= started
-    events = [
-        json.loads(line)
-        for line in (Path(pointer["manifest_path"]).parent / "events.jsonl")
+    event_lines = (
+        (Path(pointer["manifest_path"]).parent / "events.jsonl")
         .read_text()
         .splitlines()
-    ]
+    )
+    events = [json.loads(line) for line in event_lines]
+    assert captured.out == ""
+    assert captured.err.splitlines() == event_lines
     assert events
     assert all(event["source"] for event in events)
     assert all(isinstance(event["duration_ms"], (int, float)) for event in events)

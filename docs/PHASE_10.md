@@ -14,14 +14,16 @@ ERA5-Land refresh, monitoring, and reporting paths, followed by an idempotent
 and is not evidence of a successful Windows Task Scheduler or Airflow run.
 
 On 2026-08-10 the four `WindForecast*` definitions were audited in the
-interactive operator session. MLflow and the operational API
-were started, stopped, and restarted through Task Scheduler, with exclusive
-loopback listeners and healthy read-only responses. A real scheduled batch was
-also started exactly once, but failed closed while validating the integrated
-ERA5-Land partition for 2026-08-05. The daily task was disabled to prevent its
-configured retries. This proves the service runtime and the scheduler's batch
-invocation boundary, but does not satisfy successful batch end-to-end
-acceptance.
+interactive operator session. The first scheduled attempt failed closed while
+integrating a REN date for which ERA5-Land was still pending. PR #50 corrected
+that source-lag asymmetry by rebuilding only dates complete in both sources.
+The recovery then completed a provider-backed source update and a second
+Task Scheduler cycle with `LastTaskResult=0` and coordinator status
+`completed_with_alerts`. MLflow and the operational API were healthy on their
+single loopback listeners and answered the three typed operational queries.
+This is conditional local acceptance for delayed historical hindcast,
+orchestration, and the read-only API; it is not acceptance of D+1, real-time,
+or production operation.
 
 The operating mode remains the Phase 9 delayed historical hindcast. This work
 does not introduce D+1 forecasting, retraining, model promotion, external
@@ -177,9 +179,10 @@ trigger, six-hour limit, two 30-minute retries, and owner
 `windows_task_scheduler`; the monthly recommendation-only task retains day 8
 at 13:00, a two-hour limit, two 15-minute retries, and its reviewed COM
 definition. Monthly governance was not manually triggered during this
-validation because the verified reporting horizon remains 2026-06-28 and the
-required month-close report is absent. Its pre-existing 2026-08-08 execution
-record remains `LastTaskResult=1`; this validation does not claim it succeeded.
+validation. Its pre-existing 2026-08-08 execution record remains
+`LastTaskResult=1`; governance impact must be re-evaluated separately now that
+the verified horizon has advanced. This validation does not claim monthly
+governance succeeded.
 
 The local service runners now preserve setup-time fail-fast handling while
 allowing PowerShell 5.1 to append native-process stderr to the ignored service
@@ -189,45 +192,55 @@ calibration directory through process-local environment variables; missing
 values fail closed. No user-level logging or service environment override
 remains configured.
 
-At `2026-08-10T09:36:10.9603473Z`, both service tasks were stopped, ports 5000
-and 8000 were confirmed closed, and both were restarted with
-`Start-ScheduledTask`. Task Scheduler reported both `Running`; the only
-listeners were `127.0.0.1:5000` and `127.0.0.1:8000`. MLflow `/health`, API
-`/health`, and `/api/v1/monitoring/latest` returned HTTP 200. The monitoring
-response selected report
-`240ff4039c3f55045420b2ee4db47305c8415824b26b40c3e99c616d804687f4`.
-The `operational_summary`, `active_deployment`, and `active_model_metadata`
-queries each returned HTTP 200 with status `answered`. Live Registry
-observation remained `wind-forecast-v2-hindcast` version 1 with
-`champion=1`, `stable=1`, no `candidate`, and run
-`aaedd79348ee404880a4608760cebafd`, consistent with verified deployment ID
-`87c25b9b9cf23cb85799ce23f7306c40399fbb4c14dec5a5ac9a2136614d4159`.
+The original `20260810T094943124488Z-3e7965d1` failure is retained as immutable
+fail-closed evidence. Its cause was an asymmetric horizon: REN had advanced
+while ERA5-Land for 2026-08-05 was still pending, but the incremental path sent
+the REN-changed date to integration. PR #50 separated source changes from
+downstream-ready dates and now integrates only dates complete in both sources;
+the conservative Phase 8 ERA5-Land eligibility gate remains D-6.
 
-The daily task was started exactly once at
-`2026-08-10T09:49:42.1669194Z`. Scheduler run
-`windows-daily-0108a6d735db45d39f07fb42ce660447` acquired lease
-`90d1c5365126ae22ee695af6250abe1bd5fca3a88e8ddb9132d488c4d5896865`;
-coordinator run `20260810T094943124488Z-3e7965d1` invoked source run
-`20260810T095059Z-8699026fcbce`. Provider retrieval completed and base
-validation recorded 141 rows, but integrated validation rejected 2026-08-05
-because its ERA5 station-day/hour coverage was incomplete. The coordinator
-manifest is checksum-pinned by
-`d296b60868eef4ffe2af16a1d542fe28712f2bba9db061b05286a5d7e7976427`
-and the failed source manifest by
-`89c1549aa5d83d228f58fbddeb0fa20685f349dfead2a9606d0f086ea1e67922`.
-Task Scheduler returned `LastTaskResult=1`; the coordinator status is
-`failed` at `dataset_update`. The coordinator `state/current.json` advanced to
-this immutable failed manifest, run
-`20260810T094943124488Z-3e7965d1`, whose recorded checksum is
-`d296b60868eef4ffe2af16a1d542fe28712f2bba9db061b05286a5d7e7976427`.
-The source dataset remained on generation 2, and the deployment, monitoring,
-and Registry-alias pointers remained unchanged. No lease, lock, or child
-process remains. The daily task was disabled immediately to block automatic
-retry and was not rerun. Final runtime state is therefore:
-MLflow and API enabled and `Running`; monthly governance enabled and `Ready`;
-historical batch disabled and `Ready`. The requested four-enabled final state
-and accepted successful scheduled batch were not achieved. Airflow remains
-inactive.
+Provider-backed recovery run `20260810T160650Z-4b94be9391ff` then succeeded,
+published source generation 3, and recorded refresh plus validation of 141
+rows. Its manifest SHA-256 begins `d9c3d39`. REN validated through 2026-08-09,
+ERA5-Land and the common watermark through 2026-08-04. The batch wrapper still
+failed after that successful publication because `_emit_event` wrote JSONL to
+stdout and violated the coordinator's single-JSON child-command contract. The
+working-tree recovery fix preserves `events.jsonl` and sends event JSONL to
+stderr; it does not change source, lag, or data logic.
+
+At 2026-08-10 17:24:37 `Europe/Lisbon`, `WindForecastHistoricalBatch` was
+started again through Task Scheduler. Coordinator
+`20260810T162437840444Z-e84c8f23` completed with alerts; its manifest SHA-256
+begins `cba08ab`, `LastTaskResult=0`, and the enabled task returned to `Ready`
+with next start 2026-08-11 12:00 local time. Child source run
+`20260810T162529Z-62bb6c3c3135` converged to `no_op` with manifest SHA-256
+prefix `0bd1`. Monitoring run `20260810T162550Z-25ba7c6af311` succeeded with
+36 predictions, 37 actuals, and 37 metrics; its result SHA-256 begins `11655`.
+Reporting run `20260810T164401115962Z-008883b7813d` succeeded with report ID
+prefix `6f8ca` and result SHA-256 prefix `34a3`. The active
+`quality:source_late` alert was intentionally preserved.
+
+Final service verification recorded both service tasks `Running`, HTTP 200
+health responses, and exactly one listener on each of `127.0.0.1:5000` and
+`127.0.0.1:8000`. `operational_summary`, `active_deployment`, and
+`active_model_metadata` all returned typed status `answered`. Deployment
+generation 1, model version 1, and aliases `champion=1` and `stable=1` were
+unchanged, with no `candidate`. Task Scheduler's Operational event channel was
+disabled, so correlation uses `LastRunTime`, lease evidence, and immutable
+manifests. `Stop-ScheduledTask` did not terminate the native MLflow/API child
+processes; exact PID-tree verification and termination were required before a
+clean restart. This evidence must not be described as a clean scheduler stop.
+
+The formal decision is **CONDITIONAL GO** only for the local delayed historical
+hindcast, Windows orchestration, and read-only operational API, and **NO-GO**
+for real-time, D+1, or production claims. Phase 9's D+5 objective remains the
+authoritative SLO: on 2026-08-10 it required data through 2026-08-05, while the
+common watermark was 2026-08-04, a one-day miss. Changing the recovery-time
+D-6 gate requires a separate policy/code decision; review or expiry is
+2026-08-12 12:30 `Europe/Lisbon`. Six historical REN dates remain unavailable:
+2014-05-03, 2016-02-03, 2016-02-04, 2021-10-03, 2023-08-30, and 2025-08-02.
+The quality verdict therefore remains `FAIL` as an accepted limitation only;
+alerts and gaps must not be suppressed. Airflow remains inactive.
 
 Model, calibration, and deployment paths may alternatively be supplied through
 `WIND_FORECAST_BATCH_MODEL_BUNDLE` and
