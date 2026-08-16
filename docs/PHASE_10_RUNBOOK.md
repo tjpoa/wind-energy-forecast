@@ -38,6 +38,7 @@
 | Active drift alert | Batch is `completed_with_alerts` by default | Inspect the report and alert history; do not retrain or promote automatically |
 | Corrupt current pointer | Reader rejects path/checksum/schema | Stop. Preserve all files and escalate for an evidence-based repair plan |
 | Deployment/bundle/alias divergence | Preflight fails before source update, or a later postcheck blocks publication | Preserve evidence; restore pointer, bundle selection, and aliases to the same approved state, then rerun identically |
+| Runner setup or pre-manifest failure | Matching `*.events.jsonl` and `*.output.log` exist without a new coordinator manifest | Inspect the sanitized lifecycle stage and native stderr; do not move the manifest boundary or infer a provider failure |
 
 ## Scheduler operations
 
@@ -66,8 +67,15 @@ The MLflow runner requires the existing ignored SQLite database and artifact
 directory below `var/mlflow/`. The API runner sets only its process-local
 deployment, monitoring, tracking, and projection-mode variables. It does not
 load a general `.env`; PostgreSQL projection consumption remains disabled.
-Each process appends to a uniquely named log below ignored
-`var/local_services/`.
+Each service execution creates two uniquely named ignored files below
+`var/local_services/`: `<runner>-<UTC>-<PID>.events.jsonl` and
+`<runner>-<UTC>-<PID>.output.log`. The JSONL contract is
+`wind_forecast.runner_event.v1`; it records UTC timestamp, runner/run identity,
+stage/status, PowerShell PID, child exit code, and sanitized exception fields.
+It never records command lines, arguments, environment values, or stack traces.
+The output file contains only mirrored native output. The daily batch wrapper
+uses the same pair and replays child stdout/stderr on their original streams,
+without adding lifecycle events or lease CLI JSON to the child's stdout.
 
 Review both exact task definitions before registration:
 
@@ -199,6 +207,30 @@ Recovery is complete only when the coordinator returns `succeeded`,
 `completed_with_alerts`, or a verified no-op child update; all current pointers
 verify; no lock remains; and Task Scheduler records exit code `0` unless
 alert-failure behavior was explicitly requested.
+
+For the 2026-08-11 persistence incident, one manual success is insufficient.
+Recovery additionally requires MLflow and API to remain healthy beyond their
+three one-minute retries and a later unattended 12:00 execution to meet the
+same gates. Keep the daily task disabled while any prerequisite is unresolved.
+Activate `Microsoft-Windows-TaskScheduler/Operational` from an administrative
+operator session without clearing existing events; an `Access is denied`
+result is a stop condition, not permission to bypass Windows security.
+
+### Open persistence incident: 2026-08-11
+
+At 10:24 both `WindForecastMlflow` and
+`WindForecastOperationalApi` returned `0xC000013A`; neither loopback listener
+nor a same-day runner log remained. The enabled daily task started at 12:00 and
+returned `LastTaskResult=1`. No new coordinator manifest was created, the daily
+lease was released, and the current pointer remained on the 2026-08-10 manual
+success. This is treated as a service/deployment-preflight persistence failure,
+not a new ERA5 incident. On 2026-08-12 the daily trigger was contained by
+disabling only `WindForecastHistoricalBatch`; no task, SQLite database,
+artifact, pointer, manifest, or log was deleted. Automatic operation remains
+**NO-GO**. The D+5 objective remains authoritative and D-6 remains only the
+provisional conservative eligibility gate; changing either policy is outside
+this recovery patch. The owner, decision, and review deadline remain pending
+until the live recovery evidence is available.
 
 ### Recorded failure and completed recovery: 2026-08-10
 
