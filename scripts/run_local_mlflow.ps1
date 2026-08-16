@@ -93,6 +93,7 @@ try {
         & $python -m mlflow server `
             --backend-store-uri "sqlite:///var/mlflow/mlflow.db" `
             --artifacts-destination "./var/mlflow/artifacts" `
+            --workers "1" `
             --host "127.0.0.1" `
             --port "5000" *>> $outputFile
         $childExitCode = $LASTEXITCODE

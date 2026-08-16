@@ -34,9 +34,22 @@ pointer therefore still identifies the successful manual recovery from
 evidence inventory were exported, then only the live daily task's
 `Settings.Enabled` value was changed to disable its next trigger.
 Enabling the Task Scheduler Operational channel failed with `Access is denied`
-and remains an administrator-session recovery prerequisite. The current
-decision is **NO-GO for automatic operation** until persistent services, one
-manual batch, and a later automatic batch all pass the recovery gates.
+in the original operator session. An administrator enabled it without clearing
+events on 2026-08-16. The subsequent recovery attempt briefly reached one
+MLflow listener and HTTP 200 before a Uvicorn worker crashed and the task again
+ended with `0xC000013A`. Windows Application Error events identify five
+identical `python.exe` access violations since 2026-08-10 in the Conda
+`MSVCP140.dll`, including the exact failed Uvicorn worker from the 2026-08-16
+attempt. MLflow 3.14 otherwise selected four Uvicorn workers by default.
+
+Isolated copied-store probes kept both one-worker and four-worker servers
+healthy in an interactive terminal, so the failure is contextual and
+intermittent rather than a SQLite or port fault. The Windows scheduled runner
+therefore pins `--workers 1`, avoiding the multiprocess socket/signal path while
+retaining Uvicorn, its security middleware, and the loopback-only binding. This
+code correction is not persistence evidence. The current decision remains
+**NO-GO for automatic operation** until persistent services, one manual batch,
+and a later automatic batch all pass the recovery gates.
 
 The operating mode remains the Phase 9 delayed historical hindcast. This work
 does not introduce D+1 forecasting, retraining, model promotion, external
