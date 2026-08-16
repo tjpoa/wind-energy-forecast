@@ -148,6 +148,7 @@ def test_local_mlflow_runner_is_fixed_to_existing_loopback_store() -> None:
     source = _script("run_local_mlflow.ps1")
     assert 'sqlite:///var/mlflow/mlflow.db' in source
     assert './var/mlflow/artifacts' in source
+    assert '--workers "1"' in source
     assert '--host "127.0.0.1"' in source
     assert '--port "5000"' in source
     assert 'var\\local_services' in source
@@ -228,6 +229,7 @@ def test_mlflow_runner_preserves_native_stderr_and_exit_code(tmp_path: Path) -> 
     fake_python = tmp_path / "fake-python.cmd"
     fake_python.write_text(
         "@echo off\n"
+        "echo native-args:%* 1>&2\n"
         "echo native-stderr-evidence 1>&2\n"
         "exit /b 7\n",
         encoding="utf-8",
@@ -250,7 +252,9 @@ def test_mlflow_runner_preserves_native_stderr_and_exit_code(tmp_path: Path) -> 
         )
     )
     assert len(logs) == 1
-    assert "native-stderr-evidence" in _read_log(logs[0])
+    output = _read_log(logs[0])
+    assert "native-stderr-evidence" in output
+    assert "--workers 1" in output
     events = _events(repository, "mlflow")
     _assert_event_contract(events, "mlflow")
     assert events[-2]["stage"] == "child"

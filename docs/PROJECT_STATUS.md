@@ -1,6 +1,6 @@
 # Project Status
 
-Last reviewed: 2026-08-12.
+Last reviewed: 2026-08-16.
 
 This document summarizes the current state of the wind-energy forecasting
 repository for portfolio and hiring-review purposes. It is a factual status
@@ -28,12 +28,13 @@ Windows Task Scheduler cycle completed with alerts and `LastTaskResult=0`.
 MLflow and the read-only operational API were also healthy on exclusive
 loopback listeners and answered the three typed deployment/model queries. The
 unattended 2026-08-11 service and daily-task failures subsequently moved
-automatic operation to **NO-GO**. The daily task is disabled pending reviewed
-runner observability, persistent service verification, one manual success, and
-one later automatic success. The historical hindcast artifacts remain accepted
-conditionally for local retrospective use only. The active source-lateness
-alert, one-day miss against authoritative D+5, and six historical REN gaps
-remain visible; there is still explicit NO-GO for real-time, D+1, or production
+automatic operation to **NO-GO**. The daily task remains disabled pending live
+persistence verification of the single-worker MLflow correction, one
+manual success, and one later automatic success. The historical hindcast
+artifacts remain accepted conditionally for local retrospective use only. The
+active source-lateness alert, one-day miss against authoritative D+5, and six
+historical REN gaps remain visible; there is still explicit NO-GO for real-time,
+D+1, or production
 claims.
 
 The project should not be presented as a deployed production system. Cloud
@@ -239,9 +240,17 @@ from a fresh clone.
   principal, triggers, and other settings were preserved. Airflow remained
   inactive and no data, model, Registry, deployment, pointer, or manifest was
   changed.
-- Enabling `Microsoft-Windows-TaskScheduler/Operational` failed with
-  `Access is denied`; it remains a prerequisite for an administrative operator
-  session. No permission workaround was attempted.
+- Enabling `Microsoft-Windows-TaskScheduler/Operational` initially failed with
+  `Access is denied`. An administrator enabled it without clearing events on
+  2026-08-16.
+- The 2026-08-16 recovery attempt briefly reached one MLflow listener and HTTP
+  200, then ended again with `0xC000013A`. Windows recorded a Uvicorn worker
+  `python.exe` access violation in the Conda `MSVCP140.dll` (`0xc0000005`), the
+  same native signature seen five times since 2026-08-10, followed by
+  multiprocess socket failures (`WinError 10022`). Isolated copied-store probes
+  stayed healthy with one worker and also with four workers interactively,
+  narrowing the fault to the contextual scheduled multiprocess path. The
+  runner now pins one worker; this has not yet passed the live persistence gate.
 - Automatic operation is **NO-GO** until persistent MLflow/API health, one
   successful manual daily batch, and one later successful automatic batch are
   all verified without locks, leases, or child processes left behind.

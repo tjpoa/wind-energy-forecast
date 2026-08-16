@@ -64,9 +64,14 @@ time limit. They do not run before that user logs on. The registration scripts
 create or replace task definitions but do not start them.
 
 The MLflow runner requires the existing ignored SQLite database and artifact
-directory below `var/mlflow/`. The API runner sets only its process-local
-deployment, monitoring, tracking, and projection-mode variables. It does not
-load a general `.env`; PostgreSQL projection consumption remains disabled.
+directory below `var/mlflow/`. On Windows it explicitly uses one Uvicorn worker.
+This avoids the contextual multiprocess socket/control-signal failure observed
+under Task Scheduler while preserving MLflow's FastAPI security middleware and
+the loopback-only interface. Do not remove the explicit worker count without a
+separate scheduled-service stability test. The API runner sets only its
+process-local deployment, monitoring, tracking, and projection-mode variables.
+It does not load a general `.env`; PostgreSQL projection consumption remains
+disabled.
 Each service execution creates two uniquely named ignored files below
 `var/local_services/`: `<runner>-<UTC>-<PID>.events.jsonl` and
 `<runner>-<UTC>-<PID>.output.log`. The JSONL contract is
@@ -231,6 +236,19 @@ artifact, pointer, manifest, or log was deleted. Automatic operation remains
 provisional conservative eligibility gate; changing either policy is outside
 this recovery patch. The owner, decision, and review deadline remain pending
 until the live recovery evidence is available.
+
+On 2026-08-16 an administrator enabled the Operational channel without
+clearing events. A recovery attempt briefly produced one `127.0.0.1:5000`
+listener and HTTP 200, then MLflow again ended with `0xC000013A`. The runner
+JSONL stopped at `child:started`; its native output and Windows Application
+Error event identify a Uvicorn worker crash in the Conda `MSVCP140.dll` with
+exception `0xc0000005`; native output also recorded `WinError 10022` in the
+multiprocess socket path. The same native crash signature occurred five times
+from 2026-08-10 through 2026-08-16. Copied-store diagnostic probes were healthy with one worker
+and also healthy interactively with four, establishing a contextual,
+intermittent scheduled multiprocess failure rather than a database or port
+fault. The runner now pins one worker; this change still requires the complete
+persistence and batch recovery gates above.
 
 ### Recorded failure and completed recovery: 2026-08-10
 
