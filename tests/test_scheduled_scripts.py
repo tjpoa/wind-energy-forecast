@@ -199,7 +199,9 @@ def test_local_service_registrations_are_reviewable_and_do_not_start_tasks() -> 
         assert 'SupportsShouldProcess = $true' in source
         assert f'$TaskName = "{task_name}"' in source
         assert 'New-ScheduledTaskTrigger -AtLogOn -User $currentUser' in source
-        assert '-LogonType Interactive' in source
+        assert '-LogonType S4U' in source
+        assert 'LogonType = "S4U"' in source
+        assert '-LogonType Interactive' not in source
         assert '-RunLevel Limited' in source
         assert '-ExecutionTimeLimit (New-TimeSpan -Seconds 0)' in source
         assert '-RestartCount 3' in source

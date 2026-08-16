@@ -52,7 +52,7 @@ if ($WhatIfPreference) {
         Arguments = $actionArgumentText
         Trigger = "At logon for $currentUser"
         RunLevel = "Limited"
-        LogonType = "Interactive"
+        LogonType = "S4U"
         ExecutionTimeLimit = "PT0S"
         RestartCount = 3
         RestartInterval = "00:01:00"
@@ -76,14 +76,14 @@ $settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable
 $principal = New-ScheduledTaskPrincipal `
     -UserId $currentUser `
-    -LogonType Interactive `
+    -LogonType S4U `
     -RunLevel Limited
 $task = New-ScheduledTask `
     -Action $action `
     -Trigger $trigger `
     -Settings $settings `
     -Principal $principal `
-    -Description "Loopback-only local MLflow tracking and Registry service."
+    -Description "Loopback-only local MLflow service in a non-interactive S4U session."
 
 if ($PSCmdlet.ShouldProcess($TaskName, "Register or replace scheduled task")) {
     Register-ScheduledTask -TaskName $TaskName -InputObject $task -Force | Out-Null

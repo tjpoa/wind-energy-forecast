@@ -58,10 +58,17 @@ definition and must first be reviewed with `-WhatIf`.
 ## Persistent local MLflow and operational API
 
 MLflow and the read-only operational API are separate logon-triggered tasks.
-Both run under the current interactive identity with `RunLevel Limited`, bind
-only to IPv4 loopback, never overlap a running instance, and have no execution
-time limit. They do not run before that user logs on. The registration scripts
-create or replace task definitions but do not start them.
+Both use the current Windows user with `LogonType S4U` and `RunLevel Limited`,
+bind only to IPv4 loopback, never overlap a running instance, and have no
+execution time limit. The logon trigger still requires that user's logon event,
+but the task action runs in a non-interactive Task Scheduler session instead of
+the user's interactive console. S4U stores no password and cannot access
+network resources or encrypted files. These services use only reviewed local
+paths and loopback HTTP; introducing a remote or encrypted dependency requires
+a separate principal decision. S4U also requires the effective `Log on as a
+batch job` (`SeBatchLogonRight`) user right and must not be blocked by `Deny log
+on as a batch job`. The registration scripts create or replace task definitions
+but do not start them.
 
 The MLflow runner requires the existing ignored SQLite database and artifact
 directory below `var/mlflow/`. On Windows it explicitly uses one Uvicorn worker.
@@ -101,11 +108,17 @@ Review both exact task definitions before registration:
   -WhatIf
 ```
 
-After reviewing the resolved executable, arguments, identity, logon trigger,
-restart policy, zero execution limit, and `IgnoreNew`, repeat each command
-without `-WhatIf`. Stop if the displayed identity is a sandbox, automation,
-service, or different Windows account instead of the intended interactive
+After reviewing the resolved executable, arguments, identity, `LogonType S4U`,
+logon trigger, restart policy, zero execution limit, and `IgnoreNew`, repeat
+each command without `-WhatIf`. Stop if the displayed identity is a sandbox,
+automation, service, or different Windows account instead of the intended
 operator; registration must be performed from that operator's own session.
+Also stop if any configured path resolves to a network share or encrypted file.
+Before replacing either live definition, inspect the effective local/domain
+User Rights Assignment for the intended account. Stop if `Log on as a batch
+job` is absent, `Deny log on as a batch job` applies, or the effective policy
+cannot be verified. Do not grant rights, fall back to `Interactive` or
+`Password`, or change Group Policy as part of this recovery patch.
 Registration is not a health check. Start and verify MLflow first, then start
 the API, whose runner waits at most 120 seconds for MLflow:
 
@@ -249,6 +262,23 @@ and also healthy interactively with four, establishing a contextual,
 intermittent scheduled multiprocess failure rather than a database or port
 fault. The runner now pins one worker; this change still requires the complete
 persistence and batch recovery gates above.
+
+The subsequent one-worker probe kept MLflow healthy beyond the restart window.
+The API likewise started fully, owned the only `127.0.0.1:8000` listener, and
+returned repeated HTTP 200 health responses while the PowerShell session that
+started its task remained open. The API ended with `0xC000013A` at that
+session's closure. MLflow later ended with the same result, but the probe did
+not capture its initiating-session closure, so the same causal relationship is
+not established. Neither output contained an application traceback or graceful
+shutdown, and both runner streams stopped at `child:started`. The combined
+evidence makes the interactive task execution context the leading hypothesis
+and justifies a bounded mitigation test; it does not prove a common cause or a
+fix. The registration scripts therefore change only the two service
+principals' logon method from `Interactive` to non-interactive `S4U`, retaining
+the same user, actions, triggers, settings, runner contracts, and loopback
+bindings. The live task definitions must not be replaced until this change is
+reviewed and merged; after replacement they still require the effective batch
+logon-right preflight and all persistence gates.
 
 ### Recorded failure and completed recovery: 2026-08-10
 
