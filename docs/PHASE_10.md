@@ -21,9 +21,22 @@ The recovery then completed a provider-backed source update and a second
 Task Scheduler cycle with `LastTaskResult=0` and coordinator status
 `completed_with_alerts`. MLflow and the operational API were healthy on their
 single loopback listeners and answered the three typed operational queries.
-This is conditional local acceptance for delayed historical hindcast,
-orchestration, and the read-only API; it is not acceptance of D+1, real-time,
-or production operation.
+That checkpoint was conditional local acceptance for delayed historical
+hindcast, orchestration, and the read-only API; it was not acceptance of D+1,
+real-time, or production operation.
+
+The unattended 2026-08-11 cycle invalidated automatic operational readiness.
+Both service tasks ended at 10:24 with `0xC000013A`, no loopback listener or
+same-day service log remained, and the 12:00 daily task returned
+`LastTaskResult=1` before a new coordinator manifest was created. The latest
+pointer therefore still identifies the successful manual recovery from
+2026-08-10. On 2026-08-12 the four pre-containment task definitions and local
+evidence inventory were exported, then only the live daily task's
+`Settings.Enabled` value was changed to disable its next trigger.
+Enabling the Task Scheduler Operational channel failed with `Access is denied`
+and remains an administrator-session recovery prerequisite. The current
+decision is **NO-GO for automatic operation** until persistent services, one
+manual batch, and a later automatic batch all pass the recovery gates.
 
 The operating mode remains the Phase 9 delayed historical hindcast. This work
 does not introduce D+1 forecasting, retraining, model promotion, external
@@ -63,6 +76,18 @@ Deployment verification and batch execution require the tracking URI sealed in
 the active deployment to be reachable. For the governed local environment this
 means keeping the local MLflow service available; do not silently substitute a
 different Registry or tracking backend.
+
+The three Windows runners initialize ignored evidence before resolving paths.
+Each execution creates a UTF-8 JSONL lifecycle file and a separate native-output
+file below `var/local_services/`. Lifecycle records use
+`wind_forecast.runner_event.v1` and contain only UTC time, runner/run identity,
+stage/status, the PowerShell PID, child exit code, and sanitized exception
+classification/message. They never contain arguments, command lines,
+environment values, or stack traces. The daily wrapper mirrors native stdout
+and stderr to the output file while replaying them on their original streams;
+lease-management JSON is captured internally so the child's CLI JSON contract
+is unchanged. This wrapper evidence deliberately does not move the coordinator
+manifest boundary ahead of `deployment_preflight`.
 
 ## Local schedule
 
@@ -231,13 +256,14 @@ manifests. `Stop-ScheduledTask` did not terminate the native MLflow/API child
 processes; exact PID-tree verification and termination were required before a
 clean restart. This evidence must not be described as a clean scheduler stop.
 
-The formal decision is **CONDITIONAL GO** only for the local delayed historical
-hindcast, Windows orchestration, and read-only operational API, and **NO-GO**
-for real-time, D+1, or production claims. Phase 9's D+5 objective remains the
-authoritative SLO: on 2026-08-10 it required data through 2026-08-05, while the
-common watermark was 2026-08-04, a one-day miss. Changing the recovery-time
-D-6 gate requires a separate policy/code decision; review or expiry is
-2026-08-12 12:30 `Europe/Lisbon`. Six historical REN dates remain unavailable:
+The 2026-08-10 decision was **CONDITIONAL GO** only for the local delayed
+historical hindcast, Windows orchestration, and read-only operational API, and
+**NO-GO** for real-time, D+1, or production claims. The 2026-08-11 incident
+superseded that decision for automatic operation. Phase 9's D+5 objective
+remains the authoritative SLO: on 2026-08-10 it required data through
+2026-08-05, while the common watermark was 2026-08-04, a one-day miss.
+Changing the recovery-time D-6 gate requires a separate policy/code decision.
+Six historical REN dates remain unavailable:
 2014-05-03, 2016-02-03, 2016-02-04, 2021-10-03, 2023-08-30, and 2025-08-02.
 The quality verdict therefore remains `FAIL` as an accepted limitation only;
 alerts and gaps must not be suppressed. Airflow remains inactive.

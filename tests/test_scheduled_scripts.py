@@ -1,6 +1,8 @@
+import json
 import os
 from pathlib import Path
 import subprocess
+import time
 
 import pytest
 
@@ -12,11 +14,115 @@ def _script(name: str) -> str:
     return (SCRIPTS / name).read_text(encoding="utf-8")
 
 
+def _read_log(path: Path) -> str:
+    data = path.read_bytes()
+    for encoding in ("utf-8-sig", "utf-16", "utf-16-le"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise AssertionError(f"Could not decode runner log {path}")
+
+
+def _events(repository: Path, runner: str) -> list[dict[str, object]]:
+    paths = list(
+        (repository / "var" / "local_services").glob(
+            f"{runner}-*.events.jsonl"
+        )
+    )
+    assert len(paths) == 1
+    return [
+        json.loads(line)
+        for line in paths[0].read_text(encoding="utf-8").splitlines()
+    ]
+
+
+def _assert_event_contract(events: list[dict[str, object]], runner: str) -> None:
+    assert events
+    run_ids = {event["run_id"] for event in events}
+    runner_pids = {event["runner_pid"] for event in events}
+    assert len(run_ids) == 1
+    assert len(runner_pids) == 1
+    assert all(
+        event["schema_version"] == "wind_forecast.runner_event.v1"
+        for event in events
+    )
+    assert all(event["runner"] == runner for event in events)
+    assert all(
+        set(event)
+        == {
+            "schema_version",
+            "timestamp_utc",
+            "runner",
+            "run_id",
+            "stage",
+            "status",
+            "runner_pid",
+            "child_exit_code",
+            "exception_type",
+            "exception_message",
+        }
+        for event in events
+    )
+
+
+def _run_powershell(
+    script: str,
+    arguments: list[str],
+    **kwargs: object,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(SCRIPTS / script),
+            *arguments,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        **kwargs,
+    )
+
+
+def _batch_arguments(repository: Path, fake_python: Path) -> list[str]:
+    return [
+        "-PythonExecutable",
+        str(fake_python),
+        "-RepositoryRoot",
+        str(repository),
+        "-ModelBundle",
+        "model-bundle",
+        "-CalibrationDirectory",
+        "calibration",
+        "-DeploymentRoot",
+        "deployment",
+        "-SchedulerStateRoot",
+        "scheduler",
+        "-EnvironmentId",
+        "local",
+        "-ActivationDate",
+        "2026-06-28",
+    ]
+
+
+def _prepare_batch_repository(repository: Path) -> None:
+    scripts = repository / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "run_batch_pipeline.py").touch()
+    (scripts / "manage_scheduler_owner.py").touch()
+
+
 def test_windows_daily_runner_is_owner_guarded() -> None:
     source = _script("run_scheduled_batch.ps1")
     assert "manage_scheduler_owner.py" in source
-    assert "--scheduler windows_task_scheduler" in source
-    assert "--workflow historical_daily_batch" in source
+    assert '"--scheduler", "windows_task_scheduler"' in source
+    assert '"--workflow", "historical_daily_batch"' in source
     assert "release" in source
 
 
@@ -45,7 +151,8 @@ def test_local_mlflow_runner_is_fixed_to_existing_loopback_store() -> None:
     assert '--host "127.0.0.1"' in source
     assert '--port "5000"' in source
     assert 'var\\local_services' in source
-    assert '*>> $logFile' in source
+    assert '*>> $outputFile' in source
+    assert 'schema_version = "wind_forecast.runner_event.v1"' in source
     assert '$nativeErrorActionPreference = $ErrorActionPreference' in source
     assert '$ErrorActionPreference = "Continue"' in source
     assert '$ErrorActionPreference = $nativeErrorActionPreference' in source
@@ -70,6 +177,8 @@ def test_local_operational_api_runner_has_bounded_explicit_configuration() -> No
     assert '--host "127.0.0.1"' in source
     assert '--port "8000"' in source
     assert 'var\\local_services' in source
+    assert '*>> $outputFile' in source
+    assert 'schema_version = "wind_forecast.runner_event.v1"' in source
     assert '$nativeErrorActionPreference = $ErrorActionPreference' in source
     assert '$ErrorActionPreference = "Continue"' in source
     assert '$ErrorActionPreference = $nativeErrorActionPreference' in source
@@ -124,27 +233,338 @@ def test_mlflow_runner_preserves_native_stderr_and_exit_code(tmp_path: Path) -> 
         encoding="utf-8",
     )
 
-    completed = subprocess.run(
+    completed = _run_powershell(
+        "run_local_mlflow.ps1",
         [
-            "powershell.exe",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(SCRIPTS / "run_local_mlflow.ps1"),
             "-PythonExecutable",
             str(fake_python),
             "-RepositoryRoot",
             str(repository),
         ],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=30,
     )
 
     assert completed.returncode == 7
-    logs = list((repository / "var" / "local_services").glob("mlflow-*.log"))
+    logs = list(
+        (repository / "var" / "local_services").glob(
+            "mlflow-*.output.log"
+        )
+    )
     assert len(logs) == 1
-    assert "native-stderr-evidence" in logs[0].read_text(encoding="utf-16")
+    assert "native-stderr-evidence" in _read_log(logs[0])
+    events = _events(repository, "mlflow")
+    _assert_event_contract(events, "mlflow")
+    assert events[-2]["stage"] == "child"
+    assert events[-2]["child_exit_code"] == 7
+    assert events[-1]["stage"] == "runner_exit"
+    assert events[-1]["child_exit_code"] == 7
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1")
+def test_mlflow_setup_failure_is_logged_and_sanitized(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    secret = "DO-NOT-LOG-THIS-SECRET"
+    environment = {**os.environ, "WIND_FORECAST_SECRET_TEST_MARKER": secret}
+
+    completed = _run_powershell(
+        "run_local_mlflow.ps1",
+        [
+            "-PythonExecutable",
+            str(repository / secret / "python.exe"),
+            "-RepositoryRoot",
+            str(repository),
+        ],
+        env=environment,
+    )
+
+    assert completed.returncode == 1
+    events = _events(repository, "mlflow")
+    _assert_event_contract(events, "mlflow")
+    assert [event["stage"] for event in events] == [
+        "observability",
+        "setup",
+        "setup",
+        "runner_exit",
+    ]
+    assert events[-2]["status"] == "failed"
+    assert events[-2]["exception_type"]
+    assert events[-1]["child_exit_code"] is None
+    all_evidence = completed.stdout + completed.stderr
+    for path in (repository / "var" / "local_services").iterdir():
+        all_evidence += _read_log(path)
+    assert secret not in all_evidence
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1")
+def test_api_health_timeout_writes_events_before_child_start(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    for relative in (
+        "deployment",
+        "monitoring",
+        "model",
+        "calibration",
+        "src/wind_forecast",
+    ):
+        (repository / relative).mkdir(parents=True, exist_ok=True)
+    (repository / "src" / "wind_forecast" / "api.py").touch()
+    fake_python = tmp_path / "fake-python.cmd"
+    fake_python.write_text("@echo off\nexit /b 0\n", encoding="utf-8")
+
+    completed = _run_powershell(
+        "run_local_operational_api.ps1",
+        [
+            "-PythonExecutable",
+            str(fake_python),
+            "-RepositoryRoot",
+            str(repository),
+            "-DeploymentRoot",
+            str(repository / "deployment"),
+            "-MonitoringStoreRoot",
+            str(repository / "monitoring"),
+            "-ModelBundle",
+            str(repository / "model"),
+            "-CalibrationDirectory",
+            str(repository / "calibration"),
+            "-MlflowHealthTimeoutSeconds",
+            "1",
+        ],
+    )
+
+    assert completed.returncode == 1
+    events = _events(repository, "operational-api")
+    _assert_event_contract(events, "operational-api")
+    assert any(
+        event["stage"] == "health_wait" and event["status"] == "failed"
+        for event in events
+    )
+    assert not any(event["stage"] == "child" for event in events)
+    assert events[-1]["child_exit_code"] is None
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1")
+def test_batch_preserves_child_json_and_successful_lease_lifecycle(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    _prepare_batch_repository(repository)
+    fake_python = tmp_path / "fake-python.cmd"
+    child_json = '{"schema_version":"child.v1","status":"succeeded"}'
+    fake_python.write_text(
+        "@echo off\n"
+        "if \"%~2\"==\"acquire\" (echo {\"lease_id\":\"lease-1\"}& exit /b 0)\n"
+        f'if "%~2"=="run" (echo {child_json}& exit /b 0)\n'
+        "if \"%~2\"==\"release\" (echo {\"status\":\"released\"}& exit /b 0)\n"
+        "exit /b 99\n",
+        encoding="utf-8",
+    )
+
+    completed = _run_powershell(
+        "run_scheduled_batch.ps1",
+        _batch_arguments(repository, fake_python),
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout == child_json + "\n"
+    events = _events(repository, "scheduled-batch")
+    _assert_event_contract(events, "scheduled-batch")
+    stages = [(event["stage"], event["status"]) for event in events]
+    assert ("lease_acquire", "succeeded") in stages
+    assert ("child", "succeeded") in stages
+    assert ("lease_release", "succeeded") in stages
+    assert stages[-1] == ("runner_exit", "succeeded")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1")
+def test_batch_preflight_failure_preserves_stderr_without_manifest(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    _prepare_batch_repository(repository)
+    fake_python = tmp_path / "fake-python.cmd"
+    error_json = '{"schema_version":"batch_cli_error.v1","status":"failed"}'
+    fake_python.write_text(
+        "@echo off\n"
+        "if \"%~2\"==\"acquire\" (echo {\"lease_id\":\"lease-1\"}& exit /b 0)\n"
+        f'if "%~2"=="run" (echo {error_json} 1>&2& exit /b 7)\n'
+        "if \"%~2\"==\"release\" (echo {\"status\":\"released\"}& exit /b 0)\n"
+        "exit /b 99\n",
+        encoding="utf-8",
+    )
+
+    completed = _run_powershell(
+        "run_scheduled_batch.ps1",
+        _batch_arguments(repository, fake_python),
+    )
+
+    assert completed.returncode == 7
+    assert completed.stdout == ""
+    assert error_json in completed.stderr
+    orchestration = repository / "data" / "processed" / "v2" / "orchestration"
+    assert not orchestration.exists()
+    output_logs = list(
+        (repository / "var" / "local_services").glob(
+            "scheduled-batch-*.output.log"
+        )
+    )
+    assert len(output_logs) == 1
+    assert error_json in _read_log(output_logs[0])
+    events = _events(repository, "scheduled-batch")
+    assert any(
+        event["stage"] == "child"
+        and event["status"] == "failed"
+        and event["child_exit_code"] == 7
+        for event in events
+    )
+    assert any(
+        event["stage"] == "lease_release" and event["status"] == "succeeded"
+        for event in events
+    )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1")
+def test_batch_release_failure_is_fail_closed(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    _prepare_batch_repository(repository)
+    fake_python = tmp_path / "fake-python.cmd"
+    child_json = '{"schema_version":"child.v1","status":"succeeded"}'
+    fake_python.write_text(
+        "@echo off\n"
+        "if \"%~2\"==\"acquire\" (echo {\"lease_id\":\"lease-1\"}& exit /b 0)\n"
+        f'if "%~2"=="run" (echo {child_json}& exit /b 0)\n'
+        "if \"%~2\"==\"release\" (echo release-failed 1>&2& exit /b 9)\n"
+        "exit /b 99\n",
+        encoding="utf-8",
+    )
+
+    completed = _run_powershell(
+        "run_scheduled_batch.ps1",
+        _batch_arguments(repository, fake_python),
+    )
+
+    assert completed.returncode == 1
+    assert completed.stdout == child_json + "\n"
+    events = _events(repository, "scheduled-batch")
+    assert any(
+        event["stage"] == "lease_release" and event["status"] == "failed"
+        for event in events
+    )
+    assert events[-1]["stage"] == "runner_exit"
+    assert events[-1]["status"] == "failed"
+    assert events[-1]["child_exit_code"] == 0
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1")
+def test_batch_acquire_failure_stops_before_child_or_release(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    _prepare_batch_repository(repository)
+    fake_python = tmp_path / "fake-python.cmd"
+    fake_python.write_text(
+        "@echo off\n"
+        "if \"%~2\"==\"acquire\" (echo acquire-failed 1>&2& exit /b 8)\n"
+        "exit /b 99\n",
+        encoding="utf-8",
+    )
+
+    completed = _run_powershell(
+        "run_scheduled_batch.ps1",
+        _batch_arguments(repository, fake_python),
+    )
+
+    assert completed.returncode == 1
+    assert "acquire-failed" in completed.stderr
+    events = _events(repository, "scheduled-batch")
+    assert any(
+        event["stage"] == "lease_acquire" and event["status"] == "failed"
+        for event in events
+    )
+    assert not any(
+        event["stage"] in {"child", "lease_release"} for event in events
+    )
+    assert events[-1]["child_exit_code"] is None
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1")
+def test_batch_mirrors_native_output_before_child_exits(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    _prepare_batch_repository(repository)
+    fake_python = tmp_path / "fake-python.cmd"
+    child_json = '{"schema_version":"child.v1","status":"succeeded"}'
+    fake_python.write_text(
+        "@echo off\n"
+        "if \"%~2\"==\"acquire\" (echo {\"lease_id\":\"lease-1\"}& exit /b 0)\n"
+        "if \"%~2\"==\"run\" ("
+        "echo early-native-evidence 1>&2& "
+        "ping 127.0.0.1 -n 4 >nul& "
+        f"echo {child_json}& exit /b 0)\n"
+        "if \"%~2\"==\"release\" (echo {\"status\":\"released\"}& exit /b 0)\n"
+        "exit /b 99\n",
+        encoding="utf-8",
+    )
+    command = [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(SCRIPTS / "run_scheduled_batch.ps1"),
+        *_batch_arguments(repository, fake_python),
+    ]
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    observed_while_running = False
+    deadline = time.monotonic() + 2.5
+    while time.monotonic() < deadline:
+        logs = list(
+            (repository / "var" / "local_services").glob(
+                "scheduled-batch-*.output.log"
+            )
+        )
+        if logs and "early-native-evidence" in _read_log(logs[0]):
+            observed_while_running = process.poll() is None
+            break
+        time.sleep(0.05)
+    stdout, stderr = process.communicate(timeout=10)
+
+    assert observed_while_running
+    assert process.returncode == 0
+    assert stdout == child_json + "\n"
+    assert "early-native-evidence" in stderr
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1")
+def test_batch_logger_failure_after_acquire_still_releases_lease(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    _prepare_batch_repository(repository)
+    release_marker = tmp_path / "release-attempted.txt"
+    events_glob = repository / "var" / "local_services" / "*.events.jsonl"
+    fake_python = tmp_path / "fake-python.cmd"
+    fake_python.write_text(
+        "@echo off\n"
+        "if \"%~2\"==\"acquire\" goto acquire\n"
+        "if \"%~2\"==\"release\" goto release\n"
+        "exit /b 99\n"
+        ":acquire\n"
+        "echo {\"lease_id\":\"lease-1\"}\n"
+        f'for %%F in ("{events_glob}") do (del "%%~fF" & mkdir "%%~fF")\n'
+        "exit /b 0\n"
+        ":release\n"
+        f'echo attempted>"{release_marker}"\n'
+        "exit /b 0\n",
+        encoding="utf-8",
+    )
+
+    completed = _run_powershell(
+        "run_scheduled_batch.ps1",
+        _batch_arguments(repository, fake_python),
+    )
+
+    assert completed.returncode == 1
+    assert release_marker.read_text(encoding="utf-8").strip() == "attempted"

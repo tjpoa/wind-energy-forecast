@@ -1,6 +1,6 @@
 # Project Status
 
-Last reviewed: 2026-08-10.
+Last reviewed: 2026-08-12.
 
 This document summarizes the current state of the wind-energy forecasting
 repository for portfolio and hiring-review purposes. It is a factual status
@@ -21,17 +21,20 @@ opens on a read-only retrospective monitoring projection and retains the typed
 historical-performance view, completing a local frontend-to-API-to-verified
 artifact demonstration.
 
-The accepted v2 historical hindcast is operational in one governed local
-environment. On 2026-08-10, PR #50 corrected the observed REN-ahead/ERA5-pending
+The accepted v2 historical hindcast exists in one governed local environment.
+On 2026-08-10, PR #50 corrected the observed REN-ahead/ERA5-pending
 integration defect, a provider-backed update published generation 3, and a
 Windows Task Scheduler cycle completed with alerts and `LastTaskResult=0`.
 MLflow and the read-only operational API were also healthy on exclusive
-loopback listeners and answered the three typed deployment/model queries.
-The current decision is conditional GO only for local delayed historical
-hindcast, orchestration, and read-only API use. The active source-lateness
-alert, a one-day miss against the authoritative D+5 objective, and six
-historical REN gaps remain accepted limitations; this is explicit NO-GO for
-real-time, D+1, or production claims.
+loopback listeners and answered the three typed deployment/model queries. The
+unattended 2026-08-11 service and daily-task failures subsequently moved
+automatic operation to **NO-GO**. The daily task is disabled pending reviewed
+runner observability, persistent service verification, one manual success, and
+one later automatic success. The historical hindcast artifacts remain accepted
+conditionally for local retrospective use only. The active source-lateness
+alert, one-day miss against authoritative D+5, and six historical REN gaps
+remain visible; there is still explicit NO-GO for real-time, D+1, or production
+claims.
 
 The project should not be presented as a deployed production system. Cloud
 deployment, production operation, real-time data, enterprise scalability,
@@ -53,7 +56,7 @@ each checkpoint was written. This file reflects the latest repository state.
 | V2 data-source work | Substantial local progress | REN and ERA5-Land source modules, Phase 2 acceptance docs | V2 does not replace v1; the accepted model is valid only for the documented historical-hindcast contract and has no scaler. |
 | V2 incremental updates | Implemented and synthetically validated | `wind_forecast.incremental`, batch-quality sidecars, Phase 8 docs and tests | Live REN/CDS refresh was not exercised by the repository test suite. |
 | Historical monitoring | Immutable quality, prediction evidence, drift, performance, reports, and local alerts implemented | `wind_forecast.monitoring`, `wind_forecast.monitoring_reporting`, Phase 9 CLIs/docs/tests | It is delayed historical hindcast monitoring, not live forecasting or external notification. |
-| Batch orchestration | Local CLI, Windows Task Scheduler, and Airflow 3.3.0 local stack implemented | `wind_forecast.orchestration`, `wind_forecast.airflow_orchestration`, `airflow/`, Phase 10 docs/tests | A 2026-08-10 Scheduler cycle completed with alerts and exit code 0 after recovery. Acceptance is local and conditional; Airflow remains inactive, and the shared owner pointer and lease prevent concurrent schedulers. |
+| Batch orchestration | Local CLI, Windows Task Scheduler, and Airflow 3.3.0 local stack implemented | `wind_forecast.orchestration`, `wind_forecast.airflow_orchestration`, `airflow/`, Phase 10 docs/tests | The 2026-08-11 unattended cycle failed before a new manifest; the daily task is disabled and automatic operation is NO-GO. Airflow remains inactive, and the shared owner pointer and lease prevent concurrent schedulers. |
 | Controlled retraining | Contract, eligibility, backtesting, candidate registration, bootstrap, model-era monitoring, manual lifecycle, recommendation-only monthly scheduling, and final synthetic lifecycle acceptance implemented | Controlled-retraining modules, manual/scheduled CLIs, Airflow DAGs, `tests/test_controlled_retraining_acceptance.py`, and `docs/CONTROLLED_RETRAINING.md` | The one-time local bootstrap completed from the accepted Phase 9 ledger. Training and every later lifecycle transition still require explicit operator action and exact evidence. The final lifecycle acceptance remains synthetic and uses an in-memory Registry boundary. |
 | Automated tests | Implemented | `tests/`, pytest and pytest-cov configuration | Coverage has a conservative baseline gate; source-ingestion and v2 modules still need deeper tests. |
 | Code quality | Implemented baseline | Ruff configuration in `pyproject.toml` | Ruff rule set is intentionally minimal. |
@@ -211,17 +214,42 @@ processes; exact PID-tree verification and termination were required before a
 clean restart. The service evidence must not be represented as a clean
 scheduler stop.
 
-The formal decision is **CONDITIONAL GO** for the local delayed historical
+The 2026-08-10 decision was **CONDITIONAL GO** for the local delayed historical
 hindcast, Windows orchestration, and read-only API only, and **NO-GO** for
-real-time, D+1, or production. Phase 9 D+5 is the authoritative SLO and required
-data through 2026-08-05; the common watermark of 2026-08-04 misses it by one
-day. Phase 8 D-6 remains only the conservative recovery-time gate; changing it
-requires a separate policy/code decision, with review or expiry at 2026-08-12
-12:30 `Europe/Lisbon`. Six historical REN dates remain unavailable:
+real-time, D+1, or production. It was superseded for automatic operation by the
+2026-08-11 incident described below. Phase 9 D+5 is the authoritative SLO and
+required data through 2026-08-05; the common watermark of 2026-08-04 misses it
+by one day. Phase 8 D-6 remains only the conservative recovery-time gate.
+Six historical REN dates remain unavailable:
 2014-05-03, 2016-02-03, 2016-02-04, 2021-10-03, 2023-08-30, and 2025-08-02.
 The quality verdict remains `FAIL` as an accepted limitation only; gaps and
 alerts are not suppressed. All local evidence is ignored by Git and absent
 from a fresh clone.
+
+### 2026-08-11 automatic-operation incident
+
+- Both local service tasks stopped at 10:24 with `0xC000013A`; no listener on
+  `127.0.0.1:5000` or `127.0.0.1:8000` and no same-day service log remained.
+- `WindForecastHistoricalBatch` started at 12:00, returned
+  `LastTaskResult=1`, and created no coordinator manifest. Its lease was
+  released and the current pointer remained on the 2026-08-10 manual success.
+- On 2026-08-12 the four pre-containment task definitions and a checksum
+  inventory of local evidence were exported to an ignored recovery snapshot.
+  The live daily registration then changed only `Settings.Enabled`; its action,
+  principal, triggers, and other settings were preserved. Airflow remained
+  inactive and no data, model, Registry, deployment, pointer, or manifest was
+  changed.
+- Enabling `Microsoft-Windows-TaskScheduler/Operational` failed with
+  `Access is denied`; it remains a prerequisite for an administrative operator
+  session. No permission workaround was attempted.
+- Automatic operation is **NO-GO** until persistent MLflow/API health, one
+  successful manual daily batch, and one later successful automatic batch are
+  all verified without locks, leases, or child processes left behind.
+
+The D+5 objective remains authoritative and D-6 remains a provisional
+conservative eligibility gate during recovery. The owner, final decision, and
+review deadline will be recorded with the live recovery evidence; any D-5 code
+change remains a separate evidence-gated task.
 
 The standard CI checks are:
 
