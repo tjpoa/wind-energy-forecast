@@ -46,10 +46,26 @@ Isolated copied-store probes kept both one-worker and four-worker servers
 healthy in an interactive terminal, so the failure is contextual and
 intermittent rather than a SQLite or port fault. The Windows scheduled runner
 therefore pins `--workers 1`, avoiding the multiprocess socket/signal path while
-retaining Uvicorn, its security middleware, and the loopback-only binding. This
-code correction is not persistence evidence. The current decision remains
-**NO-GO for automatic operation** until persistent services, one manual batch,
-and a later automatic batch all pass the recovery gates.
+retaining Uvicorn, its security middleware, and the loopback-only binding.
+
+A later one-worker recovery probe kept MLflow healthy for more than five
+minutes. The API was healthy while its initiating PowerShell session remained
+open and ended with `0xC000013A` exactly when that session closed. MLflow later
+ended with the same result, but its initiating-session closure was not captured
+and no equivalent causal correlation is claimed. Neither service output had an
+application traceback or graceful shutdown, and both runner JSONL files stopped
+at `child:started`. This evidence makes the interactive execution context the
+leading hypothesis, not a proven common cause. The service registration scripts
+now select the same Windows user with `LogonType S4U`, placing the actions in a
+non-interactive Task Scheduler session while preserving direct child
+invocation, output capture, and exit codes. S4U stores no password and cannot
+access network resources or encrypted files; it also requires the account's
+effective `Log on as a batch job` right. The approved service paths and
+dependencies are local and loopback-only. This mitigation has not been applied
+to the live tasks or validated there and is not persistence evidence. The
+current decision remains **NO-GO for automatic operation** until persistent
+services, one manual batch, and a later automatic batch all pass the recovery
+gates.
 
 The operating mode remains the Phase 9 delayed historical hindcast. This work
 does not introduce D+1 forecasting, retraining, model promotion, external

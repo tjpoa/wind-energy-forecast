@@ -251,6 +251,20 @@ from a fresh clone.
   stayed healthy with one worker and also with four workers interactively,
   narrowing the fault to the contextual scheduled multiprocess path. The
   runner now pins one worker; this has not yet passed the live persistence gate.
+- A later one-worker probe kept MLflow healthy beyond the restart window and
+  kept the API healthy with repeated HTTP 200 responses while the PowerShell
+  session that started its task remained open. The API ended with `0xC000013A`
+  exactly when that session closed. MLflow later ended with the same result,
+  but no equivalent initiating-session correlation was captured. Neither
+  output had an application traceback or graceful shutdown, and their JSONL
+  evidence stopped at `child:started`. The interactive execution context is
+  therefore the leading hypothesis, not a proven common cause. The service
+  registration scripts now select the same user with non-interactive
+  `LogonType S4U`; actions, triggers, settings, runners, loopback bindings,
+  logs, and exit-code propagation are unchanged. S4U stores no password,
+  cannot access network resources or encrypted files, and requires the
+  effective `Log on as a batch job` right. This definition change has not been
+  applied or validated live and is not recovery evidence.
 - Automatic operation is **NO-GO** until persistent MLflow/API health, one
   successful manual daily batch, and one later successful automatic batch are
   all verified without locks, leases, or child processes left behind.
