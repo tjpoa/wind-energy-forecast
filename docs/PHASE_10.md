@@ -54,18 +54,31 @@ open and ended with `0xC000013A` exactly when that session closed. MLflow later
 ended with the same result, but its initiating-session closure was not captured
 and no equivalent causal correlation is claimed. Neither service output had an
 application traceback or graceful shutdown, and both runner JSONL files stopped
-at `child:started`. This evidence makes the interactive execution context the
-leading hypothesis, not a proven common cause. The service registration scripts
-now select the same Windows user with `LogonType S4U`, placing the actions in a
-non-interactive Task Scheduler session while preserving direct child
-invocation, output capture, and exit codes. S4U stores no password and cannot
-access network resources or encrypted files; it also requires the account's
-effective `Log on as a batch job` right. The approved service paths and
-dependencies are local and loopback-only. This mitigation has not been applied
-to the live tasks or validated there and is not persistence evidence. The
-current decision remains **NO-GO for automatic operation** until persistent
-services, one manual batch, and a later automatic batch all pass the recovery
-gates.
+at `child:started`. This evidence made the interactive execution context the
+leading hypothesis, not a proven common cause. After the service-only S4U
+change was reviewed and merged, the account's effective `Log on as a batch job`
+right was verified and only the live MLflow and API principals were replaced.
+Both S4U tasks then remained `Running` for a five-minute observation beyond
+their three one-minute retries, retained one stable loopback listener and PID
+each, returned HTTP 200, and answered all three typed operational queries.
+
+The daily batch remained `InteractiveToken`. Its read-only plan for 2026-08-16
+completed successfully, but the one authorized manual start ended after 5m58s
+with `0xC000013A` (`STATUS_CONTROL_C_EXIT`). The runner JSONL stopped at
+`child:started`; coordinator `20260816T205748784400Z-7b0bee70` remained
+`running` after a verified deployment preflight, its output log was empty, and
+the scheduler lease and batch lock were preserved. No data, monitoring,
+reporting, deployment, or orchestration current pointer changed. The elevated
+monitoring PowerShell remained alive until after the scheduled action ended,
+and no matching logoff, power, Application Error, or System event was found.
+The exact control-signal sender therefore remains unresolved, while the daily
+task's interactive execution context is the leading bounded mitigation target.
+The batch registration script now changes only that principal to the same user
+with `LogonType S4U`; action, arguments, daily trigger, settings, lease, runner,
+and exit-code contracts are unchanged. This batch definition has not been
+applied or validated live. The current decision remains **NO-GO for automatic
+operation** until persistent services, one manual batch, and a later automatic
+batch all pass the recovery gates.
 
 The operating mode remains the Phase 9 delayed historical hindcast. This work
 does not introduce D+1 forecasting, retraining, model promotion, external
@@ -145,10 +158,15 @@ validating all selected paths:
   -WhatIf
 ```
 
-Remove `-WhatIf` only after reviewing the generated action. The task runs daily
-at local 12:00, never overlaps itself, has a six-hour execution limit, and is
-retried twice at 30-minute intervals. It uses the current interactive Windows
-identity and stores no credential in the repository.
+Remove `-WhatIf` only after reviewing the generated action and confirming the
+current Windows identity has effective `Log on as a batch job` and is not
+covered by `Deny log on as a batch job`. The task runs daily at local 12:00,
+never overlaps itself, has a six-hour execution limit, and is retried twice at
+30-minute intervals. It uses that same identity with `LogonType S4U` and
+`RunLevel Limited`; registration does not start the task. S4U stores no password
+and cannot access network resources or encrypted files. The provider credential
+paths are local, but provider access must still be validated under the exact S4U
+principal before automatic operation.
 
 Register the separate recommendation-only monthly task against the same owner
 and lease:

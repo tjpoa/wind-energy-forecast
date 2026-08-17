@@ -258,13 +258,31 @@ from a fresh clone.
   but no equivalent initiating-session correlation was captured. Neither
   output had an application traceback or graceful shutdown, and their JSONL
   evidence stopped at `child:started`. The interactive execution context is
-  therefore the leading hypothesis, not a proven common cause. The service
-  registration scripts now select the same user with non-interactive
+  therefore the leading hypothesis, not a proven common cause. The reviewed
+  service registration change selected the same user with non-interactive
   `LogonType S4U`; actions, triggers, settings, runners, loopback bindings,
   logs, and exit-code propagation are unchanged. S4U stores no password,
   cannot access network resources or encrypted files, and requires the
-  effective `Log on as a batch job` right. This definition change has not been
-  applied or validated live and is not recovery evidence.
+  effective `Log on as a batch job` right. At that checkpoint it was definition
+  only; the next bullet records its post-merge live application.
+- After merge, the effective logon right was verified and only the two service
+  principals were replaced. MLflow and the API then stayed `Running` for a
+  five-minute observation with stable PIDs, one listener each, HTTP 200, and all
+  three typed queries `answered`.
+- The daily task remained `InteractiveToken`. Its 2026-08-16 read-only plan
+  succeeded, but its single authorized manual start ended after 5m58s with
+  `0xC000013A`/`STATUS_CONTROL_C_EXIT`. Runner PID 25588 stopped without a
+  graceful PowerShell event, coordinator `20260816T205748784400Z-7b0bee70`
+  retained only the verified deployment preflight, both locks were preserved,
+  and no current pointer changed. The monitoring launcher ended only after the
+  task action, and no matching session, power, Application Error, or System
+  event identified the control-signal sender.
+- The batch registration script now changes only its principal from
+  `Interactive` to the same user with `LogonType S4U` and `RunLevel Limited`.
+  Its action, arguments, 12:00 trigger, six-hour limit, retries, `IgnoreNew`,
+  lease, runner, and exit semantics are unchanged. This definition has not been
+  applied or validated live; provider access under the exact S4U principal is a
+  mandatory post-merge gate.
 - Automatic operation is **NO-GO** until persistent MLflow/API health, one
   successful manual daily batch, and one later successful automatic batch are
   all verified without locks, leases, or child processes left behind.

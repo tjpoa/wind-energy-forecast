@@ -55,6 +55,18 @@ Disabling the task is the safe operational rollback. Do not unregister it or
 remove data during incident response. Re-registration replaces only the task
 definition and must first be reviewed with `-WhatIf`.
 
+The daily registration uses the current Windows user with `LogonType S4U` and
+`RunLevel Limited`. It preserves the 12:00 local daily trigger, six-hour limit,
+two 30-minute retries, `IgnoreNew`, action, arguments, and owner/lease wrapper;
+registration does not start the task. Before replacing the live definition,
+verify effective `Log on as a batch job`, absence of `Deny log on as a batch
+job`, and the exact `-WhatIf` output. S4U stores no password and cannot access
+network resources or encrypted files. Because the daily workflow performs
+provider-backed refreshes, validate its existing local credential files and
+provider access under the exact S4U principal. A network share, encrypted file,
+missing effective right, or different account is a stop condition requiring a
+separate principal decision.
+
 ## Persistent local MLflow and operational API
 
 MLflow and the read-only operational API are separate logon-triggered tasks.
@@ -271,14 +283,29 @@ session's closure. MLflow later ended with the same result, but the probe did
 not capture its initiating-session closure, so the same causal relationship is
 not established. Neither output contained an application traceback or graceful
 shutdown, and both runner streams stopped at `child:started`. The combined
-evidence makes the interactive task execution context the leading hypothesis
-and justifies a bounded mitigation test; it does not prove a common cause or a
-fix. The registration scripts therefore change only the two service
-principals' logon method from `Interactive` to non-interactive `S4U`, retaining
-the same user, actions, triggers, settings, runner contracts, and loopback
-bindings. The live task definitions must not be replaced until this change is
-reviewed and merged; after replacement they still require the effective batch
-logon-right preflight and all persistence gates.
+evidence made the interactive task execution context the leading hypothesis and
+justified a bounded mitigation test; it did not prove a common cause or a fix.
+The reviewed change was limited to the two service principals' logon method,
+from `Interactive` to non-interactive `S4U`, retaining the same user, actions,
+triggers, settings, runner contracts, and loopback bindings. At that checkpoint
+the live definitions had not yet been replaced; the next paragraph records the
+post-merge application and validation.
+
+After merge, the effective batch logon right was verified and the two service
+definitions were replaced with S4U. MLflow and the API then remained `Running`
+with stable PIDs, one listener each, HTTP 200, and all three typed queries
+`answered` throughout a five-minute observation. The daily task was still
+`InteractiveToken`. Its 2026-08-16 plan succeeded, but one manual start ended
+after 5m58s with `0xC000013A`/`STATUS_CONTROL_C_EXIT`. Task Scheduler correlated
+instance `{8279dc54-cc07-413e-871d-d8119ed4a564}` with runner PID 25588 and the
+same native result. The runner stopped at `child:started`; coordinator
+`20260816T205748784400Z-7b0bee70` retained only its verified deployment
+preflight, and no current pointer changed. The initiating elevated monitor
+closed only after the action, no six-minute task timeout exists, and no matching
+session, power, Application Error, or System event was recorded. Do not infer
+the exact signal sender. Keep the task disabled and preserve both locks and the
+manifest. The batch-only S4U registration change is a bounded mitigation and is
+not recovery evidence until reviewed, merged, applied, and tested live.
 
 ### Recorded failure and completed recovery: 2026-08-10
 
