@@ -126,6 +126,81 @@ def test_windows_daily_runner_is_owner_guarded() -> None:
     assert "release" in source
 
 
+def test_windows_daily_registration_uses_s4u_without_changing_schedule() -> None:
+    source = _script("register_local_batch_task.ps1")
+    assert 'SupportsShouldProcess = $true' in source
+    assert '$TaskName = "WindForecastHistoricalBatch"' in source
+    assert (
+        "$currentUser = "
+        "[System.Security.Principal.WindowsIdentity]::GetCurrent().Name"
+        in source
+    )
+    assert 'New-ScheduledTaskTrigger -Daily -At "12:00"' in source
+    assert '-LogonType S4U' in source
+    assert 'LogonType = "S4U"' in source
+    assert '-LogonType Interactive' not in source
+    assert '-RunLevel Limited' in source
+    assert '-ExecutionTimeLimit (New-TimeSpan -Hours 6)' in source
+    assert '-RestartCount 2' in source
+    assert '-RestartInterval (New-TimeSpan -Minutes 30)' in source
+    assert '-MultipleInstances IgnoreNew' in source
+    assert '-StartWhenAvailable' in source
+    assert '"-File", (Quote-TaskArgument $runner)' in source
+    assert '"-EnvironmentId", (Quote-TaskArgument $EnvironmentId)' in source
+    assert 'StartsTask = $false' in source
+    assert 'Register-ScheduledTask' in source
+    assert 'Start-ScheduledTask' not in source
+    assert 'Unregister-ScheduledTask' not in source
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1")
+def test_windows_daily_registration_whatif_reports_s4u_without_starting(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    for relative in (
+        "scripts",
+        "model-bundle",
+        "calibration",
+        "deployment",
+        "scheduler",
+    ):
+        (repository / relative).mkdir(parents=True, exist_ok=True)
+    (repository / "scripts" / "run_scheduled_batch.ps1").touch()
+    fake_python = tmp_path / "fake-python.cmd"
+    fake_python.write_text("@echo off\nexit /b 0\n", encoding="utf-8")
+
+    completed = _run_powershell(
+        "register_local_batch_task.ps1",
+        [
+            "-PythonExecutable",
+            str(fake_python),
+            "-RepositoryRoot",
+            str(repository),
+            "-ModelBundle",
+            str(repository / "model-bundle"),
+            "-CalibrationDirectory",
+            str(repository / "calibration"),
+            "-DeploymentRoot",
+            str(repository / "deployment"),
+            "-SchedulerStateRoot",
+            str(repository / "scheduler"),
+            "-EnvironmentId",
+            "local",
+            "-ActivationDate",
+            "2026-06-28",
+            "-WhatIf",
+        ],
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "Daily at 12:00 local time" in completed.stdout
+    assert "LogonType" in completed.stdout
+    assert "S4U" in completed.stdout
+    assert "StartsTask" in completed.stdout
+    assert "False" in completed.stdout
+
+
 def test_windows_monthly_task_runs_recommendations_only() -> None:
     runner = _script("run_scheduled_monthly_governance.ps1")
     registration = _script("register_local_monthly_governance_task.ps1")
@@ -135,6 +210,7 @@ def test_windows_monthly_task_runs_recommendations_only() -> None:
     assert "DaysOfMonth = [uint32]128" in registration
     assert "StartWhenAvailable" in registration
     assert "IgnoreNew" in registration
+    assert "-LogonType Interactive" in registration
     for prohibited in (
         "backtest_retraining_candidate.py",
         "train_v2_reference.py",

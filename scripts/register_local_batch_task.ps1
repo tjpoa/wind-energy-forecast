@@ -82,19 +82,23 @@ if ($environmentFile) {
 }
 
 $actionArgumentText = $actionArguments -join " "
+$currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 if ($WhatIfPreference) {
     [pscustomobject]@{
         TaskName = $TaskName
         Executable = "powershell.exe"
         Arguments = $actionArgumentText
+        UserId = $currentUser
+        RunLevel = "Limited"
         Schedule = "Daily at 12:00 local time"
         ExecutionTimeLimit = "06:00:00"
         RestartCount = 2
         RestartInterval = "00:30:00"
         MultipleInstances = "IgnoreNew"
-        LogonType = "Interactive"
+        LogonType = "S4U"
         SchedulerStateRoot = $schedulerState
         EnvironmentId = $EnvironmentId
+        StartsTask = $false
     }
     return
 }
@@ -110,15 +114,15 @@ $settings = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew `
     -StartWhenAvailable
 $principal = New-ScheduledTaskPrincipal `
-    -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) `
-    -LogonType Interactive `
+    -UserId $currentUser `
+    -LogonType S4U `
     -RunLevel Limited
 $task = New-ScheduledTask `
     -Action $action `
     -Trigger $trigger `
     -Settings $settings `
     -Principal $principal `
-    -Description "Owner-guarded daily D+5 historical wind-forecast batch at 12:00 local time."
+    -Description "Owner-guarded daily D+5 historical wind-forecast batch in a non-interactive S4U session at 12:00 local time."
 
 if ($PSCmdlet.ShouldProcess($TaskName, "Register or replace scheduled task")) {
     Register-ScheduledTask -TaskName $TaskName -InputObject $task -Force | Out-Null
