@@ -656,9 +656,11 @@ does not publish or deploy them.
 4. Use the versioned offline evaluation harness as a mandatory gate for any
    separately approved future Operational Read-only Copilot candidate. The
    dedicated PostgreSQL projection and optional `disabled|required` query
-   integration are implemented, with consumption disabled by default. No
-   candidate has been evaluated, and no Copilot, MCP, RAG, observability,
-   production authentication, remote exposure, or cloud implementation exists.
+   integration are implemented, with consumption disabled by default. The
+   provider-neutral single-tool Copilot core, offline runner, and local
+   sanitized observability are implemented, but no provider or candidate has
+   been evaluated; MCP, RAG, production authentication, remote exposure, and
+   cloud implementation remain out of scope.
 5. Add interactive prediction only after a reviewed UI/API contract, then
    progress through cloud deployment design as an explicit future phase.
 

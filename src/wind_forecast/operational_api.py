@@ -9,26 +9,27 @@ import ipaddress
 import json
 import math
 from time import perf_counter
-from typing import Any, Callable, Literal
+from typing import Any, Callable
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import ValidationError
 
 from .config import load_operational_query_config
 from .operational_query import OperationalQueryService
 from .operational_query_models import (
     AnswerStatus,
     AuthorizationContext,
-    CONTRACT_VERSION,
     EvidenceState,
     OperationalAnswer,
     OperationalFailure,
-    Pagination,
     QueryKind,
-    Selector,
+)
+from .operational_copilot_models import (
+    LOCAL_OPERATOR_PRINCIPAL,
+    OperationalHttpRequest,
 )
 from .operational_observability import (
     ObservabilityContext,
@@ -39,8 +40,6 @@ from .operational_observability import (
 
 
 MAX_OPERATIONAL_QUERY_BODY_BYTES = 64 * 1024
-LOCAL_OPERATOR_PRINCIPAL = "local-api-operator"
-
 STATUS_CODE_BY_ANSWER_STATUS = {
     AnswerStatus.ANSWERED: 200,
     AnswerStatus.EMPTY: 200,
@@ -52,23 +51,6 @@ STATUS_CODE_BY_ANSWER_STATUS = {
     AnswerStatus.CONFLICT: 503,
     AnswerStatus.TIMEOUT: 504,
 }
-
-
-class OperationalHttpRequest(BaseModel):
-    """Public request fields; transport metadata is server-controlled."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    contract_version: Literal[CONTRACT_VERSION]
-    query_kind: QueryKind
-    selector: Selector
-    window_days: Literal[30, 90] | None = None
-    pagination: Pagination | None = None
-
-    @field_validator("query_kind", mode="before")
-    @classmethod
-    def parse_query_kind(cls, value: Any) -> QueryKind:
-        return value if isinstance(value, QueryKind) else QueryKind(value)
 
 
 def _allow_local_operator(
