@@ -17,6 +17,7 @@ from wind_forecast.config import (
     OPERATIONAL_CALIBRATION_DIR_ENV,
     OPERATIONAL_ENVIRONMENT_ID_ENV,
     OPERATIONAL_MODEL_BUNDLE_ENV,
+    OPERATIONAL_OBSERVABILITY_ROOT_ENV,
     OPERATIONAL_PROJECTION_MODE_ENV,
     OPERATIONAL_PROJECTION_READER_DSN_ENV,
     OPERATIONAL_QUERY_TIMEOUT_ENV,
@@ -27,6 +28,10 @@ from wind_forecast.operational_api import (
     MAX_OPERATIONAL_QUERY_BODY_BYTES,
     get_operational_query_service,
     get_operational_query_service_factory,
+)
+from wind_forecast.operational_observability import (
+    OBSERVABILITY_EVENTS_FILENAME,
+    get_operational_observability,
 )
 from wind_forecast.operational_query import OperationalQueryService
 from wind_forecast.operational_query_models import (
@@ -47,7 +52,10 @@ RUN_ID = "20260731T120000000000Z-abcdef123456"
 
 
 @pytest.fixture(autouse=True)
-def _explicit_operational_artifacts(monkeypatch: pytest.MonkeyPatch) -> None:
+def _explicit_operational_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     monkeypatch.setenv(
         OPERATIONAL_MODEL_BUNDLE_ENV,
         "outputs/training/v2_reference_mlflow",
@@ -56,6 +64,10 @@ def _explicit_operational_artifacts(monkeypatch: pytest.MonkeyPatch) -> None:
         OPERATIONAL_CALIBRATION_DIR_ENV,
         "data/processed/v2/monitoring/reporting/calibrations/test-calibration",
     )
+    monkeypatch.setenv(OPERATIONAL_OBSERVABILITY_ROOT_ENV, str(tmp_path))
+    get_operational_observability.cache_clear()
+    yield
+    get_operational_observability.cache_clear()
 
 
 def _payload(query_kind: str, **overrides) -> dict:
@@ -215,6 +227,121 @@ def test_endpoint_adds_server_controlled_metadata_and_five_second_deadline():
     ).total_seconds() == pytest.approx(5.0)
     assert authorization.principal == "local-api-operator"
     assert authorization.trusted_local is True
+
+
+def test_endpoint_records_correlated_request_and_tool_spans(tmp_path: Path):
+    service = RecordingService()
+
+    response = _client(service).post(
+        "/api/v1/operational-query",
+        json=_payload("data_quality"),
+    )
+
+    events = [
+        json.loads(line)
+        for line in (
+            tmp_path / OBSERVABILITY_EVENTS_FILENAME
+        ).read_text(encoding="utf-8").splitlines()
+    ]
+    assert response.status_code == 200
+    assert [event["event_type"] for event in events] == [
+        "request.started",
+        "tool.started",
+        "tool.finished",
+        "request.finished",
+    ]
+    assert all(event["query_kind"] == "data_quality" for event in events)
+    assert len({event["correlation_id"] for event in events}) == 1
+    assert len({event["trace_id"] for event in events}) == 1
+    request_span = events[0]["span_id"]
+    assert events[1]["parent_span_id"] == request_span
+    assert events[2]["parent_span_id"] == request_span
+    assert events[1]["tool_name"] == "operational_query"
+    assert events[2]["answer_status"] == "empty"
+    assert events[3]["answer_status"] == "empty"
+    assert events[3]["http_status"] == 200
+
+
+def test_all_eight_query_kinds_are_observed(tmp_path: Path):
+    service = RecordingService()
+    payloads = (
+        _payload("operational_summary"),
+        _payload("active_deployment"),
+        _payload("data_quality"),
+        _payload("monitoring_performance", window_days=30),
+        _payload("monitoring_drift", window_days=90),
+        _payload(
+            "monitoring_alerts",
+            pagination={"limit": 50, "offset": 0},
+        ),
+        _payload("active_model_metadata"),
+        _payload(
+            "reporting_run",
+            selector={
+                "kind": "exact_id",
+                "id_type": "reporting_run_id",
+                "identifier": RUN_ID,
+            },
+        ),
+    )
+
+    for payload in payloads:
+        response = _client(service).post(
+            "/api/v1/operational-query",
+            json=payload,
+        )
+        assert response.status_code == 200
+
+    events = [
+        json.loads(line)
+        for line in (
+            tmp_path / OBSERVABILITY_EVENTS_FILENAME
+        ).read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(events) == 32
+    assert {
+        event["query_kind"] for event in events
+    } == {
+        "operational_summary",
+        "active_deployment",
+        "data_quality",
+        "monitoring_performance",
+        "monitoring_drift",
+        "monitoring_alerts",
+        "active_model_metadata",
+        "reporting_run",
+    }
+
+
+def test_writer_failure_does_not_change_operational_query_response(
+    monkeypatch,
+    tmp_path: Path,
+):
+    blocked_root = tmp_path / "blocked"
+    blocked_root.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setenv(OPERATIONAL_OBSERVABILITY_ROOT_ENV, str(blocked_root))
+    get_operational_observability.cache_clear()
+    service = RecordingService()
+
+    try:
+        response = _client(service).post(
+            "/api/v1/operational-query",
+            json=_payload("data_quality"),
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "empty"
+
+        health = _client(service).get(
+            "/api/v1/operational-observability/health"
+        )
+        metrics = _client(service).get(
+            "/api/v1/operational-observability/metrics"
+        )
+        assert health.status_code == 503
+        assert health.json()["status"] == "degraded"
+        assert metrics.json()["dropped_events"] == 4
+    finally:
+        get_operational_observability.cache_clear()
 
 
 @pytest.mark.parametrize(

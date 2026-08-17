@@ -8,6 +8,7 @@ from functools import lru_cache
 import ipaddress
 import json
 import math
+from time import perf_counter
 from typing import Any, Callable, Literal
 from uuid import uuid4
 
@@ -28,6 +29,12 @@ from .operational_query_models import (
     Pagination,
     QueryKind,
     Selector,
+)
+from .operational_observability import (
+    ObservabilityContext,
+    OperationalObservability,
+    get_operational_observability,
+    unavailable_observability,
 )
 
 
@@ -317,6 +324,14 @@ def _json_response(answer: OperationalAnswer) -> JSONResponse:
     )
 
 
+def _current_operational_observability() -> OperationalObservability:
+    """Return a safe writer; observability failures never fail the API request."""
+    try:
+        return get_operational_observability()
+    except Exception:
+        return unavailable_observability()
+
+
 operational_router = APIRouter()
 
 
@@ -353,14 +368,40 @@ async def operational_query(
     """Serve one bounded, local-only operational query."""
     requested_at_utc = datetime.now(timezone.utc)
     correlation_id = uuid4().hex
+    request_started_at = perf_counter()
     raw_body, body_error = await _limited_json_body(request)
+    observed_query_kind = _query_kind(raw_body)
+    observability = _current_operational_observability()
+    context = ObservabilityContext(
+        correlation_id=correlation_id,
+        trace_id=uuid4().hex,
+        request_span_id=uuid4().hex,
+    )
+    observability.request_started(
+        context,
+        query_kind=observed_query_kind,
+    )
+
+    def finish(answer: OperationalAnswer) -> JSONResponse:
+        observability.request_finished(
+            context,
+            query_kind=answer.query_kind or observed_query_kind,
+            answer_status=answer.status,
+            http_status=STATUS_CODE_BY_ANSWER_STATUS[answer.status],
+            duration_ms=(perf_counter() - request_started_at) * 1000.0,
+            failure_code=(
+                None if answer.failure is None else answer.failure.code
+            ),
+        )
+        return _json_response(answer)
+
     if body_error is not None:
         message = (
             "The operational query request body exceeds the 64 KiB limit."
             if body_error == "operational_query_body_too_large"
             else "The operational query request body is invalid."
         )
-        return _json_response(
+        return finish(
             _transport_refusal(
                 correlation_id=correlation_id,
                 served_at_utc=requested_at_utc,
@@ -375,7 +416,7 @@ async def operational_query(
             strict=True,
         )
     except (ValidationError, TypeError, ValueError):
-        return _json_response(
+        return finish(
             _transport_refusal(
                 correlation_id=correlation_id,
                 served_at_utc=requested_at_utc,
@@ -386,7 +427,7 @@ async def operational_query(
     try:
         service = service_factory()
     except Exception:
-        return _json_response(
+        return finish(
             _service_unavailable(
                 correlation_id=correlation_id,
                 served_at_utc=requested_at_utc,
@@ -405,6 +446,13 @@ async def operational_query(
         principal=LOCAL_OPERATOR_PRINCIPAL,
         trusted_local=_trusted_loopback(request),
     )
+    tool_span_id = uuid4().hex
+    tool_started_at = perf_counter()
+    observability.tool_started(
+        context,
+        span_id=tool_span_id,
+        query_kind=public_request.query_kind,
+    )
     try:
         answer = service.answer(query, authorization)
     except Exception:
@@ -413,7 +461,56 @@ async def operational_query(
             served_at_utc=requested_at_utc,
             query_kind=public_request.query_kind,
         )
-    return _json_response(answer)
+    observability.tool_finished(
+        context,
+        span_id=tool_span_id,
+        query_kind=answer.query_kind or public_request.query_kind,
+        answer_status=answer.status,
+        duration_ms=(perf_counter() - tool_started_at) * 1000.0,
+        failure_code=None if answer.failure is None else answer.failure.code,
+    )
+    return finish(answer)
+
+
+@operational_router.get(
+    "/api/v1/operational-observability/health",
+    responses={
+        403: {"description": "The caller is not loopback-local."},
+        503: {"description": "The local event writer is degraded."},
+    },
+)
+def operational_observability_health(request: Request) -> JSONResponse:
+    """Return loopback-only readiness for the local event writer."""
+    if not _trusted_loopback(request):
+        return JSONResponse(
+            status_code=403,
+            content={"status": "unauthorized"},
+        )
+    observability = _current_operational_observability()
+    health = observability.health()
+    return JSONResponse(
+        status_code=200 if health["status"] == "ready" else 503,
+        content=health,
+    )
+
+
+@operational_router.get(
+    "/api/v1/operational-observability/metrics",
+    responses={
+        403: {"description": "The caller is not loopback-local."},
+    },
+)
+def operational_observability_metrics(request: Request) -> JSONResponse:
+    """Return loopback-only process-local observability counters."""
+    if not _trusted_loopback(request):
+        return JSONResponse(
+            status_code=403,
+            content={"status": "unauthorized"},
+        )
+    return JSONResponse(
+        status_code=200,
+        content=_current_operational_observability().metrics(),
+    )
 
 
 __all__ = [
@@ -422,5 +519,7 @@ __all__ = [
     "STATUS_CODE_BY_ANSWER_STATUS",
     "get_operational_query_service",
     "get_operational_query_service_factory",
+    "operational_observability_health",
+    "operational_observability_metrics",
     "operational_router",
 ]

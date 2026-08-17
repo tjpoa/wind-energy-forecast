@@ -23,10 +23,16 @@ OPERATIONAL_CALIBRATION_DIR_ENV = (
 OPERATIONAL_QUERY_TIMEOUT_ENV = (
     "WIND_FORECAST_OPERATIONAL_QUERY_TIMEOUT_SECONDS"
 )
+OPERATIONAL_OBSERVABILITY_ROOT_ENV = (
+    "WIND_FORECAST_OPERATIONAL_OBSERVABILITY_ROOT"
+)
 MLFLOW_TRACKING_URI_ENV = "MLFLOW_TRACKING_URI"
 CORS_ALLOWED_ORIGINS_ENV = "WIND_FORECAST_CORS_ALLOW_ORIGINS"
 DEFAULT_CORS_ALLOWED_ORIGINS = ("http://localhost:5173",)
 DEFAULT_OPERATIONAL_QUERY_TIMEOUT_SECONDS = 5.0
+DEFAULT_OPERATIONAL_OBSERVABILITY_ROOT = (
+    "var/local_services/operational_observability"
+)
 OPERATIONAL_ENVIRONMENT_ID_ENV = "WIND_FORECAST_OPERATIONAL_ENVIRONMENT_ID"
 OPERATIONAL_PROJECTION_MIGRATOR_DSN_ENV = (
     "WIND_FORECAST_OPERATIONAL_PROJECTION_MIGRATOR_DSN"
@@ -78,6 +84,13 @@ class OperationalQueryConfig:
     projection_mode: str
     projection_environment_id: str | None
     projection_reader_dsn: str | None
+
+
+@dataclass(frozen=True)
+class OperationalObservabilityConfig:
+    """Location of the separate local operational-observability store."""
+
+    store_root: Path
 
 
 @dataclass(frozen=True)
@@ -236,6 +249,16 @@ def load_operational_query_config() -> OperationalQueryConfig:
         projection_mode=projection_mode,
         projection_environment_id=projection_environment_id,
         projection_reader_dsn=projection_reader_dsn,
+    )
+
+
+def load_operational_observability_config() -> OperationalObservabilityConfig:
+    """Load the separate local event-store path without touching the filesystem."""
+    return OperationalObservabilityConfig(
+        store_root=_resolved_project_path(
+            os.getenv(OPERATIONAL_OBSERVABILITY_ROOT_ENV),
+            default=DEFAULT_OPERATIONAL_OBSERVABILITY_ROOT,
+        )
     )
 
 
