@@ -29,6 +29,9 @@ jobs:
             requirements.txt
             requirements-dev.txt
 
+      - name: Configure Europe/Lisbon timezone contract
+        run: Set-TimeZone -Id "GMT Standard Time"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
