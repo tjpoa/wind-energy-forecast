@@ -536,9 +536,10 @@ read-only API, and versioned offline evaluation dataset/harness implemented.
 The separate PostgreSQL operational projection now includes its dedicated
 foundation and migrations, manual projector/verifier, deterministic benchmark
 with a superseding `GO`, and optional default-disabled `disabled|required`
-query integration. Local sanitized observability for the operational API is
-implemented as the next separately reviewed increment. Later product
-increments have not started.
+query integration. Local sanitized observability and the provider-neutral
+single-tool Copilot core/offline runner are implemented as separately
+reviewed increments. No provider-backed candidate has been evaluated or
+enabled; later product increments have not started.
 
 This future extension must consume verified operational evidence through
 read-only contracts. It must not mutate Phase 8/9 stores, MLflow, deployment
@@ -586,8 +587,13 @@ the existing checksum-pinned loaders as the source of truth.
    sanitization. Implemented with lazy JSONL events, process-local counters,
    loopback-only health/metrics endpoints, writer-failure degradation, and no
    changes to operational query answers or authoritative stores.
-7. Introduce a Copilot restricted to a small set of deterministic read-only
-   tools and require the evaluation gates before broader use.
+7. Introduce a Copilot restricted to the single deterministic read-only
+   `operational_query` tool. Implemented as the provider-neutral
+   `OperationalCopilot` library and in-memory offline runner with strict
+   `OperationalHttpRequest` validation, one selector/tool call, cooperative
+   selector and total deadlines, zero retries, passthrough `OperationalAnswer`,
+   and refusal while observability is degraded. No provider or candidate is
+   evaluated or enabled by this item.
 8. Add an MCP adapter over the same service contracts without creating a
    second business-logic or authorization path.
 9. Add document-only RAG, with a small versioned corpus and optional
@@ -600,6 +606,6 @@ the existing checksum-pinned loaders as the source of truth.
 Each item is an independent, reviewable increment. No item authorizes automatic
 training, lifecycle transitions, external notifications, live forecasting, or
 Airflow activation in an environment owned by Windows Task Scheduler.
-Items 1 through 6 are implemented. Projection consumption remains disabled by
-default. Copilot, MCP, RAG, and cloud design require separate reviewed
-increments.
+Items 1 through 7 are implemented. Projection consumption remains disabled by
+default. Provider-backed candidate evaluation, MCP, RAG, and cloud design
+require separate reviewed increments.

@@ -10,7 +10,7 @@
 | Contract version | `operational_read_only_copilot_v1` |
 | Audience | One authorized operator in a trusted local environment |
 | Operating mode | `retrospective_historical_batch_not_real_time` |
-| Implementation status | Typed read-only Python query layer, local-only HTTP adapter, versioned offline evaluation dataset/harness, dedicated PostgreSQL projection, benchmark `GO`, optional default-disabled query integration, and the local sanitized observability increment are implemented; no Copilot or candidate has been evaluated, and no MCP, RAG, production authentication, or deployment exists |
+| Implementation status | Typed read-only Python query layer, local-only HTTP adapter, versioned offline evaluation dataset/harness, dedicated PostgreSQL projection, benchmark `GO`, optional default-disabled query integration, local sanitized observability, and the provider-neutral single-tool Copilot core/offline runner are implemented; no provider or candidate has been evaluated, and no MCP, RAG, production authentication, or deployment exists |
 
 ## Objective
 
@@ -220,8 +220,35 @@ sets readiness to `degraded`. The loopback-only endpoints
 `GET /api/v1/operational-observability/health` and
 `GET /api/v1/operational-observability/metrics` expose only readiness and
 process-local counters. The existing `/health` endpoint and the
-`OperationalAnswer` contract remain unchanged. A future Copilot must refuse
+`OperationalAnswer` contract remain unchanged. The Copilot core refuses
 activation while observability readiness is `degraded`.
+
+### Provider-neutral Copilot core increment
+
+Item 7 adds `wind_forecast.operational_copilot.OperationalCopilot` as a
+library-only boundary over the existing `OperationalQueryService`. Its
+selector protocol is provider-neutral and receives only a bounded question,
+server-controlled request metadata, the single `operational_query` tool
+definition, and its cooperative timeout. It cannot receive evidence, loaders,
+stores, prior answers, or a response-writing instruction.
+
+The core performs exactly one selector call and, after strict validation, at
+most one query-service call. The selected arguments are validated with the
+same `OperationalHttpRequest` contract used by the local API. Unknown tools,
+extra selector fields, invalid arguments, selector failures, degraded
+observability, and expired deadlines return sanitized deterministic refusal or
+timeout `OperationalAnswer` values. There are no retries or fallbacks.
+
+Authorization remains owned by `OperationalQueryService`; the Copilot passes
+the trusted-local context through unchanged and never reads operational
+evidence itself. A valid service result is returned by identity, preserving
+all facts, citations, limitations, failures, and timestamps without summary
+or citation rewriting. `OfflineOperationalCopilotRunner` is an in-memory
+runner for injected synthetic selectors and answerers; it does not read or
+write operational stores and does not evaluate a candidate.
+
+This increment adds no endpoint, UI, provider SDK, network egress, model,
+prompt, MCP adapter, RAG corpus, or candidate acceptance.
 
 ## Conceptual Product Schemas
 
@@ -377,13 +404,14 @@ This contract is additive. It creates no current public API or persisted schema.
 
 ## Explicit Non-goals
 
-The implemented query/API increments remain intentionally limited. They do not
-authorize or implement:
+The implemented query/API/observability/core increments remain intentionally
+limited. They do not authorize or implement:
 
 - TypeScript code, new dependencies, frontend changes, endpoints beyond the
-  accepted query and observability endpoints, tools, prompts, or an LLM;
-- Copilot, MCP, RAG, embeddings, a document corpus, `pgvector`, staging, cloud
-  deployment, or a new CI/CD release path;
+  accepted query and observability endpoints, additional tools, prompts, or an
+  LLM;
+- a provider-backed Copilot candidate, MCP, RAG, embeddings, a document corpus,
+  `pgvector`, staging, cloud deployment, or a new CI/CD release path;
 - authentication beyond the accepted trusted-local expectation;
 - data/model/scaler changes, artifact generation, notebook execution,
   ingestion, provider calls, training, retraining, lifecycle transitions,
@@ -392,7 +420,8 @@ authorize or implement:
   governance queries;
 - v1 artifact inspection, interactive `/predict`, live forecasting, D+1, or
   multi-day forecasting;
-- a claim that the project is a production system or that the Copilot exists.
+- a claim that the project is a production system or that a provider-backed
+  Copilot service exists.
 
 ## Typed Query Layer Implementation
 
@@ -563,9 +592,16 @@ compare byte/size/mtime snapshots. Candidate JSONL itself is only observable
 trace evidence and is never treated as proof of a candidate's internal
 read/write behavior.
 
-The current state is exactly `harness accepted; no Copilot evaluated`. No
-Copilot may pass its introduction gate until it supplies one complete,
-schema-valid response set and passes these evaluation gates.
+The current state is exactly `harness accepted; Copilot core implemented; no
+provider or candidate evaluated`. No provider-backed Copilot may pass its
+introduction gate until it supplies one complete, schema-valid response set
+and passes these evaluation gates.
+
+The Item 7 core tests cover the eight accepted query kinds, strict tool and
+argument validation, authorization before selector/executor access, one-call
+and zero-retry behavior, cooperative selector/deadline failures, observability
+degradation, integral `OperationalAnswer` passthrough, sanitized executor
+failures, and the in-memory offline runner.
 
 ## Acceptance Criteria
 
@@ -579,11 +615,12 @@ schema-valid response set and passes these evaluation gates.
 - Historical hindcast, target scale, model-era, and alias semantics are
   preserved.
 - No current API, store, model, scheduler, or artifact contract changes.
-- The roadmap shows the query layer, local-only API, and offline evaluation
-  harness as implemented, the relational-projection contract as separately
-  accepted with runtime work pending, and observability as implemented in this
-  increment. Copilot, MCP, RAG, and cloud remain separate future increments.
-- Repository status does not describe any Copilot implementation as current.
+- The roadmap shows the query layer, local-only API, offline evaluation
+  harness, observability, and provider-neutral Copilot core as implemented; the
+  relational projection remains separately governed and no provider/candidate
+  has been accepted. MCP, RAG, and cloud remain separate future increments.
+- Repository status distinguishes the implemented Copilot core from any
+  provider-backed or evaluated Copilot candidate.
 
 ## Risks And Controls
 
@@ -598,7 +635,7 @@ schema-valid response set and passes these evaluation gates.
 | A relational projection becomes authoritative | Immutable checksum-pinned files remain the source of truth; projections are rebuildable |
 | A read-only query changes operational state | No write-capable dependencies and explicit zero-write acceptance tests |
 | Query/API acceptance is mistaken for a Copilot or production service | Status and roadmap distinguish the implemented local HTTP adapter from every later product and deployment increment |
-| Harness acceptance is mistaken for candidate acceptance | Reports state `harness accepted; no Copilot evaluated` until an external candidate supplies a complete response set and passes every gate |
+| Harness/core acceptance is mistaken for candidate acceptance | Reports state `harness accepted; Copilot core implemented; no provider or candidate evaluated` until an external candidate supplies a complete response set and passes every gate |
 
 ## Rollback
 
@@ -625,9 +662,11 @@ reviewed increment:
 5. PostgreSQL operational projection: foundation/migrations, manual projector,
    deterministic benchmark `GO`, and optional default-disabled query
    integration are implemented through separately reviewed gates.
-6. Local observability with sanitization: implemented in this increment and
-   locally validated; no Copilot is enabled by it.
-7. Copilot restricted to accepted deterministic tools.
+6. Local observability with sanitization: implemented and locally validated;
+   no provider or candidate is enabled by it.
+7. Copilot restricted to accepted deterministic tools: the provider-neutral
+   library and offline runner are implemented and locally validated; no
+   provider-backed candidate is evaluated or enabled.
 8. MCP adapter over the same contracts.
 9. Document-only RAG only for questions deterministic tools cannot answer.
 10. Separate staging and cloud design.
@@ -637,9 +676,9 @@ No later item may be started implicitly while delivering an earlier one.
 ## Stop Gate
 
 The implemented delivery sequence stops after this separately reviewed local
-observability increment. It does not authorize a Copilot, MCP, RAG, staging,
-cloud work, or any later delivery item. The completed projection gates remain
-recorded in
+Copilot-core increment. It does not authorize a provider-backed candidate,
+MCP, RAG, staging, cloud work, or any later delivery item. The completed
+projection gates remain recorded in
 [`operational_postgres_projection_v1`](OPERATIONAL_POSTGRES_PROJECTION.md).
 
 Future work must stop and return for review if it needs:
