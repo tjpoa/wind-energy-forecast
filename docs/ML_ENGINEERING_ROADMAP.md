@@ -536,7 +536,9 @@ read-only API, and versioned offline evaluation dataset/harness implemented.
 The separate PostgreSQL operational projection now includes its dedicated
 foundation and migrations, manual projector/verifier, deterministic benchmark
 with a superseding `GO`, and optional default-disabled `disabled|required`
-query integration. Later product increments have not started.
+query integration. Local sanitized observability for the operational API is
+implemented as the next separately reviewed increment. Later product
+increments have not started.
 
 This future extension must consume verified operational evidence through
 read-only contracts. It must not mutate Phase 8/9 stores, MLflow, deployment
@@ -581,7 +583,9 @@ the existing checksum-pinned loaders as the source of truth.
    default.
 6. Add local observability for requests and tool calls, including structured
    logs, correlation IDs, metrics, tracing, health checks, and secret/data
-   sanitization.
+   sanitization. Implemented with lazy JSONL events, process-local counters,
+   loopback-only health/metrics endpoints, writer-failure degradation, and no
+   changes to operational query answers or authoritative stores.
 7. Introduce a Copilot restricted to a small set of deterministic read-only
    tools and require the evaluation gates before broader use.
 8. Add an MCP adapter over the same service contracts without creating a
@@ -596,6 +600,6 @@ the existing checksum-pinned loaders as the source of truth.
 Each item is an independent, reviewable increment. No item authorizes automatic
 training, lifecycle transitions, external notifications, live forecasting, or
 Airflow activation in an environment owned by Windows Task Scheduler.
-Items 1 through 5 are implemented. Projection consumption remains disabled by
-default. Observability, Copilot, MCP, RAG, and cloud design require separate
-reviewed increments.
+Items 1 through 6 are implemented. Projection consumption remains disabled by
+default. Copilot, MCP, RAG, and cloud design require separate reviewed
+increments.

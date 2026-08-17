@@ -10,7 +10,7 @@
 | Contract version | `operational_read_only_copilot_v1` |
 | Audience | One authorized operator in a trusted local environment |
 | Operating mode | `retrospective_historical_batch_not_real_time` |
-| Implementation status | Typed read-only Python query layer, local-only HTTP adapter, versioned offline evaluation dataset/harness, dedicated PostgreSQL projection, benchmark `GO`, and optional default-disabled query integration implemented; no Copilot or candidate has been evaluated, and no MCP, RAG, production authentication, observability, or deployment exists |
+| Implementation status | Typed read-only Python query layer, local-only HTTP adapter, versioned offline evaluation dataset/harness, dedicated PostgreSQL projection, benchmark `GO`, optional default-disabled query integration, and the local sanitized observability increment are implemented; no Copilot or candidate has been evaluated, and no MCP, RAG, production authentication, or deployment exists |
 
 ## Objective
 
@@ -193,9 +193,35 @@ One query must not:
 - perform provider or general internet calls;
 - fall back from failed verification to raw or stale evidence.
 
-Future sanitized request telemetry may write only to a separately approved
-observability store. It must never write to Phase 8/9, deployment, Registry,
-artifact, scheduler, or serving stores.
+The local observability increment writes only to the separate ignored
+`var/local_services/operational_observability/` store. It must never write to
+Phase 8/9, deployment, Registry, artifact, scheduler, or serving stores.
+
+### Local Observability Increment
+
+Item 6 adds process-local observability around the existing
+`POST /api/v1/operational-query` handler. Its JSONL records use the
+`wind_forecast.operational_observability_event.v1` schema and contain only the
+event type, UTC timestamp, correlation/trace/span identifiers, query kind,
+tool name, bounded result and answer status, HTTP status, duration, and a
+sanitized failure code. The four event types are `request.started`,
+`request.finished`, `tool.started`, and `tool.finished`.
+
+The only tool name emitted is `operational_query`. The writer never records
+questions, bodies, selectors, headers, IP addresses, facts, citations, paths,
+DSNs, environment values, exception text, prompts, or model responses. A
+process-local lock protects complete JSONL lines during in-process concurrent
+writes. Metrics use fixed low-cardinality counters and are not shared across
+workers; a multi-worker deployment needs a separate reviewed writer policy.
+
+The writer is lazy and has no import/startup filesystem side effects. A writer
+failure is swallowed for the API response, increments `dropped_events`, and
+sets readiness to `degraded`. The loopback-only endpoints
+`GET /api/v1/operational-observability/health` and
+`GET /api/v1/operational-observability/metrics` expose only readiness and
+process-local counters. The existing `/health` endpoint and the
+`OperationalAnswer` contract remain unchanged. A future Copilot must refuse
+activation while observability readiness is `degraded`.
 
 ## Conceptual Product Schemas
 
@@ -354,10 +380,10 @@ This contract is additive. It creates no current public API or persisted schema.
 The implemented query/API increments remain intentionally limited. They do not
 authorize or implement:
 
-- TypeScript code, new dependencies, frontend changes, additional endpoints,
-  tools, prompts, or an LLM;
-- Copilot, MCP, RAG, embeddings, a document corpus, `pgvector`, observability,
-  staging, cloud deployment, or a new CI/CD release path;
+- TypeScript code, new dependencies, frontend changes, endpoints beyond the
+  accepted query and observability endpoints, tools, prompts, or an LLM;
+- Copilot, MCP, RAG, embeddings, a document corpus, `pgvector`, staging, cloud
+  deployment, or a new CI/CD release path;
 - authentication beyond the accepted trusted-local expectation;
 - data/model/scaler changes, artifact generation, notebook execution,
   ingestion, provider calls, training, retraining, lifecycle transitions,
@@ -555,8 +581,8 @@ schema-valid response set and passes these evaluation gates.
 - No current API, store, model, scheduler, or artifact contract changes.
 - The roadmap shows the query layer, local-only API, and offline evaluation
   harness as implemented, the relational-projection contract as separately
-  accepted with runtime work pending, and observability, Copilot, MCP, RAG,
-  and cloud as separate future increments.
+  accepted with runtime work pending, and observability as implemented in this
+  increment. Copilot, MCP, RAG, and cloud remain separate future increments.
 - Repository status does not describe any Copilot implementation as current.
 
 ## Risks And Controls
@@ -599,7 +625,8 @@ reviewed increment:
 5. PostgreSQL operational projection: foundation/migrations, manual projector,
    deterministic benchmark `GO`, and optional default-disabled query
    integration are implemented through separately reviewed gates.
-6. Local observability with sanitization.
+6. Local observability with sanitization: implemented in this increment and
+   locally validated; no Copilot is enabled by it.
 7. Copilot restricted to accepted deterministic tools.
 8. MCP adapter over the same contracts.
 9. Document-only RAG only for questions deterministic tools cannot answer.
@@ -609,10 +636,10 @@ No later item may be started implicitly while delivering an earlier one.
 
 ## Stop Gate
 
-The implemented delivery sequence stops after the separately authorized
-PostgreSQL query-integration gate. It does not authorize observability,
-Copilot, MCP, RAG, staging, cloud work, or any later delivery item. The
-completed projection gates remain recorded in
+The implemented delivery sequence stops after this separately reviewed local
+observability increment. It does not authorize a Copilot, MCP, RAG, staging,
+cloud work, or any later delivery item. The completed projection gates remain
+recorded in
 [`operational_postgres_projection_v1`](OPERATIONAL_POSTGRES_PROJECTION.md).
 
 Future work must stop and return for review if it needs:
