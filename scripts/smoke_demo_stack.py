@@ -24,9 +24,10 @@ def main() -> int:
     args = parser.parse_args()
 
     environment = os.environ.copy()
+    performance_dir = (ROOT / "demo" / "v1" / "performance").resolve()
     environment.update(
         {
-            "WIND_FORECAST_PERFORMANCE_ARTIFACT_HOST_DIR": ".\\demo\\v1\\performance",
+            "WIND_FORECAST_PERFORMANCE_ARTIFACT_HOST_DIR": performance_dir.as_posix(),
             "WIND_FORECAST_CORS_ALLOW_ORIGINS": "http://localhost:5173",
             "VITE_API_BASE_URL": "http://localhost:8000",
         }
