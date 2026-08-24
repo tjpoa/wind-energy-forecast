@@ -541,8 +541,11 @@ single-tool Copilot core/offline runner are implemented as separately
 reviewed increments. The offline injected-candidate evaluation boundary and
 additive receipt contract are also implemented with no egress, English-only
 scope, 1-second selector/5-second total defaults, and digest-only retention.
-No provider/model candidate has been evaluated or enabled; later product
-increments have not started. See
+The exact OpenAI `gpt-5.4-mini-2026-03-17` candidate adapter is now implemented
+for the Responses API, sealed synthetic egress, `store=false`, one call per
+case, zero retries, and a five-second remote selector/deadline. No live
+candidate evaluation or receipt exists because no API key was available, and
+the Copilot remains disabled. Later product increments have not started. See
 [`OPERATIONAL_COPILOT_CANDIDATE_EVALUATION.md`](OPERATIONAL_COPILOT_CANDIDATE_EVALUATION.md).
 
 This future extension must consume verified operational evidence through
@@ -602,6 +605,12 @@ the existing checksum-pinned loaders as the source of truth.
    and additive receipt. Implemented without provider SDKs, egress, or
    changes to the accepted harness; provider/model metadata remains required
    for a future candidate and no candidate is accepted by this increment.
+7b. Implement the selected OpenAI candidate adapter over the same boundary.
+   Implemented without a new dependency for the exact
+   `gpt-5.4-mini-2026-03-17` snapshot, fixed Responses endpoint,
+   environment-only secret, sealed synthetic egress, `store=false`, bounded
+   responses, zero retries, fail-closed infrastructure handling, and a
+   separate additive remote receipt. Live evaluation remains pending.
 8. Add an MCP adapter over the same service contracts without creating a
    second business-logic or authorization path.
 9. Add document-only RAG, with a small versioned corpus and optional
@@ -614,8 +623,7 @@ the existing checksum-pinned loaders as the source of truth.
 Each item is an independent, reviewable increment. No item authorizes automatic
 training, lifecycle transitions, external notifications, live forecasting, or
 Airflow activation in an environment owned by Windows Task Scheduler.
-Items 1 through 7 and the candidate-evaluation boundary are implemented at
-their approved local boundaries.
-Projection consumption remains disabled by default. Provider/model candidate
-selection and actual candidate evaluation, MCP, RAG, and cloud design require
-separate reviewed increments.
+Items 1 through 7, the candidate-evaluation boundary, and the selected OpenAI
+candidate adapter are implemented at their approved boundaries. Projection
+consumption remains disabled by default. Actual candidate evaluation and
+receipt, MCP, RAG, and cloud design require separate reviewed increments.

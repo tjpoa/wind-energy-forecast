@@ -658,8 +658,10 @@ does not publish or deploy them.
    dedicated PostgreSQL projection and optional `disabled|required` query
    integration are implemented, with consumption disabled by default. The
    provider-neutral single-tool Copilot core, local sanitized observability,
-   and the offline injected-candidate evaluation/receipt boundary are
-   implemented, but no provider or candidate has been evaluated; see
+   offline injected-candidate boundary, and the fixed OpenAI Responses API
+   adapter for `gpt-5.4-mini-2026-03-17` are implemented. The adapter permits
+   only sealed synthetic evaluation egress with `store=false`; no live run or
+   passed receipt exists because no API key was available. See
    [`OPERATIONAL_COPILOT_CANDIDATE_EVALUATION.md`](docs/OPERATIONAL_COPILOT_CANDIDATE_EVALUATION.md).
    MCP, RAG, production authentication, remote exposure, and cloud
    implementation remain out of scope.

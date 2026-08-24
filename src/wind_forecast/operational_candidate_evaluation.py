@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import math
 from pathlib import Path
 import time
 from typing import Protocol
@@ -51,6 +52,10 @@ class CandidateEvaluationInputError(ValueError):
     """Raised when an evaluation input or receipt is invalid."""
 
 
+class CandidateEvaluationInfrastructureError(RuntimeError):
+    """Raised for a sanitized fatal infrastructure failure."""
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
@@ -71,6 +76,13 @@ class CandidateSelector(Protocol):
 
     def select(self, request: CandidateInput) -> object:
         """Return a tool selection, or ``None`` for a safe abstention."""
+
+
+class CandidateTimingPolicy(Protocol):
+    """Minimal timing contract shared by offline and remote candidates."""
+
+    selector_timeout_seconds: float
+    total_deadline_seconds: float
 
 
 _INVALID_SELECTION = object()
@@ -271,7 +283,7 @@ def serialize_candidate_traces(traces: tuple[CandidateTrace, ...]) -> bytes:
 def run_candidate_evaluation(
     dataset: OperationalEvaluationDataset,
     candidate: CandidateSelector,
-    metadata: CandidateMetadata,
+    metadata: CandidateTimingPolicy,
     *,
     evaluated_at_utc: datetime | None = None,
     monotonic_clock: Callable[[], float] = time.monotonic,
@@ -282,6 +294,20 @@ def run_candidate_evaluation(
     if evaluated_at.tzinfo is None or evaluated_at.utcoffset() is None:
         raise CandidateEvaluationInputError("evaluated_at_utc must be timezone-aware")
     evaluated_at = evaluated_at.astimezone(timezone.utc)
+    selector_timeout_seconds = metadata.selector_timeout_seconds
+    total_deadline_seconds = metadata.total_deadline_seconds
+    if (
+        isinstance(selector_timeout_seconds, bool)
+        or isinstance(total_deadline_seconds, bool)
+        or not isinstance(selector_timeout_seconds, (int, float))
+        or not isinstance(total_deadline_seconds, (int, float))
+        or not math.isfinite(selector_timeout_seconds)
+        or not math.isfinite(total_deadline_seconds)
+        or selector_timeout_seconds <= 0.0
+        or total_deadline_seconds <= 0.0
+        or selector_timeout_seconds > total_deadline_seconds
+    ):
+        raise CandidateEvaluationInputError("candidate timing policy is invalid")
     tools = allowed_operational_tools()
     traces: list[CandidateTrace] = []
     for case in dataset.cases:
@@ -295,10 +321,15 @@ def run_candidate_evaluation(
         selection_failed = False
         try:
             selection_value = candidate.select(candidate_input)
+        except CandidateEvaluationInfrastructureError:
+            raise
         except Exception:
             selection_failed = True
         elapsed = monotonic_clock() - started
-        selection_timed_out = elapsed > metadata.selector_timeout_seconds or elapsed > metadata.total_deadline_seconds
+        selection_timed_out = (
+            elapsed > selector_timeout_seconds
+            or elapsed > total_deadline_seconds
+        )
         selection: OperationalToolSelection | None | object
         if selection_failed or selection_timed_out:
             selection = _INVALID_SELECTION
@@ -318,7 +349,7 @@ def run_candidate_evaluation(
                 requested_at_utc=evaluated_at,
                 correlation_id=case.case_id,
                 deadline=evaluated_at
-                + timedelta(seconds=metadata.total_deadline_seconds),
+                + timedelta(seconds=total_deadline_seconds),
             )
         if selection is _INVALID_SELECTION:
             answer = _invalid_candidate_output(
@@ -434,9 +465,11 @@ def write_candidate_receipt(
 
 __all__ = [
     "CandidateEvaluationInputError",
+    "CandidateEvaluationInfrastructureError",
     "CandidateEvaluationRun",
     "CandidateInput",
     "CandidateSelector",
+    "CandidateTimingPolicy",
     "build_candidate_evaluation_receipt",
     "run_candidate_evaluation",
     "serialize_candidate_traces",

@@ -10,7 +10,7 @@
 | Contract version | `operational_read_only_copilot_v1` |
 | Audience | One authorized operator in a trusted local environment |
 | Operating mode | `retrospective_historical_batch_not_real_time` |
-| Implementation status | Typed read-only Python query layer, local-only HTTP adapter, versioned offline evaluation dataset/harness, dedicated PostgreSQL projection, benchmark `GO`, optional default-disabled query integration, local sanitized observability, provider-neutral single-tool Copilot core/offline runner, and the offline injected-candidate evaluation/receipt boundary are implemented; no provider/model candidate has been evaluated, and no MCP, RAG, production authentication, or deployment exists |
+| Implementation status | Typed read-only Python query layer, local-only HTTP adapter, versioned offline evaluation dataset/harness, dedicated PostgreSQL projection, benchmark `GO`, optional default-disabled query integration, local sanitized observability, provider-neutral single-tool Copilot core/offline runner, offline injected-candidate boundary, and a fixed OpenAI candidate adapter are implemented; the selected candidate has not been evaluated live, and no MCP, RAG, production authentication, or deployment exists |
 
 ## Objective
 
@@ -267,6 +267,25 @@ payloads, facts, citations, or answers.
 Provider and model are required candidate metadata but are intentionally not
 selected by this increment. The Copilot remains disabled by default, and no
 provider-backed candidate is evaluated or accepted.
+
+### Concrete OpenAI candidate increment
+
+The separately approved candidate is OpenAI Responses API model snapshot
+`gpt-5.4-mini-2026-03-17`. Its dedicated evaluation adapter is limited to the
+sealed 88-case English dataset, one call per case, zero retries, `store=false`,
+five-second selector and total deadlines, and the single strict
+`operational_query` function schema. Only the synthetic question,
+authorization context, tool schema, and static selector instructions may
+leave the process.
+
+The endpoint and model are fixed, the API key is accepted only from
+`OPENAI_API_KEY`, environment proxies are disabled, TLS verification remains
+enabled, provider responses are bounded, and infrastructure errors abort the
+run. Provider text is ignored; only a validated tool selection reaches the
+existing synthetic executor and unchanged harness. A separate remote receipt
+can be created only after all 88 calls and every gate pass. No live evaluation
+or receipt was produced during this increment because the implementation
+environment had no API key. The Copilot therefore remains disabled.
 
 ## Conceptual Product Schemas
 
@@ -611,10 +630,10 @@ trace evidence and is never treated as proof of a candidate's internal
 read/write behavior.
 
 The current state is exactly `harness accepted; Copilot core implemented;
-candidate evaluation boundary implemented; no provider/model candidate
-evaluated`. No provider-backed Copilot may pass its introduction gate until it
-supplies one complete, schema-valid response set and passes these evaluation
-gates.
+candidate evaluation boundary implemented; fixed OpenAI candidate adapter
+implemented; no live candidate evaluation or receipt`. The candidate cannot
+pass its introduction gate until it supplies one complete, schema-valid
+response set and passes these evaluation gates.
 
 The Item 7 core tests cover the eight accepted query kinds, strict tool and
 argument validation, authorization before selector/executor access, one-call
@@ -636,8 +655,9 @@ failures, and the in-memory offline runner.
 - No current API, store, model, scheduler, or artifact contract changes.
 - The roadmap shows the query layer, local-only API, offline evaluation
   harness, observability, provider-neutral Copilot core, and offline
-  candidate-evaluation boundary as implemented; the relational projection
-  remains separately governed and no provider/candidate has been accepted.
+  candidate-evaluation boundary and fixed OpenAI candidate adapter as
+  implemented; the relational projection remains separately governed and no
+  provider candidate has yet passed evaluation or been accepted.
   MCP, RAG, and cloud remain separate future increments.
 - Repository status distinguishes the implemented Copilot core from any
   provider-backed or evaluated Copilot candidate.
@@ -687,6 +707,9 @@ reviewed increment:
 7. Copilot restricted to accepted deterministic tools: the provider-neutral
    library and offline runner are implemented and locally validated; no
    provider-backed candidate is evaluated or enabled.
+7a. Fixed OpenAI candidate adapter: implemented for the exact
+   `gpt-5.4-mini-2026-03-17` snapshot and sealed synthetic evaluation only;
+   live evaluation and receipt remain pending an operator-provided API key.
 8. MCP adapter over the same contracts.
 9. Document-only RAG only for questions deterministic tools cannot answer.
 10. Separate staging and cloud design.
@@ -695,9 +718,10 @@ No later item may be started implicitly while delivering an earlier one.
 
 ## Stop Gate
 
-The implemented delivery sequence stops after this separately reviewed local
-Copilot-core increment. It does not authorize a provider-backed candidate,
-MCP, RAG, staging, cloud work, or any later delivery item. The completed
+The implemented delivery sequence stops after the fixed provider-backed
+candidate adapter. It authorizes only the sealed synthetic live evaluation
+described above; it does not authorize enabling the Copilot, MCP, RAG, staging,
+cloud work, or any later delivery item. The completed
 projection gates remain recorded in
 [`operational_postgres_projection_v1`](OPERATIONAL_POSTGRES_PROJECTION.md).
 
