@@ -1,0 +1,113 @@
+{
+  "backtest_stride_days": 7,
+  "backtest_summary": {
+    "performance": {
+      "30": {
+        "MAE": 1,
+        "R2": 1,
+        "RMSE": 1
+      }
+    },
+    "schema_version": "wind_forecast.monitoring_backtest_summary.v1",
+    "windows": {
+      "30": {
+        "accepted_backtest_windows": 1,
+        "minimum_samples": 7
+      },
+      "90": {
+        "accepted_backtest_windows": 1,
+        "minimum_samples": 30
+      }
+    }
+  },
+  "backtest_summary_sha256": "ecac8fe8793680d9de14364b2ca3b9b2133e7714315178c7abb30367d51adfcc",
+  "calibration_id": "c4496a6b6bbad3e2b9feffc5772f455d330bee0a0a87ea8ed5519b00eea95cf6",
+  "mape_epsilon": 1.0,
+  "mape_epsilon_role": "reference_positive_target_quantile",
+  "policy": {
+    "alert_persistence_distinct_dates": 2,
+    "critical_quantile": 0.99,
+    "hard_quality_tolerance": 0,
+    "mape_epsilon_quantile": 0.05,
+    "minimum_samples": {
+      "30": 7,
+      "90": 30
+    },
+    "overrides": {},
+    "r2_minimum_samples": {
+      "30": 7,
+      "90": 30
+    },
+    "reference_end": "2026-07-31",
+    "reference_start": "2026-01-01",
+    "schema_version": "wind_forecast.monitoring_policy.v1",
+    "source_late_days": 7,
+    "source_objective_days": 5,
+    "warning_quantile": 0.95,
+    "windows_days": [
+      30,
+      90
+    ]
+  },
+  "policy_sha256": "7e926069cb04b87689dbea73c28806bd9c0f82d949c406f0caa7f5c9d9a9f2c9",
+  "reference_dir": "references/c98f8c0845d60d15d76abdf4c15e4ea15e6058bf3fded85bf7968f07dc2f728b",
+  "reference_id": "c98f8c0845d60d15d76abdf4c15e4ea15e6058bf3fded85bf7968f07dc2f728b",
+  "reference_manifest_sha256": "cd18175b6cb44592b64202ae044cf69929568f78598f1a961f3863db128de39c",
+  "safeguards": {
+    "ledger_prediction_write": false,
+    "model_write": false,
+    "network_requests": false,
+    "training": false
+  },
+  "schema_version": "wind_forecast.monitoring_calibration.v1",
+  "thresholds": {
+    "feature_drift": {
+      "wind_speed_current": {
+        "30": {
+          "global": {
+            "ks_statistic": {
+              "critical": 0.16,
+              "direction": "upper",
+              "warning": 0.08
+            },
+            "normalized_wasserstein": {
+              "critical": 0.2,
+              "direction": "upper",
+              "warning": 0.1
+            }
+          }
+        }
+      }
+    },
+    "performance": {
+      "30": {
+        "MAE": {
+          "critical": 160.0,
+          "direction": "upper",
+          "warning": 100.0
+        },
+        "MAPE_percent": {
+          "critical": 160.0,
+          "direction": "upper",
+          "warning": 100.0
+        },
+        "R2": {
+          "critical": 0.4,
+          "direction": "lower",
+          "warning": 0.7
+        },
+        "RMSE": {
+          "critical": 160.0,
+          "direction": "upper",
+          "warning": 100.0
+        },
+        "absolute_bias": {
+          "critical": 50.0,
+          "direction": "upper",
+          "warning": 25.0
+        }
+      },
+      "90": {}
+    }
+  }
+}

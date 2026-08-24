@@ -1,0 +1,17 @@
+{
+  "bundle_version": "demo-v1",
+  "credentials_required": false,
+  "finished_at_utc": "2026-08-24T00:00:02Z",
+  "network_requests": false,
+  "outputs": [
+    "performance/predictions.csv",
+    "monitoring/reporting/state/current.json",
+    "deployment/evidence.json"
+  ],
+  "run_id": "demo-pipeline-20260824",
+  "schema_version": "wind_forecast.demo_pipeline_run.v1",
+  "source_mode": "deterministic_synthetic",
+  "started_at_utc": "2026-08-24T00:00:00Z",
+  "status": "succeeded",
+  "through_date": "2026-08-14"
+}

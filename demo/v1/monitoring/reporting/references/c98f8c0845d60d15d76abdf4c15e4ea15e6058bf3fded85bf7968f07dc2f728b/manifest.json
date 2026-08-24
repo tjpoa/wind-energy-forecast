@@ -1,0 +1,26 @@
+{
+  "calibration_subject": {
+    "kind": "deterministic_synthetic_demo"
+  },
+  "dataset_sha256": "2d4330efc7fd4e016ce717a4e1c004820f39194974e5e63d4f709d9fa9f77de4",
+  "dataset_version": "demo-v1",
+  "feature_names": [
+    "wind_speed_current"
+  ],
+  "feature_schema_sha256": "d20d74ef6b88e157ccf31cf41a49f4b28f7ab338f247f8fbedfe67f6db164b18",
+  "model_sha256": "33f45485d66474550842751e4e77d2a10ea2e33fc78433d553e95ec207a91f1b",
+  "performance_claim": false,
+  "period": {
+    "end": "2026-07-31",
+    "start": "2026-01-01"
+  },
+  "prediction_role": "in_sample_distribution_reference_only",
+  "reference_csv_sha256": "f7ba83b8a25644f33ae32af021f697db36065ce970d143ef407b4bf47f3e2e21",
+  "reference_id": "c98f8c0845d60d15d76abdf4c15e4ea15e6058bf3fded85bf7968f07dc2f728b",
+  "reference_path": "reference.csv",
+  "reference_prediction_column": "Reference_Prediction",
+  "row_count": 1,
+  "schema_version": "wind_forecast.monitoring_reference.v1",
+  "target": "Actual",
+  "transformation_version": "demo-synthetic-v1"
+}

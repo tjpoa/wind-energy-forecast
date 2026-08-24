@@ -1,0 +1,18 @@
+{
+  "bundle_version": "demo-v1",
+  "dataset_sha256": "2d4330efc7fd4e016ce717a4e1c004820f39194974e5e63d4f709d9fa9f77de4",
+  "deployment_id": "demo-deployment-v1",
+  "deployment_state_id": "demo-deployment-state-v1",
+  "generation": 1,
+  "mlflow_required": false,
+  "model_sha256": "33f45485d66474550842751e4e77d2a10ea2e33fc78433d553e95ec207a91f1b",
+  "model_version": "1",
+  "monitoring_report_id": "178db10d5b095d2869a45544c86dfc60f91498ff3b9bd48d020536a065bbd3ff",
+  "registered_model_name": "demo-synthetic-wind-forecast",
+  "registry_required": false,
+  "schema_version": "wind_forecast.demo_deployment_evidence.v1",
+  "serving_mode": "read_only_dashboard_projection",
+  "source_pipeline_run_id": "demo-pipeline-20260824",
+  "status": "verified",
+  "transformation_version": "demo-synthetic-v1"
+}

@@ -67,10 +67,10 @@ each checkpoint was written. This file reflects the latest repository state.
 | Operational Read-only Copilot | Typed deterministic query layer, provider-neutral evaluation boundary, and fixed OpenAI and Gemini candidate adapters implemented; no live candidate evaluation or receipt | `wind_forecast.operational_candidate_evaluation`, `wind_forecast.operational_openai_candidate`, `wind_forecast.operational_gemini_candidate`, 88-case synthetic dataset, dedicated tests and Copilot docs | Both adapters permit only sealed synthetic egress, use separate digest-only receipts, and remain disabled. No activation, MCP, RAG, production authentication, remote exposure, or cloud deployment exists. |
 | React dashboard | Implemented for local/container demonstration | `frontend/`, frontend tests, `docs/DEMO.md` | It shows retrospective monitoring and historical holdout performance; it does not call `/predict`. |
 | Training CLIs | V1 baseline preserved; first v2 reference accepted and bootstrapped locally | `wind_forecast.training`, `wind_forecast.v2_training`, dedicated scripts, and `docs/PHASE_4.md` | The v2 result is a historical hindcast used by the local batch, not by API serving; tuned ANN/Optuna remains notebook-based. |
-| Docker support | Implemented baseline with runtime hardening | Backend and frontend Dockerfiles, Compose stack, CI image builds, and backend smoke test | No image publishing, digest pinning, or production deployment workflow yet. |
+| Docker support | Implemented baseline with runtime hardening and reproducible demo defaults | Backend and frontend Dockerfiles, Compose stack, tracked synthetic demo bundle, CI image builds, backend health check, and full-stack dashboard smoke | No image publishing, digest pinning, or production deployment workflow yet. |
 | CI | Implemented for backend and frontend validation | `.github/workflows/ci.yml` | CI covers Python tests and Ruff, frontend tests/lint/build, both Docker image builds, Compose validation, and backend health checks; it does not deploy artifacts. |
 | MLflow lifecycle | Implemented; v1 and v2 local integration smokes plus v2 bootstrap completed | Tracking/Registry modules, both training CLIs, tests, and real local SQLite runs | `wind-forecast-v2-hindcast` version 1 is the local `champion` and `stable`; Registry state remains local and serving does not consume aliases. |
-| Artifact versioning | Local bundle validation completed; publication blocked | Deterministic builder/fetcher/verifier, `artifacts/catalog.json`, two matching local bundle hashes, and local verify/retrain evidence | No public v1 data bundle until provenance/licence/redistribution approval and a catalog SHA-256; no cross-machine claim until a release round-trip runs. |
+| Artifact versioning | Local real-data release remains blocked; clean-clone synthetic demo is available | Deterministic builder/fetcher/verifier, `artifacts/catalog.json`, tracked `demo/v1` manifest and evidence, API checks, and Compose smoke | No public real-data v1 bundle until provenance/licence/redistribution approval; synthetic demo evidence is not a production or historical-data claim. |
 | Documentation | Strong | `README.md`, `docs/README.md`, `docs/DEMO.md`, phase docs, roadmap | Model/data cards are baseline-level and not full registry artifacts. |
 
 ## Roadmap Status
@@ -398,7 +398,9 @@ This repository demonstrates:
 1. Resolve v1 provenance, licence, attribution, and redistribution approval,
    then publish the first checksum-pinned immutable artifact bundle.
 2. Prove the documented fetch, verification, and retraining round-trip from a
-   clean clone before claiming cross-machine reproducibility.
+   clean clone before claiming cross-machine reproducibility of the real-data
+   modelling workflow. The tracked synthetic dashboard demo already has a
+   clean-clone Compose path and an end-to-end smoke test.
 3. Extend the baseline training CLI toward the tuned notebook workflow while
    preserving the current contracts.
 4. Raise test coverage as source-ingestion and v2 modules mature.

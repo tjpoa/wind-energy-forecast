@@ -26,8 +26,9 @@ dashboard screenshots exist in the repository.
 - Python 3.10 or 3.11.
 - Node.js 22.12 or newer.
 - Docker with Docker Compose for the containerized path.
-- A valid local performance-artifact directory for the historical-performance
-  view. The monitoring view may start in a valid empty state.
+- The tracked `demo/v1` bundle is used by default. It is deterministic,
+  synthetic, and clearly labelled; no REN/CDS credentials, ignored files, or
+  local MLflow state are needed.
 
 Install the backend from the repository root:
 
@@ -52,7 +53,7 @@ No WeatherAPI key or `.env` file is required for the historical dashboard.
 `VITE_API_BASE_URL` defaults to `http://localhost:8000` in the frontend example
 configuration.
 
-## 1. Prepare Local Evaluation Artifacts
+## 1. Select Demo Or Local Evaluation Artifacts
 
 The dashboard API reads one explicitly selected result set. `predictions.csv`
 is required and must contain:
@@ -68,10 +69,23 @@ persisted aggregate metrics and basic run provenance; the API still validates
 their consistency with the predictions. The endpoint never returns the
 configured directory or another local filesystem path.
 
-The project has no approved public demonstration bundle. The release entry in
-`artifacts/catalog.json` remains blocked until provenance, licence, attribution,
-and redistribution permission are resolved. Do not present synthetic data as
-real observations.
+The default demo bundle is `demo/v1`. Its manifest records a fixed seed,
+evidence type, claims boundary, and SHA-256 for every member. It contains
+synthetic performance observations, a verified retrospective monitoring
+report, deployment attribution, and a succeeded synthetic pipeline-run
+receipt. Do not present the synthetic values as real observations.
+
+Inspect the bundle manifest before starting:
+
+```powershell
+Get-Content .\demo\v1\manifest.json
+```
+
+Rebuild the exact bundle only when changing the generator:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\build_demo_bundle.py --overwrite
+```
 
 ### Generate the artifacts locally
 
@@ -96,10 +110,10 @@ output directory. It refuses to replace an existing result set unless
 `--overwrite` is explicitly supplied. Files under `outputs/training/` are local
 and ignored by Git.
 
-If `data/processed/agg_data_ml.csv` is unavailable, regenerate it through the
-existing data-preparation workflow using data you are authorized to use, or
-obtain a compatible result directory separately. A fresh clone cannot assume
-that the blocked public bundle is available.
+If `data/processed/agg_data_ml.csv` is unavailable, the synthetic demo remains
+fully usable. Regenerate a real baseline only through the existing
+data-preparation workflow using data you are authorized to use, or select a
+compatible result directory separately.
 
 Check the minimum artifact before continuing:
 
@@ -203,19 +217,23 @@ The monitoring API never returns configured artifact paths or raw failure text.
 
 ## 4. Run With Docker Compose
 
-Compose mounts `data/`, `models/`, and the chosen performance-artifact
-directory into the backend read-only. Datasets, models, results, local
-environment files, and secrets are not copied into either image.
-`WIND_FORECAST_MONITORING_STORE_ROOT` points to
-`/app/data/processed/v2/monitoring` within the read-only data mount.
+Compose mounts `data/`, `models/`, the chosen performance-artifact directory,
+and the tracked demo monitoring store into the backend read-only. Datasets,
+models, results, local environment files, and secrets are not copied into
+either image. `WIND_FORECAST_MONITORING_STORE_ROOT` points to the mounted
+`/app/monitoring` store.
 
-The default host result directory is `./outputs/training/baseline`. To select a
+The default host result directory is `./demo/v1/performance`. To select a
 different compatible local directory, set it before building the stack:
 
 ```powershell
 $env:WIND_FORECAST_PERFORMANCE_ARTIFACT_HOST_DIR=".\outputs\training\baseline"
 docker compose up --build
 ```
+
+The default clean-clone path is already populated. It demonstrates the
+connected monitoring view, historical performance view, deployment attribution,
+and source pipeline run without credentials or ignored files.
 
 Compose maps the selected directory to `/app/performance` and sets
 `WIND_FORECAST_PERFORMANCE_ARTIFACT_DIR=/app/performance` inside the backend.
@@ -238,10 +256,9 @@ complete:
 docker compose down
 ```
 
-The stack can start and `/health` can pass without valid evaluation artifacts,
-but `/api/v1/performance` returns `503` until a compatible evaluation directory
-is mounted. The monitoring view remains connected and empty when its store has
-no reports or runs.
+The stack's default performance and monitoring paths are valid and read-only.
+When deliberately selecting another artifact directory, `/api/v1/performance`
+returns `503` until that directory contains a compatible evaluation set.
 
 ## 5. Optional Saved-Model Serving Check
 
@@ -281,8 +298,14 @@ Validate the Compose model without starting services:
 docker compose config --quiet
 ```
 
-These checks do not require live API credentials or generated dashboard
-artifacts.
+These checks do not require live API credentials, generated dashboard
+artifacts, or MLflow state. The stack smoke additionally starts both Compose
+services and verifies the browser-served dashboard shell plus the main API
+responses:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\smoke_demo_stack.py
+```
 
 ## Troubleshooting
 
@@ -302,6 +325,8 @@ artifacts.
   results with responsive and tested UI states.
 - The API validates one explicitly selected, read-only local artifact set.
 - Backend and frontend can run separately or as a Docker Compose stack.
+- A clean clone can run the full dashboard flow from a tracked synthetic demo
+  bundle with explicit checksums and claims boundaries.
 - The repository contains automated backend, frontend, image-build, and Compose
   validation in CI.
 - Saved models can be inspected and served separately when all required local
@@ -313,7 +338,7 @@ artifacts.
 - Real-time ingestion, live forecasting, orchestration, or external alert delivery.
 - Enterprise scalability, availability, or operational support.
 - Serving through MLflow Registry aliases.
-- Public redistribution or clean-clone reproducibility before the artifact
-  provenance and licence gate is resolved.
+- Redistribution of real REN/CDS data or clean-clone reproducibility of the
+  real v1 modelling workflow; the demo bundle is synthetic evidence only.
 - Automatic model promotion, Airflow orchestration, or PySpark processing.
 - Validity of the current v1 models and scalers for v2 REN + ERA5-Land data.

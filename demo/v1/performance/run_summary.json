@@ -1,0 +1,19 @@
+{
+  "dataset_version": "demo-v1",
+  "metrics": {
+    "MAE": 17.428571428571427,
+    "MAPE (%)": 1.488856883276879,
+    "R2": 0.9514902923934673,
+    "RMSE": 18.578020808010123
+  },
+  "mlflow_run_id": null,
+  "model_type": "DeterministicSyntheticBaseline",
+  "network_requests": false,
+  "schema_version": "wind_forecast.demo_performance_run.v1",
+  "seed": 2026,
+  "source_mode": "deterministic_synthetic",
+  "test_end_date": "2026-08-14",
+  "test_fraction": 0.2,
+  "test_row_count": 14,
+  "test_start_date": "2026-08-01"
+}

@@ -156,6 +156,17 @@ jobs:
       - name: Validate Docker Compose configuration
         run: docker compose config --quiet
 
+  demo-compose-smoke:
+    name: Reproducible demo Compose smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Start stack and verify dashboard flow
+        run: python scripts/smoke_demo_stack.py
+
   operational-projection-postgres:
     name: Operational projection PostgreSQL 16
     runs-on: ubuntu-latest

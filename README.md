@@ -44,6 +44,9 @@ orchestration, or registry-based serving.
   alerts.
 - A checksum-pinned local v2 hindcast deployment operated by Windows Task
   Scheduler, separate from the legacy v1 API-serving path.
+- A tracked `demo/v1` bundle of clearly labelled deterministic synthetic
+  performance, monitoring, deployment, and pipeline-run evidence for a clean
+  clone demonstration.
 
 ## Architecture
 
@@ -186,8 +189,13 @@ npm run build
 
 ### Local dashboard run
 
-The dashboard requires a valid local performance-artifact directory. The
-required file is `predictions.csv`, with these columns:
+The repository includes a tracked synthetic dashboard bundle under `demo/v1`.
+It is the default for Docker Compose and requires no REN/CDS credentials,
+local MLflow state, or ignored files. The values are clearly labelled synthetic
+and must not be presented as historical production observations.
+
+For an explicitly selected performance-artifact directory, the required file
+is `predictions.csv`, with these columns:
 
 ```text
 Date
@@ -248,7 +256,7 @@ The stack uses these environment variables:
 | --- | --- | --- |
 | `VITE_API_BASE_URL` | `http://localhost:8000` | Public API URL compiled into the browser bundle. |
 | `WIND_FORECAST_CORS_ALLOW_ORIGINS` | `http://localhost:5173` | Exact frontend origin accepted by FastAPI. |
-| `WIND_FORECAST_PERFORMANCE_ARTIFACT_HOST_DIR` | `./outputs/training/baseline` | Host directory mounted at `/app/performance`. |
+| `WIND_FORECAST_PERFORMANCE_ARTIFACT_HOST_DIR` | `./demo/v1/performance` | Host directory mounted at `/app/performance`. Set this only when deliberately selecting another compatible artifact set. |
 | `WIND_FORECAST_PERFORMANCE_ARTIFACT_DIR` | `/app/performance` | Fixed read-only artifact path inside the backend container. |
 
 Variables prefixed with `VITE_` are public build-time configuration, never a
@@ -257,27 +265,23 @@ place for secrets. Rebuild the frontend image after changing
 
 The Compose stack does not copy datasets, models, performance artifacts, local
 environment files, or secrets into either image. It mounts `data/`, `models/`,
-and the selected performance-artifact directory into the backend read-only.
-The default performance directory must contain `predictions.csv`; optional
-`metrics.json` and `run_summary.json` provide persisted metrics and provenance.
+the tracked demo performance artifact, and the tracked demo monitoring store
+into the backend read-only. The default bundle also contains explicit
+deployment and pipeline-run receipts used as monitoring provenance.
 
-A fresh clone can start the services and pass `/health` without those generated
-performance artifacts, but `/api/v1/performance` returns HTTP `503` and the
-dashboard reports the API as unavailable until a valid local artifact set is
-selected. The default is `./outputs/training/baseline`; make that selection
-explicit in PowerShell before starting the stack:
+A fresh clone therefore starts with a connected dashboard and both
+monitoring and historical-performance views populated from deterministic
+synthetic evidence:
 
 ```powershell
-$env:WIND_FORECAST_PERFORMANCE_ARTIFACT_HOST_DIR=".\outputs\training\baseline"
 docker compose up --build
 ```
 
-Use only an artifact directory produced from data you are authorized to use.
-The release catalog currently blocks a public v1 bundle while provenance,
-licence, attribution, and redistribution permission remain unresolved. A fresh
-clone must therefore generate the artifacts from an authorized local feature
-table or receive a compatible artifact directory separately. The project does
-not package synthetic observations as real demonstration data.
+Use only an alternative artifact directory produced from data you are
+authorized to use. The separate MLflow/data release catalog remains blocked
+while provenance, licence, attribution, and redistribution permission for
+real v1 artifacts remain unresolved; that gate does not apply to the clearly
+labelled synthetic demo bundle.
 
 Inspect or stop the stack from another terminal:
 
@@ -286,6 +290,12 @@ docker compose ps
 Invoke-RestMethod -Method Get -Uri http://localhost:8000/health
 Invoke-WebRequest -UseBasicParsing -Uri http://localhost:5173
 docker compose down
+```
+
+Run the end-to-end stack smoke test from the repository root:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\smoke_demo_stack.py
 ```
 
 ## Common commands
