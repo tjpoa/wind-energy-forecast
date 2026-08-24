@@ -647,6 +647,11 @@ does not publish or deploy them.
 
 ## Next steps
 
+The Operational Copilot now includes separate fixed OpenAI and Gemini
+candidate adapters over the same sealed synthetic 88-case evaluation boundary.
+Both remain disabled by default; live evaluation and human review are required
+before activation. MCP and RAG have not been started.
+
 1. Resolve v1 provenance, licence, attribution, and redistribution approval,
    then publish a checksum-pinned immutable artifact bundle.
 2. Validate the documented artifact fetch and retraining flow from a clean

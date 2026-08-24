@@ -718,6 +718,11 @@ No later item may be started implicitly while delivering an earlier one.
 
 ## Stop Gate
 
+The separate Gemini candidate adapter is implemented as an alternative
+provider boundary. It does not modify the OpenAI adapter, activate the Copilot,
+authorize operational-data egress, or begin MCP/RAG work. A live 88-case
+evaluation and human review remain required.
+
 The implemented delivery sequence stops after the fixed provider-backed
 candidate adapter. It authorizes only the sealed synthetic live evaluation
 described above; it does not authorize enabling the Copilot, MCP, RAG, staging,

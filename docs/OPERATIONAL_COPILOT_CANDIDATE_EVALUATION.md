@@ -128,3 +128,28 @@ Official API references used for this decision:
 - [GPT-5.4 mini model and snapshot](https://developers.openai.com/api/docs/models/gpt-5.4-mini), accessed 2026-08-24;
 - [Responses API function-call contract](https://developers.openai.com/api/reference/typescript/resources/beta/subresources/responses/methods/create), accessed 2026-08-24; and
 - [OpenAI API data controls](https://developers.openai.com/api/docs/guides/your-data#default-usage-policies-by-endpoint), accessed 2026-08-24.
+- [Gemini Interactions API contract](https://ai.google.dev/api/interactions-api-v1), accessed 2026-08-24;
+- [Gemini function-calling contract](https://ai.google.dev/gemini-api/docs/function-calling), accessed 2026-08-24; and
+- [Gemini API pricing and Free Tier](https://ai.google.dev/gemini-api/docs/pricing), accessed 2026-08-24.
+
+## Approved alternative Gemini candidate
+
+The additive Gemini candidate fixes `gemini-2.5-flash-lite` at
+`https://generativelanguage.googleapis.com/v1beta/interactions`. Its API key is
+sent only in the `x-goog-api-key` header and `store=false` is fixed. Egress is
+limited to the sealed English question, synthetic authorization, static
+instructions, and the single `operational_query` schema.
+
+The transport disables proxies and redirects, preserves normal TLS, limits
+streamed responses to 64 KiB, performs zero retries or fallback, and refuses a
+89th attempt. Only zero or exactly one top-level Interaction `function_call`
+step is accepted; local Pydantic validation remains authoritative. The
+five-second Requests and harness limits are cooperative. Provider payloads and
+traces are never retained locally.
+
+The CLI requires `--confirm-synthetic-egress`, reads only `GEMINI_API_KEY`,
+pins dataset SHA-256
+`74c6438edf636d3061f0f142bb315d669e716fc2b20e5adafaab6154aa08afb6`,
+and writes a separate digest-only additive v1 receipt only after a complete
+88-case pass. The Copilot remains disabled and no live Gemini evaluation or
+receipt was produced by this increment.

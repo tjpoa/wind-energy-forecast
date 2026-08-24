@@ -611,6 +611,9 @@ the existing checksum-pinned loaders as the source of truth.
    environment-only secret, sealed synthetic egress, `store=false`, bounded
    responses, zero retries, fail-closed infrastructure handling, and a
    separate additive remote receipt. Live evaluation remains pending.
+7c. Implement the alternative fixed Gemini `gemini-2.5-flash-lite` adapter
+   over the same sealed 88-case boundary. Implemented with a separate REST
+   transport and receipt; live evaluation and activation remain pending.
 8. Add an MCP adapter over the same service contracts without creating a
    second business-logic or authorization path.
 9. Add document-only RAG, with a small versioned corpus and optional
