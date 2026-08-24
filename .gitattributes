@@ -1,1 +1,5 @@
 evaluation/operational_read_only_copilot/v1/cases.jsonl text eol=lf
+
+# The demo manifest hashes exact bytes; keep the bundle portable across Windows
+# and Linux checkouts.
+demo/** text eol=lf
