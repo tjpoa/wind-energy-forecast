@@ -538,8 +538,12 @@ foundation and migrations, manual projector/verifier, deterministic benchmark
 with a superseding `GO`, and optional default-disabled `disabled|required`
 query integration. Local sanitized observability and the provider-neutral
 single-tool Copilot core/offline runner are implemented as separately
-reviewed increments. No provider-backed candidate has been evaluated or
-enabled; later product increments have not started.
+reviewed increments. The offline injected-candidate evaluation boundary and
+additive receipt contract are also implemented with no egress, English-only
+scope, 1-second selector/5-second total defaults, and digest-only retention.
+No provider/model candidate has been evaluated or enabled; later product
+increments have not started. See
+[`OPERATIONAL_COPILOT_CANDIDATE_EVALUATION.md`](OPERATIONAL_COPILOT_CANDIDATE_EVALUATION.md).
 
 This future extension must consume verified operational evidence through
 read-only contracts. It must not mutate Phase 8/9 stores, MLflow, deployment
@@ -594,6 +598,10 @@ the existing checksum-pinned loaders as the source of truth.
    selector and total deadlines, zero retries, passthrough `OperationalAnswer`,
    and refusal while observability is degraded. No provider or candidate is
    evaluated or enabled by this item.
+7a. Prepare candidate evaluation through an offline injected selector boundary
+   and additive receipt. Implemented without provider SDKs, egress, or
+   changes to the accepted harness; provider/model metadata remains required
+   for a future candidate and no candidate is accepted by this increment.
 8. Add an MCP adapter over the same service contracts without creating a
    second business-logic or authorization path.
 9. Add document-only RAG, with a small versioned corpus and optional
@@ -606,6 +614,8 @@ the existing checksum-pinned loaders as the source of truth.
 Each item is an independent, reviewable increment. No item authorizes automatic
 training, lifecycle transitions, external notifications, live forecasting, or
 Airflow activation in an environment owned by Windows Task Scheduler.
-Items 1 through 7 are implemented. Projection consumption remains disabled by
-default. Provider-backed candidate evaluation, MCP, RAG, and cloud design
-require separate reviewed increments.
+Items 1 through 7 and the candidate-evaluation boundary are implemented at
+their approved local boundaries.
+Projection consumption remains disabled by default. Provider/model candidate
+selection and actual candidate evaluation, MCP, RAG, and cloud design require
+separate reviewed increments.

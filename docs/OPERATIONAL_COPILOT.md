@@ -10,7 +10,7 @@
 | Contract version | `operational_read_only_copilot_v1` |
 | Audience | One authorized operator in a trusted local environment |
 | Operating mode | `retrospective_historical_batch_not_real_time` |
-| Implementation status | Typed read-only Python query layer, local-only HTTP adapter, versioned offline evaluation dataset/harness, dedicated PostgreSQL projection, benchmark `GO`, optional default-disabled query integration, local sanitized observability, and the provider-neutral single-tool Copilot core/offline runner are implemented; no provider or candidate has been evaluated, and no MCP, RAG, production authentication, or deployment exists |
+| Implementation status | Typed read-only Python query layer, local-only HTTP adapter, versioned offline evaluation dataset/harness, dedicated PostgreSQL projection, benchmark `GO`, optional default-disabled query integration, local sanitized observability, provider-neutral single-tool Copilot core/offline runner, and the offline injected-candidate evaluation/receipt boundary are implemented; no provider/model candidate has been evaluated, and no MCP, RAG, production authentication, or deployment exists |
 
 ## Objective
 
@@ -249,6 +249,24 @@ write operational stores and does not evaluate a candidate.
 
 This increment adds no endpoint, UI, provider SDK, network egress, model,
 prompt, MCP adapter, RAG corpus, or candidate acceptance.
+
+### Candidate evaluation unblock increment
+
+The candidate-evaluation boundary is documented in
+[`OPERATIONAL_COPILOT_CANDIDATE_EVALUATION.md`](OPERATIONAL_COPILOT_CANDIDATE_EVALUATION.md).
+It fixes the safe execution policy to an injected offline selector, no egress,
+English-only cases, a cooperative one-second selector timeout inside a
+five-second per-case deadline, and digest-only receipt retention. The new
+runner exposes only the question, authorization, and the sole tool schema; it
+keeps oracle fields and `evidence_scenario` private, uses a synthetic
+executor, normalizes traces, and delegates scoring to the unchanged 88-case
+harness. A receipt is additive and can be written only for a passed report;
+it contains metadata, digests, metrics, commit, and timestamp, never prompts,
+payloads, facts, citations, or answers.
+
+Provider and model are required candidate metadata but are intentionally not
+selected by this increment. The Copilot remains disabled by default, and no
+provider-backed candidate is evaluated or accepted.
 
 ## Conceptual Product Schemas
 
@@ -592,10 +610,11 @@ compare byte/size/mtime snapshots. Candidate JSONL itself is only observable
 trace evidence and is never treated as proof of a candidate's internal
 read/write behavior.
 
-The current state is exactly `harness accepted; Copilot core implemented; no
-provider or candidate evaluated`. No provider-backed Copilot may pass its
-introduction gate until it supplies one complete, schema-valid response set
-and passes these evaluation gates.
+The current state is exactly `harness accepted; Copilot core implemented;
+candidate evaluation boundary implemented; no provider/model candidate
+evaluated`. No provider-backed Copilot may pass its introduction gate until it
+supplies one complete, schema-valid response set and passes these evaluation
+gates.
 
 The Item 7 core tests cover the eight accepted query kinds, strict tool and
 argument validation, authorization before selector/executor access, one-call
@@ -616,9 +635,10 @@ failures, and the in-memory offline runner.
   preserved.
 - No current API, store, model, scheduler, or artifact contract changes.
 - The roadmap shows the query layer, local-only API, offline evaluation
-  harness, observability, and provider-neutral Copilot core as implemented; the
-  relational projection remains separately governed and no provider/candidate
-  has been accepted. MCP, RAG, and cloud remain separate future increments.
+  harness, observability, provider-neutral Copilot core, and offline
+  candidate-evaluation boundary as implemented; the relational projection
+  remains separately governed and no provider/candidate has been accepted.
+  MCP, RAG, and cloud remain separate future increments.
 - Repository status distinguishes the implemented Copilot core from any
   provider-backed or evaluated Copilot candidate.
 
@@ -635,7 +655,7 @@ failures, and the in-memory offline runner.
 | A relational projection becomes authoritative | Immutable checksum-pinned files remain the source of truth; projections are rebuildable |
 | A read-only query changes operational state | No write-capable dependencies and explicit zero-write acceptance tests |
 | Query/API acceptance is mistaken for a Copilot or production service | Status and roadmap distinguish the implemented local HTTP adapter from every later product and deployment increment |
-| Harness/core acceptance is mistaken for candidate acceptance | Reports state `harness accepted; Copilot core implemented; no provider or candidate evaluated` until an external candidate supplies a complete response set and passes every gate |
+| Harness/core acceptance is mistaken for candidate acceptance | Reports and receipts keep `harness accepted`, `candidate evaluated`, and Copilot activation separate; no provider/model candidate is accepted until a complete response set passes every gate and receives human review |
 
 ## Rollback
 

@@ -657,10 +657,12 @@ does not publish or deploy them.
    separately approved future Operational Read-only Copilot candidate. The
    dedicated PostgreSQL projection and optional `disabled|required` query
    integration are implemented, with consumption disabled by default. The
-   provider-neutral single-tool Copilot core, offline runner, and local
-   sanitized observability are implemented, but no provider or candidate has
-   been evaluated; MCP, RAG, production authentication, remote exposure, and
-   cloud implementation remain out of scope.
+   provider-neutral single-tool Copilot core, local sanitized observability,
+   and the offline injected-candidate evaluation/receipt boundary are
+   implemented, but no provider or candidate has been evaluated; see
+   [`OPERATIONAL_COPILOT_CANDIDATE_EVALUATION.md`](docs/OPERATIONAL_COPILOT_CANDIDATE_EVALUATION.md).
+   MCP, RAG, production authentication, remote exposure, and cloud
+   implementation remain out of scope.
 5. Add interactive prediction only after a reviewed UI/API contract, then
    progress through cloud deployment design as an explicit future phase.
 
