@@ -9,6 +9,7 @@ import pytest
 
 from scripts.evaluate_operational_copilot_candidate import main as evaluation_main
 from wind_forecast.operational_candidate_evaluation import (
+    CandidateEvaluationInfrastructureError,
     CandidateEvaluationInputError,
     CandidateInput,
     build_candidate_evaluation_receipt,
@@ -166,6 +167,51 @@ def test_invalid_candidate_behaviour_fails_closed(candidate_factory) -> None:
     )
     assert run.report.status == "failed"
     assert run.report.metrics.critical_failure_count > 0
+
+
+def test_runner_accepts_decoupled_remote_timing_policy() -> None:
+    dataset = load_evaluation_dataset(MANIFEST)
+    timing_policy = type(
+        "RemoteTimingPolicy",
+        (),
+        {
+            "selector_timeout_seconds": 5.0,
+            "total_deadline_seconds": 5.0,
+        },
+    )()
+    run = run_candidate_evaluation(
+        dataset,
+        PerfectFixture(dataset),
+        timing_policy,
+        evaluated_at_utc=NOW,
+        monotonic_clock=lambda: 0.0,
+    )
+    assert run.report.status == "passed"
+
+
+def test_fatal_candidate_infrastructure_error_interrupts_the_run() -> None:
+    dataset = load_evaluation_dataset(MANIFEST)
+
+    class FatalCandidate:
+        calls = 0
+
+        def select(self, _request: CandidateInput) -> object:
+            self.calls += 1
+            raise CandidateEvaluationInfrastructureError("provider_failure")
+
+    candidate = FatalCandidate()
+    with pytest.raises(
+        CandidateEvaluationInfrastructureError,
+        match="provider_failure",
+    ):
+        run_candidate_evaluation(
+            dataset,
+            candidate,
+            _metadata(),
+            evaluated_at_utc=NOW,
+            monotonic_clock=lambda: 0.0,
+        )
+    assert candidate.calls == 1
 
 
 def test_receipt_is_additive_and_contains_only_digests_metadata_and_metrics(
