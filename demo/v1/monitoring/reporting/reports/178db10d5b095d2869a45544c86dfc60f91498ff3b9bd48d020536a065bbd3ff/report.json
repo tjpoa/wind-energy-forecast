@@ -1,0 +1,131 @@
+{
+  "active_alerts": {},
+  "alert_events": [],
+  "breaches": [],
+  "config": {
+    "alert_persistence_distinct_dates": 2,
+    "critical_quantile": 0.99,
+    "hard_quality_tolerance": 0,
+    "mape_epsilon_quantile": 0.05,
+    "minimum_samples": {
+      "30": 7,
+      "90": 30
+    },
+    "overrides": {},
+    "r2_minimum_samples": {
+      "30": 7,
+      "90": 30
+    },
+    "reference_end": "2026-07-31",
+    "reference_start": "2026-01-01",
+    "schema_version": "wind_forecast.monitoring_policy.v1",
+    "source_late_days": 7,
+    "source_objective_days": 5,
+    "warning_quantile": 0.95,
+    "windows_days": [
+      30,
+      90
+    ]
+  },
+  "created_at_utc": "2026-08-24T00:00:02Z",
+  "lineage": {
+    "prediction_ids": []
+  },
+  "model_era": {
+    "association_kind": "active_deployment",
+    "cutoffs": {
+      "monitoring_evaluation_cutoff": "2026-08-14"
+    },
+    "deployment_generation": 1,
+    "deployment_id": "demo-deployment-v1",
+    "deployment_state_id": "demo-deployment-state-v1",
+    "model_era_id": "demo-model-era-v1",
+    "model_version": "1",
+    "pins": {
+      "dataset_sha256": "2d4330efc7fd4e016ce717a4e1c004820f39194974e5e63d4f709d9fa9f77de4",
+      "model_sha256": "33f45485d66474550842751e4e77d2a10ea2e33fc78433d553e95ec207a91f1b",
+      "transformation_version": "demo-synthetic-v1"
+    },
+    "registered_model_name": "demo-synthetic-wind-forecast"
+  },
+  "persistence": {},
+  "quality": {
+    "freshness": {
+      "common_validated_watermark": "2026-08-14",
+      "unresolved_late_dates": []
+    },
+    "issues": [],
+    "status": "available"
+  },
+  "reference": {
+    "calibration_id": "c4496a6b6bbad3e2b9feffc5772f455d330bee0a0a87ea8ed5519b00eea95cf6",
+    "policy_sha256": "7e926069cb04b87689dbea73c28806bd9c0f82d949c406f0caa7f5c9d9a9f2c9",
+    "reference_id": "c98f8c0845d60d15d76abdf4c15e4ea15e6058bf3fded85bf7968f07dc2f728b"
+  },
+  "report_id": "178db10d5b095d2869a45544c86dfc60f91498ff3b9bd48d020536a065bbd3ff",
+  "run_id": "demo-report-20260824",
+  "safeguards": {
+    "as_issued_primary": true,
+    "models_unchanged": true,
+    "network_requests": false,
+    "predictions_unchanged": true,
+    "restatements_alerting": false,
+    "training": false
+  },
+  "schema_version": "wind_forecast.monitoring_report.v2",
+  "source_batch": {
+    "manifest_path": "pipeline/run.json",
+    "manifest_sha256": "7b1ccf62a47523f9342493cd836820d348ef6bc4fd30da8e43bc2af95d6f90da",
+    "run_id": "demo-pipeline-20260824",
+    "status": "succeeded"
+  },
+  "through_date": "2026-08-14",
+  "windows": {
+    "30": {
+      "calendar_end": "2026-08-14",
+      "calendar_start": "2026-08-01",
+      "coverage_ratio": 1.0,
+      "coverage_severity": "ok",
+      "feature_drift": {
+        "wind_speed_current": {
+          "global": {
+            "ks_statistic": 0.07,
+            "normalized_wasserstein": 0.14
+          }
+        }
+      },
+      "minimum_samples": 7,
+      "performance": {
+        "metrics": {
+          "MAE": 17.428571428571427,
+          "MAPE_percent": 1.488856883276879,
+          "R2": 0.9514902923934673,
+          "R2_status": "available",
+          "RMSE": 18.578020808010123,
+          "bias": 3.5714285714285716
+        },
+        "severity": {
+          "MAE": "ok",
+          "MAPE_percent": "ok",
+          "R2": "ok",
+          "RMSE": "ok",
+          "bias": "ok"
+        },
+        "status": "available"
+      },
+      "sample_count": 14,
+      "status": "available"
+    },
+    "90": {
+      "calendar_end": null,
+      "calendar_start": null,
+      "coverage_ratio": null,
+      "coverage_severity": null,
+      "feature_drift": {},
+      "minimum_samples": 30,
+      "performance": {},
+      "sample_count": 14,
+      "status": "insufficient_data"
+    }
+  }
+}

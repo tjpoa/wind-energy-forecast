@@ -1,0 +1,17 @@
+{
+  "plan": {
+    "calibration_id": "c4496a6b6bbad3e2b9feffc5772f455d330bee0a0a87ea8ed5519b00eea95cf6",
+    "deployment_id": "demo-deployment-v1",
+    "ledger_available": false,
+    "model_era_id": "demo-model-era-v1",
+    "model_version": "1",
+    "quality_available": true,
+    "source_run_id": "demo-pipeline-20260824",
+    "source_status": "succeeded",
+    "status": "planned",
+    "through_date": "2026-08-14"
+  },
+  "requested_at_utc": "2026-08-24T00:00:02Z",
+  "run_id": "demo-report-20260824",
+  "schema_version": "wind_forecast.monitoring_report_request.v2"
+}

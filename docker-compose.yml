@@ -8,7 +8,7 @@ services:
     environment:
       WIND_FORECAST_CORS_ALLOW_ORIGINS: "${WIND_FORECAST_CORS_ALLOW_ORIGINS:-http://localhost:5173}"
       WIND_FORECAST_PERFORMANCE_ARTIFACT_DIR: /app/performance
-      WIND_FORECAST_MONITORING_STORE_ROOT: /app/data/processed/v2/monitoring
+      WIND_FORECAST_MONITORING_STORE_ROOT: /app/monitoring
     volumes:
       - type: bind
         source: ./data
@@ -19,8 +19,12 @@ services:
         target: /app/models
         read_only: true
       - type: bind
-        source: "${WIND_FORECAST_PERFORMANCE_ARTIFACT_HOST_DIR:-./outputs/training/baseline}"
+        source: "${WIND_FORECAST_PERFORMANCE_ARTIFACT_HOST_DIR:-./demo/v1/performance}"
         target: /app/performance
+        read_only: true
+      - type: bind
+        source: ./demo/v1/monitoring
+        target: /app/monitoring
         read_only: true
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"]

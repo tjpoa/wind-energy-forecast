@@ -1,0 +1,11 @@
+{
+  "active_alerts": {},
+  "deployment_id": "demo-deployment-v1",
+  "generation": 1,
+  "latest_report_id": "178db10d5b095d2869a45544c86dfc60f91498ff3b9bd48d020536a065bbd3ff",
+  "latest_through_date": "2026-08-14",
+  "model_era_id": "demo-model-era-v1",
+  "rules": {},
+  "schema_version": "wind_forecast.monitoring_report_state.v2",
+  "updated_at_utc": "2026-08-24T00:00:02Z"
+}

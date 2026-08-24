@@ -1,0 +1,20 @@
+{
+  "performance": {
+    "30": {
+      "MAE": 1,
+      "R2": 1,
+      "RMSE": 1
+    }
+  },
+  "schema_version": "wind_forecast.monitoring_backtest_summary.v1",
+  "windows": {
+    "30": {
+      "accepted_backtest_windows": 1,
+      "minimum_samples": 7
+    },
+    "90": {
+      "accepted_backtest_windows": 1,
+      "minimum_samples": 30
+    }
+  }
+}

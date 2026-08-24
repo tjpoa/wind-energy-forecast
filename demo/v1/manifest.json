@@ -1,0 +1,98 @@
+{
+  "bundle_version": "demo-v1",
+  "claims": {
+    "cloud_deployment": false,
+    "historical_production": false,
+    "live_monitoring": false,
+    "production_model": false
+  },
+  "evidence_type": "deterministic_synthetic",
+  "files": [
+    {
+      "path": "deployment/evidence.json",
+      "sha256": "c165a2262ee3dc13adc1e4fff564fc7da1966929b6c87202b23efa27ae42765c",
+      "size": 800
+    },
+    {
+      "path": "monitoring/reporting/calibrations/c4496a6b6bbad3e2b9feffc5772f455d330bee0a0a87ea8ed5519b00eea95cf6/backtest_summary.json",
+      "sha256": "ecac8fe8793680d9de14364b2ca3b9b2133e7714315178c7abb30367d51adfcc",
+      "size": 348
+    },
+    {
+      "path": "monitoring/reporting/calibrations/c4496a6b6bbad3e2b9feffc5772f455d330bee0a0a87ea8ed5519b00eea95cf6/calibration.json",
+      "sha256": "598a9ce1e90d0bf9fcaa88e09ff8597253b86963db5db92ff96b13161ce38dea",
+      "size": 2961
+    },
+    {
+      "path": "monitoring/reporting/references/c98f8c0845d60d15d76abdf4c15e4ea15e6058bf3fded85bf7968f07dc2f728b/manifest.json",
+      "sha256": "cd18175b6cb44592b64202ae044cf69929568f78598f1a961f3863db128de39c",
+      "size": 1016
+    },
+    {
+      "path": "monitoring/reporting/references/c98f8c0845d60d15d76abdf4c15e4ea15e6058bf3fded85bf7968f07dc2f728b/reference.csv",
+      "sha256": "f7ba83b8a25644f33ae32af021f697db36065ce970d143ef407b4bf47f3e2e21",
+      "size": 83
+    },
+    {
+      "path": "monitoring/reporting/reports/178db10d5b095d2869a45544c86dfc60f91498ff3b9bd48d020536a065bbd3ff/report.json",
+      "sha256": "63702e030f0d4fc12d2b0a731cf8c328121e7171f8fa81a70bda3fb7777efe21",
+      "size": 3716
+    },
+    {
+      "path": "monitoring/reporting/reports/178db10d5b095d2869a45544c86dfc60f91498ff3b9bd48d020536a065bbd3ff/report.md",
+      "sha256": "0f9c08d25b66eab58d0feb53c180a653d615f6474f8913daf824916a2efa21a2",
+      "size": 266
+    },
+    {
+      "path": "monitoring/reporting/runs/demo-report-20260824/request.json",
+      "sha256": "641b7256bc852b0789401170dfdf77965243a159cbaac72e8dbcb4c26de42939",
+      "size": 569
+    },
+    {
+      "path": "monitoring/reporting/runs/demo-report-20260824/result.json",
+      "sha256": "0825564f3e895e5913ea8f3ff468eea2ecda74281f0cc80d35d8c68dc70d84b0",
+      "size": 592
+    },
+    {
+      "path": "monitoring/reporting/state/current.json",
+      "sha256": "89909cf3d2b31990367625a3cf7bf649e1a0113f758ee9e432b4e82e85d8ce24",
+      "size": 377
+    },
+    {
+      "path": "performance/metrics.json",
+      "sha256": "bd322575c5b54e8bbf611c269e1afb4bc2ee4cd9c2b3c8c8b1c6d199cf1601a1",
+      "size": 123
+    },
+    {
+      "path": "performance/predictions.csv",
+      "sha256": "a615faeffbb67bfeb246f9d5b8f72ee14275e0d348762bee635258cc4068c6c8",
+      "size": 432
+    },
+    {
+      "path": "performance/run_summary.json",
+      "sha256": "1a3b47bb5dd7ed4d3bd71ae0e7ca6e2e61ace4d49392828c5aa57d5f4d485135",
+      "size": 523
+    },
+    {
+      "path": "pipeline/run.json",
+      "sha256": "7b1ccf62a47523f9342493cd836820d348ef6bc4fd30da8e43bc2af95d6f90da",
+      "size": 515
+    },
+    {
+      "path": "README.md",
+      "sha256": "a9e7bfe6fca65bcfce7989edc41ada14219e08fbc74906ee08d72d3a80ec5e82",
+      "size": 577
+    }
+  ],
+  "generated_at_utc": "2026-08-24T00:00:00Z",
+  "generator": "scripts/build_demo_bundle.py",
+  "schema_version": "wind_forecast.demo_bundle.v1",
+  "seed": 2026,
+  "source": {
+    "credentials_required": false,
+    "license": "synthetic-original",
+    "network_requests": false,
+    "provider": null,
+    "redistributable": true
+  }
+}

@@ -4,6 +4,11 @@ This guide covers the local MLflow Registry and immutable GitHub Release bundle
 workflow introduced in Phase 4B. It does not change the FastAPI serving paths,
 publish v2 data, or make the local Registry a production service.
 
+For the no-credentials full-stack demonstration, use the tracked
+[`demo/v1`](../demo/v1/) bundle and run
+`scripts/smoke_demo_stack.py`. That bundle is clearly labelled deterministic
+synthetic evidence and is separate from the real-data release process below.
+
 ## 1. Start MLflow
 
 ```powershell
