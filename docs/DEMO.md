@@ -15,11 +15,10 @@ FastAPI application
 Immutable Phase 9 evidence + local baseline evaluation artifacts
 ```
 
-The dashboard presents retrospective historical batch monitoring as its
-initial view and preserves historical holdout performance as a separate view.
-It does not request future predictions, ingest live data, or monitor a deployed
-model in real time. Screenshots are intentionally omitted because no maintained
-dashboard screenshots exist in the repository.
+The dashboard presents four shareable pages: Overview, Forecast Replay, Model
+Operations, and About. It does not request future predictions, ingest live
+data, or monitor a deployed model in real time. Screenshots are intentionally
+omitted because no maintained dashboard screenshots exist in the repository.
 
 ## Prerequisites
 
@@ -160,7 +159,9 @@ CORS policy permits `http://localhost:5173`, not `http://127.0.0.1:5173`.
 
 The dashboard demonstrates:
 
-- A default monitoring view permanently labelled as retrospective batch
+- An Overview page with independent API health, model, pipeline, watermark,
+  and evidence-health signals.
+- A Model Operations page permanently labelled as retrospective batch
   monitoring and not real time.
 - D+5/D+7 freshness, verified model snapshot/version, last source/report run,
   moving 30/90-day metrics, sealed-test v2 thresholds, top feature drift,
@@ -169,7 +170,10 @@ The dashboard demonstrates:
   states, plus explicit refresh without polling.
 - A reporting-run selector whose details distinguish the reporting run,
   report ID, and source pipeline run without exposing local paths.
-- An accessible `Historical performance` tab retaining the existing endpoint.
+- Shareable `/overview`, `/forecast-replay`, `/model-operations`, and `/about`
+  routes with accessible active-page navigation.
+- An accessible Forecast Replay page retaining the existing performance
+  endpoint.
 - Inclusive start and end date filters constrained to the available range.
 - MAE, RMSE, R², and observation-count cards.
 - An actual-versus-predicted line chart with tooltips.
@@ -292,6 +296,14 @@ npm run lint
 npm run build
 ```
 
+With the Compose stack running, install Chromium and run the genuine browser
+checks from `frontend/`:
+
+```powershell
+npx playwright install chromium
+npm run test:e2e
+```
+
 Validate the Compose model without starting services:
 
 ```powershell
@@ -301,7 +313,8 @@ docker compose config --quiet
 These checks do not require live API credentials, generated dashboard
 artifacts, or MLflow state. The stack smoke additionally starts both Compose
 services and verifies the browser-served dashboard shell plus the main API
-responses:
+responses. The Playwright suite then exercises the React routes against those
+real Compose services and the tracked `demo/v1` artifacts:
 
 ```powershell
 .\venv\Scripts\python.exe .\scripts\smoke_demo_stack.py

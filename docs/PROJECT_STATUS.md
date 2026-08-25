@@ -1,6 +1,6 @@
 # Project Status
 
-Last reviewed: 2026-08-17.
+Last reviewed: 2026-08-25.
 
 This document summarizes the current state of the wind-energy forecasting
 repository for portfolio and hiring-review purposes. It is a factual status
@@ -19,7 +19,9 @@ existing forecasting workflow, including a local MLflow Registry and
 reproducibility bundle tooling. A responsive React and TypeScript dashboard now
 opens on a read-only retrospective monitoring projection and retains the typed
 historical-performance view, completing a local frontend-to-API-to-verified
-artifact demonstration.
+artifact demonstration. The dashboard now has four shareable routes—Overview,
+Forecast Replay, Model Operations, and About—and browser tests exercise the
+packaged React-to-FastAPI path against the tracked synthetic evidence.
 
 The accepted v2 historical hindcast exists in one governed local environment.
 On 2026-08-10, PR #50 corrected the observed REN-ahead/ERA5-pending
@@ -65,10 +67,10 @@ each checkpoint was written. This file reflects the latest repository state.
 | Historical performance API | Implemented and consumed by the dashboard | `GET /api/v1/performance`, `wind_forecast.performance`, backend contract tests | It reads explicitly selected local evaluation artifacts; it is not live monitoring. |
 | Historical monitoring API | Implemented as a read-only verified projection | `GET /api/v1/monitoring/latest`, `/history`, `/runs/{run_id}`, `wind_forecast.monitoring_projection` | It projects immutable local batch evidence; it is not real time and performs no writes. |
 | Operational Read-only Copilot | Typed deterministic query layer, provider-neutral evaluation boundary, and fixed OpenAI and Gemini candidate adapters implemented; no live candidate evaluation or receipt | `wind_forecast.operational_candidate_evaluation`, `wind_forecast.operational_openai_candidate`, `wind_forecast.operational_gemini_candidate`, 88-case synthetic dataset, dedicated tests and Copilot docs | Both adapters permit only sealed synthetic egress, use separate digest-only receipts, and remain disabled. No activation, MCP, RAG, production authentication, remote exposure, or cloud deployment exists. |
-| React dashboard | Implemented for local/container demonstration | `frontend/`, frontend tests, `docs/DEMO.md` | It shows retrospective monitoring and historical holdout performance; it does not call `/predict`. |
+| React dashboard | Implemented for local/container demonstration with four routed pages | `frontend/`, Vitest and Playwright tests, `docs/DEMO.md` | It shows retrospective monitoring and historical holdout performance; it does not call `/predict` or provide live monitoring. |
 | Training CLIs | V1 baseline preserved; first v2 reference accepted and bootstrapped locally | `wind_forecast.training`, `wind_forecast.v2_training`, dedicated scripts, and `docs/PHASE_4.md` | The v2 result is a historical hindcast used by the local batch, not by API serving; tuned ANN/Optuna remains notebook-based. |
-| Docker support | Implemented baseline with runtime hardening and reproducible demo defaults | Backend and frontend Dockerfiles, Compose stack, tracked synthetic demo bundle, CI image builds, backend health check, and full-stack dashboard smoke | No image publishing, digest pinning, or production deployment workflow yet. |
-| CI | Implemented for backend and frontend validation | `.github/workflows/ci.yml` | CI covers Python tests and Ruff, frontend tests/lint/build, both Docker image builds, Compose validation, and backend health checks; it does not deploy artifacts. |
+| Docker support | Implemented baseline with runtime hardening and reproducible demo defaults | Backend and frontend Dockerfiles, Nginx SPA fallback, Compose stack, tracked synthetic demo bundle, CI image builds, backend health check, and full-stack dashboard smoke | No image publishing, digest pinning, or production deployment workflow yet. |
+| CI | Implemented for backend, frontend, and browser-backed validation | `.github/workflows/ci.yml` | CI covers Python tests and Ruff, frontend tests/lint/build, Chromium Playwright checks against Compose, both Docker image builds, Compose validation, and backend health checks; it does not deploy artifacts. |
 | MLflow lifecycle | Implemented; v1 and v2 local integration smokes plus v2 bootstrap completed | Tracking/Registry modules, both training CLIs, tests, and real local SQLite runs | `wind-forecast-v2-hindcast` version 1 is the local `champion` and `stable`; Registry state remains local and serving does not consume aliases. |
 | Artifact versioning | Local real-data release remains blocked; clean-clone synthetic demo is available | Deterministic builder/fetcher/verifier, `artifacts/catalog.json`, tracked `demo/v1` manifest and evidence, API checks, and Compose smoke | No public real-data v1 bundle until provenance/licence/redistribution approval; synthetic demo evidence is not a production or historical-data claim. |
 | Documentation | Strong | `README.md`, `docs/README.md`, `docs/DEMO.md`, phase docs, roadmap | Model/data cards are baseline-level and not full registry artifacts. |
@@ -361,8 +363,8 @@ This repository demonstrates:
 - Registry and deployment-pointer state are local-only and are not consumed by
   API serving.
 - The dashboard displays retrospective historical batch monitoring and
-  historical evaluation results. It does not call `/predict`, generate future
-  forecasts, poll continuously, or provide live model monitoring.
+  historical evaluation results across four routes. It does not call `/predict`,
+  generate future forecasts, poll continuously, or provide live model monitoring.
 - Public artifact distribution and a clean-clone round-trip remain gated by
   provenance/licence approval and explicit network authorization.
 - Monitoring is local and retrospective. Its schedulers are local-only; it has
@@ -400,7 +402,7 @@ This repository demonstrates:
 2. Prove the documented fetch, verification, and retraining round-trip from a
    clean clone before claiming cross-machine reproducibility of the real-data
    modelling workflow. The tracked synthetic dashboard demo already has a
-   clean-clone Compose path and an end-to-end smoke test.
+   clean-clone Compose path and HTTP plus Playwright end-to-end tests.
 3. Extend the baseline training CLI toward the tuned notebook workflow while
    preserving the current contracts.
 4. Raise test coverage as source-ingestion and v2 modules mature.

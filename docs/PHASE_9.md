@@ -406,14 +406,19 @@ sanitized `503`. Calibration references remain relocatable after a store is
 moved between hosts: if the recorded absolute path no longer exists, the
 loader verifies `reporting/references/{reference_id}` instead.
 
-The React dashboard opens on a `Monitoring` view and retains
-`Historical performance` as a separate view backed by the unchanged
-`/api/v1/performance` contract. Monitoring shows D+5/D+7 source freshness,
-the verified unpromoted model snapshot, source/report run status, 30/90-day
-as-issued performance against sealed-test v2 thresholds, top feature drift,
-and local alert/run history. It refreshes only on view entry or explicit user
-action and is permanently labelled “retrospective historical batch
-monitoring — not real time.”
+The React dashboard exposes four shareable routes: `Overview`,
+`Forecast Replay`, `Model Operations`, and `About`. Overview combines the
+independent `/health` process check with the latest monitoring projection to
+show model version, source pipeline run, watermark, freshness, and evidence
+availability. Forecast Replay remains backed by the unchanged
+`/api/v1/performance` contract. Model Operations shows D+5/D+7 source
+freshness, the verified model snapshot and report-scoped lifecycle metadata,
+source/report run status, 30/90-day as-issued performance against sealed-test
+v2 thresholds, top feature drift, and local alert/run history. It refreshes
+only on route entry or explicit user action and is permanently labelled
+“retrospective historical batch monitoring — not real time.” The About route
+documents the architecture, contracts, technology decisions, and claims
+boundaries without adding a new backend contract.
 
 ## Rejected Alternatives
 
