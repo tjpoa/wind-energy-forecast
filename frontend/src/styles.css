@@ -58,26 +58,45 @@ p {
   padding: 0.65rem 0;
 }
 
-.dashboard-tabs button {
+.dashboard-tabs a {
   border: 1px solid transparent;
   border-radius: 999px;
+  display: inline-block;
   color: #526a62;
   background: transparent;
   padding: 0.65rem 1rem;
   font-weight: 750;
+  text-decoration: none;
 }
 
-.dashboard-tabs button[aria-selected="true"] {
+.dashboard-tabs a[aria-current="page"] {
   border-color: #9bbcaf;
   color: #0f5843;
   background: #ffffff;
 }
 
-.dashboard-tabs button:focus-visible,
+.dashboard-tabs a:focus-visible,
 .monitoring-banner button:focus-visible,
-.run-selector select:focus-visible {
+.run-selector select:focus-visible,
+.secondary-button:focus-visible,
+.about-next-step a:focus-visible {
   outline: 3px solid #1f725b;
   outline-offset: 2px;
+}
+
+.secondary-button {
+  min-height: 42px;
+  border: 1px solid #9bbcaf;
+  border-radius: 0.6rem;
+  color: #0f5843;
+  background: #ffffff;
+  padding: 0.6rem 1rem;
+  font-weight: 750;
+}
+
+.secondary-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .dashboard-header {
@@ -165,6 +184,92 @@ p {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1rem;
+}
+
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.overview-hero {
+  border-color: #b8d2c4;
+  background: linear-gradient(135deg, #ffffff, #f3f8f5);
+}
+
+.monitoring-banner__copy {
+  max-width: 760px;
+  margin-bottom: 0;
+  color: #526a62;
+  line-height: 1.6;
+}
+
+.architecture-flow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: stretch;
+}
+
+.architecture-step,
+.about-card {
+  border: 1px solid #d9e5de;
+  border-radius: 0.85rem;
+  background: #f9fbfa;
+  padding: 1.1rem;
+}
+
+.architecture-step span {
+  color: #1f725b;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.architecture-step h3,
+.about-card h3 {
+  margin: 0.45rem 0 0.55rem;
+  font-size: 1rem;
+}
+
+.architecture-step p,
+.about-card p {
+  margin-bottom: 0;
+  color: #526a62;
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.architecture-arrow {
+  display: grid;
+  color: #4f8b79;
+  font-size: 1.5rem;
+  place-items: center;
+}
+
+.about-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.about-list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding-left: 1.2rem;
+  color: #526a62;
+  line-height: 1.55;
+}
+
+.about-next-step {
+  margin: 1.25rem 0 0;
+  color: #526a62;
+}
+
+.about-next-step a {
+  color: #0f5843;
+  font-weight: 750;
 }
 
 .metric-card .metric-card__compact {
@@ -672,6 +777,18 @@ p {
     grid-template-columns: 1fr;
   }
 
+  .architecture-flow {
+    grid-template-columns: 1fr;
+  }
+
+  .architecture-arrow {
+    transform: rotate(90deg);
+  }
+
+  .about-grid {
+    grid-template-columns: 1fr;
+  }
+
   .dashboard-section {
     padding: 1rem;
   }
@@ -699,6 +816,10 @@ p {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .monitoring-windows {
     grid-template-columns: 1fr;
   }
@@ -708,7 +829,8 @@ p {
   .date-range-filter,
   .metrics-grid--performance,
   .monitoring-summary-grid,
-  .monitoring-windows {
+  .monitoring-windows,
+  .overview-grid {
     grid-template-columns: 1fr;
   }
 
@@ -717,8 +839,9 @@ p {
     grid-template-columns: 1fr 1fr;
   }
 
-  .dashboard-tabs button {
+  .dashboard-tabs a {
     padding-inline: 0.45rem;
+    text-align: center;
   }
 
   .date-range-filter button {

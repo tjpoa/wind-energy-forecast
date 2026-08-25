@@ -179,7 +179,7 @@ function ReportSummary({
       <section className="dashboard-section" aria-labelledby="monitoring-state-title">
         <div className="section-heading">
           <p className="eyebrow">Verified status</p>
-          <h2 id="monitoring-state-title">State and freshness</h2>
+          <h2 id="monitoring-state-title">Lifecycle, state and freshness</h2>
         </div>
         <div className="monitoring-summary-grid">
           <article className="metric-card">
@@ -230,6 +230,55 @@ function ReportSummary({
         <p className="scale-note">
           Production and error values are daily sums of 15-minute MW readings.
           They are not energy values in MWh.
+        </p>
+      </section>
+      <section className="dashboard-section" aria-labelledby="model-lifecycle-title">
+        <div className="section-heading">
+          <p className="eyebrow">Deployment attribution</p>
+          <h2 id="model-lifecycle-title">Model lifecycle</h2>
+        </div>
+        <div className="overview-grid">
+          <article className="metric-card">
+            <h3>Registered model</h3>
+            <p className="metric-card__compact">
+              {report.model_era.registered_model_name ?? "Not available"}
+            </p>
+            <span>Report-scoped registry identity</span>
+          </article>
+          <article className="metric-card">
+            <h3>Model version</h3>
+            <p>{report.model_era.model_version ?? "Not available"}</p>
+            <span>
+              {report.model?.status === "champion"
+                ? "Champion"
+                : report.model?.status === "selected_not_promoted"
+                  ? "Selected, not promoted"
+                  : "No snapshot status"}
+            </span>
+          </article>
+          <article className="metric-card">
+            <h3>Association</h3>
+            <p className="metric-card__compact">
+              {report.model_era.association_kind.replaceAll("_", " ")}
+            </p>
+            <span>
+              Deployment {report.model_era.deployment_id?.slice(0, 12) ?? "legacy"}
+            </span>
+          </article>
+          <article className="metric-card">
+            <h3>Generation</h3>
+            <p>{report.model_era.deployment_generation ?? "Not available"}</p>
+            <span>
+              {report.model_era.cutoffs?.monitoring_evaluation_cutoff
+                ? `Monitoring cutoff ${report.model_era.cutoffs.monitoring_evaluation_cutoff}`
+                : "No cutoff recorded"}
+            </span>
+          </article>
+        </div>
+        <p className="scale-note">
+          This is the existing sanitized monitoring projection. It does not
+          claim a live registry or controlled-retraining lifecycle beyond the
+          evidence attached to this report.
         </p>
       </section>
       <section className="dashboard-section" aria-labelledby="rolling-title">
@@ -430,10 +479,10 @@ export function MonitoringPage() {
       <header className="dashboard-header">
         <div>
           <p className="eyebrow">Portuguese wind energy</p>
-          <h1>Historical Monitoring Dashboard</h1>
+          <h1>Model Operations</h1>
           <p className="dashboard-header__description">
-            Verified retrospective evidence for data freshness, drift, and
-            as-issued model performance.
+            Verified retrospective evidence for data freshness, drift, model
+            errors, alerts, and report-scoped lifecycle state.
           </p>
         </div>
         <ApiStatus baseUrl={apiConfig.baseUrl} status={connectionState} />
@@ -442,7 +491,7 @@ export function MonitoringPage() {
       <aside className="monitoring-banner" aria-label="Monitoring mode">
         <strong>Retrospective historical batch monitoring — not real time.</strong>
         <span>
-          Data is refreshed only when this view opens or when you request it.
+          Evidence is refreshed only when this page opens or when you request it.
         </span>
         <button
           type="button"

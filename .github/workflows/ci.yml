@@ -167,6 +167,59 @@ jobs:
       - name: Start stack and verify dashboard flow
         run: python scripts/smoke_demo_stack.py
 
+  demo-browser-e2e:
+    name: Reproducible demo browser E2E
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Start reproducible demo stack
+        working-directory: .
+        run: docker compose up --build --detach --wait
+
+      - name: Run browser tests against Compose
+        run: npm run test:e2e
+        env:
+          CI: "true"
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore
+
+      - name: Show Compose logs on failure
+        if: failure()
+        working-directory: .
+        run: docker compose logs
+
+      - name: Stop reproducible demo stack
+        if: always()
+        working-directory: .
+        run: docker compose down --remove-orphans
+
   operational-projection-postgres:
     name: Operational projection PostgreSQL 16
     runs-on: ubuntu-latest

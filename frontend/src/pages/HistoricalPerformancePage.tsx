@@ -158,10 +158,10 @@ export function HistoricalPerformancePage() {
       <header className="dashboard-header">
         <div>
           <p className="eyebrow">Portuguese wind energy</p>
-          <h1>Wind Energy Forecast Dashboard</h1>
+          <h1>Forecast Replay</h1>
           <p className="dashboard-header__description">
-            A focused workspace for exploring production forecasts and the
-            conditions behind them.
+            Replay historical predictions against actual production over a
+            chosen date range. This is a retrospective holdout view.
           </p>
         </div>
         <ApiStatus baseUrl={apiConfig.baseUrl} status={connectionState} />

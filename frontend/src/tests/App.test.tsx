@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App";
 
@@ -179,6 +179,7 @@ function jsonResponse(payload: unknown, status = 200): Response {
 }
 
 function responseFor(url: string): Response {
+  if (url.endsWith("/health")) return jsonResponse({ status: "ok" });
   if (url.endsWith("/api/v1/monitoring/latest")) return jsonResponse(availableLatest);
   if (url.endsWith("/api/v1/monitoring/history")) return jsonResponse(availableHistory);
   if (url.endsWith("/api/v1/performance")) return jsonResponse(performancePayload);
@@ -193,23 +194,265 @@ function responseFor(url: string): Response {
   return jsonResponse({}, 404);
 }
 
+function renderAt(path: string) {
+  window.history.pushState({}, "", path);
+  return render(<App />);
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
-describe("App monitoring dashboard", () => {
-  it("opens on monitoring, labels it as not real time, and shows loading", () => {
+beforeEach(() => {
+  window.history.pushState({}, "", "/overview");
+});
+
+describe("App pages", () => {
+  it("opens on overview, labels it as not real time, and shows loading", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
     render(<App />);
 
-    expect(screen.getByRole("tab", { name: "Monitoring" })).toHaveAttribute(
-      "aria-selected",
-      "true",
+    expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute(
+      "aria-current",
+      "page",
     );
-    expect(screen.getByText(/not real time/i)).toBeInTheDocument();
-    expect(screen.getByText("Loading historical monitoring data…")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Forecast Replay" })).toHaveAttribute(
+      "href",
+      "/forecast-replay",
+    );
+    expect(screen.getByText(/not a real-time/i)).toBeInTheDocument();
+    expect(screen.getByText("Loading verified monitoring evidence…")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Connecting" })).toBeInTheDocument();
+  });
+
+  it("renders overview model, pipeline, watermark, and health evidence", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string | URL | Request) =>
+        Promise.resolve(responseFor(String(input))),
+      ),
+    );
+    render(<App />);
+
+    expect(await screen.findByText("wind-v2 · v1")).toBeInTheDocument();
+    expect(screen.getByText("source-run-1")).toBeInTheDocument();
+    expect(screen.getByText("2026-03-31")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Connected" })).toBeInTheDocument();
+  });
+
+  it("keeps monitoring evidence visible when the health check fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string | URL | Request) => {
+        const url = String(input);
+        if (url.endsWith("/health")) return Promise.resolve(jsonResponse({ detail: "down" }, 503));
+        return Promise.resolve(responseFor(url));
+      }),
+    );
+    render(<App />);
+
+    expect(await screen.findByText("API health check unavailable")).toBeInTheDocument();
+    expect(screen.getByText("source-run-1")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Unavailable" })).toBeInTheDocument();
+  });
+
+  it("navigates between real routes and marks the active page", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => Promise.resolve(responseFor(String(input)))));
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("link", { name: "Model Operations" }));
+    expect(screen.getByRole("link", { name: "Model Operations" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(await screen.findByRole("heading", { name: "Model Operations" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("link", { name: "About" }));
+    expect(await screen.findByRole("heading", { name: "About this application" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "About" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("opens Model Operations with lifecycle, errors, drift, and alerts", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string | URL | Request) =>
+        Promise.resolve(responseFor(String(input))),
+      ),
+    );
+    renderAt("/model-operations");
+
+    expect(await screen.findByRole("heading", { name: "Model lifecycle" })).toBeInTheDocument();
+    expect(screen.getByText("wind-v2")).toBeInTheDocument();
+    expect(screen.getByText("wind_direction_current")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Active alerts" })).toBeInTheDocument();
+    expect(screen.getAllByText("feature_drift:x:30:global").length).toBeGreaterThan(0);
+  });
+
+  it("preserves Forecast Replay filtering and metrics on its route", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string | URL | Request) =>
+        Promise.resolve(responseFor(String(input))),
+      ),
+    );
+    renderAt("/forecast-replay");
+
+    expect(await screen.findByRole("heading", { name: "Forecast Replay" })).toBeInTheDocument();
+    const maeCard = screen.getByRole("heading", { level: 3, name: "MAE" }).parentElement;
+    expect(maeCard).not.toBeNull();
+    expect(within(maeCard!).getByText("12.3")).toBeInTheDocument();
+    expect(screen.getByText(/not energy values in MWh/i)).toBeInTheDocument();
+  });
+
+  it("supports a direct route to About", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+    renderAt("/about");
+
+    expect(screen.getByRole("heading", { name: "A read-only evidence path" })).toBeInTheDocument();
+    expect(screen.getByText(/demo-v1/)).toBeInTheDocument();
+  });
+
+  it("shows the responsive Model Operations layout hooks", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string | URL | Request) =>
+        Promise.resolve(responseFor(String(input))),
+      ),
+    );
+    renderAt("/model-operations");
+
+    expect(await screen.findByRole("heading", { name: "30 days" })).toBeInTheDocument();
+    expect(document.querySelector(".monitoring-summary-grid")).toBeInTheDocument();
+    expect(document.querySelector(".monitoring-windows")).toBeInTheDocument();
+    expect(document.querySelector(".monitoring-table")).toBeInTheDocument();
+    expect(document.querySelector(".dashboard-tabs")).toBeInTheDocument();
+  });
+
+  it("redirects the root route to Overview", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+    window.history.pushState({}, "", "/");
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Forecast operations overview" })).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/overview");
+  });
+
+  it("retains the monitoring request cancellation boundary on page exit", () => {
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/api/v1/monitoring/")) {
+          if (init?.signal) signals.push(init.signal);
+          return new Promise<Response>(() => undefined);
+        }
+        return Promise.resolve(responseFor(url));
+      }),
+    );
+    renderAt("/model-operations");
+    fireEvent.click(screen.getByRole("link", { name: "Forecast Replay" }));
+
+    expect(signals).toHaveLength(2);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+  });
+
+  it("retains loading state while health and monitoring requests are pending", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+    renderAt("/overview");
+
+    expect(screen.getByText("Loading verified monitoring evidence…")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Connecting" })).toBeInTheDocument();
+  });
+
+  it("keeps the existing monitoring empty state on its route", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string | URL | Request) =>
+        Promise.resolve(
+          String(input).endsWith("/latest")
+            ? jsonResponse({
+                state: "empty",
+                mode: "retrospective_historical_batch_not_real_time",
+                served_at_utc: "2026-04-08T12:00:00Z",
+                message: "No historical monitoring reports or runs are available.",
+                latest_attempt: null,
+                report: null,
+              })
+            : String(input).endsWith("/health")
+              ? jsonResponse({ status: "ok" })
+              : jsonResponse(emptyHistory),
+        ),
+      ),
+    );
+    renderAt("/model-operations");
+
+    expect(await screen.findByText("No monitoring reports yet")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Connected" })).toBeInTheDocument();
+    expect(screen.getByText("No reporting runs are available.")).toBeInTheDocument();
+  });
+
+  it("does not expose local filesystem paths in run details", async () => {
+    const fetchMock = vi.fn((input: string | URL | Request) =>
+      Promise.resolve(responseFor(String(input))),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    renderAt("/model-operations");
+
+    const selector = await screen.findByLabelText("Inspect reporting run");
+    fireEvent.change(selector, { target: { value: "report-run-1" } });
+
+    expect(await screen.findByText(/Report rrrrrrrrrrrr/)).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("C:\\");
+  });
+
+  it("supports the API error state for a selected run", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string | URL | Request) => {
+        const url = String(input);
+        if (url.includes("/api/v1/monitoring/runs/")) {
+          return Promise.resolve(jsonResponse({ detail: "not found" }, 404));
+        }
+        return Promise.resolve(responseFor(url));
+      }),
+    );
+    renderAt("/model-operations");
+
+    const selector = await screen.findByLabelText("Inspect reporting run");
+    fireEvent.change(selector, { target: { value: "report-run-1" } });
+    expect(await screen.findByText("The monitoring request failed with HTTP 404.")).toBeInTheDocument();
+  });
+
+  it("retains the original fixture coverage for a newer failed reporting attempt", async () => {
+    const failedRun = {
+      ...run,
+      run_id: "failed-run",
+      status: "failed",
+      report_id: null,
+      failure: {
+        failed_at_utc: "2026-04-08T12:01:00Z",
+        error_type: "MonitoringReportingError",
+        message: "The reporting attempt failed. Inspect local operator logs.",
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string | URL | Request) => {
+        const url = String(input);
+        if (url.endsWith("/latest")) {
+          return Promise.resolve(jsonResponse({ ...availableLatest, latest_attempt: failedRun }));
+        }
+        return Promise.resolve(responseFor(url));
+      }),
+    );
+    renderAt("/model-operations");
+
+    const card = (await screen.findByRole("heading", { name: "Latest reporting attempt" })).parentElement;
+    expect(card).not.toBeNull();
+    expect(within(card!).getByText("failed")).toBeInTheDocument();
+    expect(within(card!).getByText(/Inspect local operator logs/)).toBeInTheDocument();
   });
 
   it("treats a verified empty monitoring store as connected", async () => {
@@ -230,7 +473,7 @@ describe("App monitoring dashboard", () => {
         ),
       ),
     );
-    render(<App />);
+    renderAt("/model-operations");
 
     expect(await screen.findByText("No monitoring reports yet")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Connected" })).toBeInTheDocument();
@@ -244,7 +487,7 @@ describe("App monitoring dashboard", () => {
         Promise.resolve(responseFor(String(input))),
       ),
     );
-    render(<App />);
+    renderAt("/model-operations");
 
     expect(await screen.findByText(/API remains connected/)).toHaveTextContent("late");
     expect(screen.getByText(/selected, not promoted/)).toBeInTheDocument();
@@ -295,7 +538,7 @@ describe("App monitoring dashboard", () => {
         return Promise.resolve(responseFor(url));
       }),
     );
-    render(<App />);
+    renderAt("/model-operations");
 
     const r2Row = (await screen.findByRole("rowheader", { name: "R²" }))
       .parentElement;
@@ -338,7 +581,7 @@ describe("App monitoring dashboard", () => {
         return Promise.resolve(responseFor(url));
       }),
     );
-    render(<App />);
+    renderAt("/model-operations");
 
     expect(await screen.findByText("escalated")).toBeInTheDocument();
     expect(screen.getByText("resolved")).toBeInTheDocument();
@@ -369,7 +612,7 @@ describe("App monitoring dashboard", () => {
         return Promise.resolve(responseFor(url));
       }),
     );
-    render(<App />);
+    renderAt("/model-operations");
 
     const card = (await screen.findByRole("heading", {
       name: "Latest reporting attempt",
@@ -384,7 +627,7 @@ describe("App monitoring dashboard", () => {
       Promise.resolve(responseFor(String(input))),
     );
     vi.stubGlobal("fetch", fetchMock);
-    render(<App />);
+    renderAt("/model-operations");
 
     const selector = await screen.findByLabelText("Inspect reporting run");
     fireEvent.change(selector, { target: { value: "report-run-1" } });
@@ -411,7 +654,7 @@ describe("App monitoring dashboard", () => {
         return Promise.resolve(responseFor(url));
       }),
     );
-    render(<App />);
+    renderAt("/model-operations");
 
     const selector = await screen.findByLabelText("Inspect reporting run");
     fireEvent.change(selector, { target: { value: "report-run-1" } });
@@ -472,7 +715,7 @@ describe("App monitoring dashboard", () => {
       },
     );
     vi.stubGlobal("fetch", fetchMock);
-    render(<App />);
+    renderAt("/model-operations");
 
     const selector = await screen.findByLabelText("Inspect reporting run");
     fireEvent.change(selector, { target: { value: run.run_id } });
@@ -505,9 +748,9 @@ describe("App monitoring dashboard", () => {
         return Promise.resolve(responseFor(url));
       }),
     );
-    render(<App />);
+    renderAt("/model-operations");
 
-    fireEvent.click(screen.getByRole("tab", { name: "Historical performance" }));
+    fireEvent.click(screen.getByRole("link", { name: "Forecast Replay" }));
 
     expect(signals).toHaveLength(2);
     expect(signals.every((signal) => signal.aborted)).toBe(true);
@@ -520,27 +763,23 @@ describe("App monitoring dashboard", () => {
         Promise.resolve(responseFor(String(input))),
       ),
     );
-    render(<App />);
-    fireEvent.click(screen.getByRole("tab", { name: "Historical performance" }));
+    renderAt("/forecast-replay");
 
     expect(
-      await screen.findByRole("heading", { name: "Wind Energy Forecast Dashboard" }),
+      await screen.findByRole("heading", { name: "Forecast Replay" }),
     ).toBeInTheDocument();
     const maeCard = screen.getByRole("heading", { level: 3, name: "MAE" }).parentElement;
     expect(maeCard).not.toBeNull();
     expect(within(maeCard!).getByText("12.3")).toBeInTheDocument();
   });
 
-  it("supports arrow-key navigation between dashboard tabs", () => {
+  it("supports keyboard focus on route navigation links", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
-    render(<App />);
+    renderAt("/overview");
 
-    const monitoringTab = screen.getByRole("tab", { name: "Monitoring" });
-    fireEvent.keyDown(monitoringTab, { key: "ArrowRight" });
-
-    expect(
-      screen.getByRole("tab", { name: "Historical performance" }),
-    ).toHaveAttribute("aria-selected", "true");
+    const modelOperations = screen.getByRole("link", { name: "Model Operations" });
+    modelOperations.focus();
+    expect(modelOperations).toHaveFocus();
   });
 
   it("refreshes only on demand and surfaces a history error independently", async () => {
@@ -558,7 +797,7 @@ describe("App monitoring dashboard", () => {
       return Promise.resolve(responseFor(url));
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<App />);
+    renderAt("/model-operations");
 
     expect(
       await screen.findByText("The monitoring request failed with HTTP 503."),
@@ -578,7 +817,7 @@ describe("App monitoring dashboard", () => {
         Promise.resolve(responseFor(String(input))),
       ),
     );
-    render(<App />);
+    renderAt("/model-operations");
 
     expect(await screen.findByRole("heading", { name: "30 days" }))
       .toBeInTheDocument();

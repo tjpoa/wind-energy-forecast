@@ -29,7 +29,8 @@ orchestration, or registry-based serving.
   inference.
 - FastAPI service for health checks, historical evaluation results, model
   artifact inspection, prediction, and bounded local-only operational queries.
-- Responsive React and TypeScript dashboard for historical forecast performance.
+- Responsive React and TypeScript dashboard with Overview, Forecast Replay,
+  Model Operations, and About routes.
 - Pytest coverage for schemas, configuration, features, validation, tracking,
   and API behavior.
 - Ruff linting configured in `pyproject.toml`.
@@ -53,15 +54,17 @@ orchestration, or registry-based serving.
 The dashboard demonstration follows this read-only path:
 
 ```text
-React + TypeScript dashboard
+React + TypeScript route shell
         |
-        | GET /api/v1/performance?start_date=...&end_date=...
+        | /overview, /forecast-replay, /model-operations, /about
+        |
+        | GET /health, /api/v1/monitoring/*, /api/v1/performance
         v
 FastAPI application
         |
-        | validates and reads one explicitly selected local result set
+        | validates and reads selected local evidence
         v
-predictions.csv + optional metrics.json and run_summary.json
+verified monitoring store + predictions.csv artifacts
 ```
 
 The API also exposes `/model-info` and `/predict` against the saved Keras
@@ -165,15 +168,17 @@ npm run dev
 defaults to `http://localhost:8000` in the example file. Variables prefixed
 with `VITE_` are bundled into browser code and must never contain secrets.
 
-The development server is available at `http://localhost:5173`. The dashboard
-loads historical model performance from `GET /api/v1/performance`. It provides
-inclusive start/end date filters, MAE, RMSE, R² and observation-count cards,
-actual-versus-predicted and signed-error charts, and the ten most recent
-observations as an accessible table. Loading, empty, API error and invalid-date
-states are reported explicitly, and each new request cancels the previous one.
+The development server is available at `http://localhost:5173`. The four
+shareable pages are `/overview`, `/forecast-replay`, `/model-operations`, and
+`/about`. Overview reads `/health` and the latest verified monitoring report;
+Forecast Replay reads `GET /api/v1/performance` with inclusive date filters;
+Model Operations presents drift, errors, alerts, reporting history, and
+report-scoped lifecycle evidence; About documents the architecture and limits.
+Loading, empty, API error and invalid-date states are reported explicitly, and
+each new data request cancels the previous one where applicable.
 
-The API also returns MAPE for the selected interval, but the current dashboard
-does not display it.
+The API also returns MAPE for the selected interval, but Forecast Replay does
+not display it.
 
 The production values exposed by the historical artifact are daily sums of
 15-minute MW readings. The dashboard uses that description for production,
@@ -185,6 +190,14 @@ Run the frontend checks from `frontend/`:
 npm run test
 npm run lint
 npm run build
+```
+
+Run the browser checks against the running Compose demo after installing
+Chromium:
+
+```powershell
+npx playwright install chromium
+npm run test:e2e
 ```
 
 ### Local dashboard run
@@ -230,8 +243,9 @@ Set-Location .\frontend
 npm run dev
 ```
 
-Open `http://localhost:5173`. The browser calls the API at
-`http://localhost:8000` by default.
+Open `http://localhost:5173/overview`. The browser calls the API at
+`http://localhost:8000` by default. The other routes are
+`/forecast-replay`, `/model-operations`, and `/about`.
 
 ### Docker Compose dashboard stack
 
@@ -269,9 +283,8 @@ the tracked demo performance artifact, and the tracked demo monitoring store
 into the backend read-only. The default bundle also contains explicit
 deployment and pipeline-run receipts used as monitoring provenance.
 
-A fresh clone therefore starts with a connected dashboard and both
-monitoring and historical-performance views populated from deterministic
-synthetic evidence:
+A fresh clone therefore starts with a connected four-page dashboard populated
+from deterministic synthetic evidence:
 
 ```powershell
 docker compose up --build
