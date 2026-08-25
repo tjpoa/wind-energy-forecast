@@ -230,7 +230,7 @@ resource "azurerm_container_app_job" "validation" {
   container_app_environment_id = azurerm_container_app_environment.this.id
   replica_timeout_in_seconds   = 300
   replica_retry_limit          = 1
-  tags                          = merge(local.common_tags, { component = "validation-job" })
+  tags                         = merge(local.common_tags, { component = "validation-job" })
 
   identity {
     type         = "UserAssigned"
@@ -260,10 +260,10 @@ resource "azurerm_container_app_job" "validation" {
 }
 
 resource "azurerm_consumption_budget_resource_group" "this" {
-  name             = "wind-forecast-demo-budget"
+  name              = "wind-forecast-demo-budget"
   resource_group_id = azurerm_resource_group.this.id
-  amount           = var.budget_amount
-  time_grain       = "Monthly"
+  amount            = var.budget_amount
+  time_grain        = "Monthly"
 
   time_period {
     start_date = var.budget_start_date

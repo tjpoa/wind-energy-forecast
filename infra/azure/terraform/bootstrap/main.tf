@@ -64,27 +64,27 @@ resource "azurerm_user_assigned_identity" "deployer" {
 }
 
 resource "azurerm_federated_identity_credential" "publisher" {
-  name                     = "github-master-publisher"
+  name                      = "github-master-publisher"
   user_assigned_identity_id = azurerm_user_assigned_identity.publisher.id
-  audience                 = local.github_oidc_audience
-  issuer                   = local.github_oidc_issuer
-  subject                  = local.branch_subject
+  audience                  = local.github_oidc_audience
+  issuer                    = local.github_oidc_issuer
+  subject                   = local.branch_subject
 }
 
 resource "azurerm_federated_identity_credential" "planner" {
-  name                     = "github-master-planner"
+  name                      = "github-master-planner"
   user_assigned_identity_id = azurerm_user_assigned_identity.planner.id
-  audience                 = local.github_oidc_audience
-  issuer                   = local.github_oidc_issuer
-  subject                  = local.branch_subject
+  audience                  = local.github_oidc_audience
+  issuer                    = local.github_oidc_issuer
+  subject                   = local.branch_subject
 }
 
 resource "azurerm_federated_identity_credential" "deployer" {
-  name                     = "github-production-deployer"
+  name                      = "github-production-deployer"
   user_assigned_identity_id = azurerm_user_assigned_identity.deployer.id
-  audience                 = local.github_oidc_audience
-  issuer                   = local.github_oidc_issuer
-  subject                  = local.environment_subject
+  audience                  = local.github_oidc_audience
+  issuer                    = local.github_oidc_issuer
+  subject                   = local.environment_subject
 }
 
 data "azurerm_role_definition" "storage_blob_data_reader" {

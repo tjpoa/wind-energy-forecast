@@ -6,7 +6,7 @@ terraform {
     storage_account_name = "tfstateplaceholder"
     container_name       = "tfstate"
     key                  = "production.tfstate"
-    use_oidc              = true
-    use_azuread_auth      = true
+    use_oidc             = true
+    use_azuread_auth     = true
   }
 }
