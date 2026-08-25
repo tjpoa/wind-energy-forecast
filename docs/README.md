@@ -14,6 +14,7 @@ This folder keeps project documentation organized by purpose and roadmap phase.
 | Document | Purpose |
 | --- | --- |
 | [Demo Guide](DEMO.md) | Full-stack local demo for preparing evaluation artifacts, running React with FastAPI, using Docker Compose, and validating the project. |
+| [Azure Deployment](AZURE_DEPLOYMENT.md) | Protected Azure Container Apps deployment path for the synthetic portfolio demo, including rollback and cost boundaries. |
 | [Reproducibility Guide](REPRODUCIBILITY.md) | MLflow Registry workflow and immutable artifact-bundle recovery. |
 | [Controlled Retraining](CONTROLLED_RETRAINING.md) | Approved post-monitoring lifecycle contract, policy, cutoffs, deployment semantics, and staged delivery plan. |
 | [Operational Read-only Copilot](OPERATIONAL_COPILOT.md) | Accepted product contract, typed query layer, and local-only HTTP API for bounded, grounded, read-only operational questions. |

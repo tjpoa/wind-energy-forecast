@@ -3,6 +3,11 @@
 This guide runs the wind-energy forecasting project as a local full-stack ML
 demonstration for portfolio reviews and technical interviews.
 
+The optional cloud-hosted version follows the same read-only dashboard
+contract. See [`AZURE_DEPLOYMENT.md`](AZURE_DEPLOYMENT.md) for the protected
+Azure Container Apps workflow. It hosts only the synthetic `demo/v1` bundle and
+does not change the local or provider-backed modelling workflow.
+
 ```text
 React + TypeScript dashboard
         |

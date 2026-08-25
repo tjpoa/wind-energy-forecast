@@ -14,6 +14,7 @@ RUN apt-get update \
 
 COPY requirements.txt pyproject.toml README.md ./
 COPY src ./src
+COPY demo/v1 ./demo/v1
 
 RUN python -m pip install --upgrade pip \
     && python -m pip install -r requirements.txt \
