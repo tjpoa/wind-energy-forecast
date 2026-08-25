@@ -14,7 +14,8 @@ Data/ML Engineering portfolio project.
 
 The repository now demonstrates reusable Python packaging, data validation,
 feature engineering, saved-model inference, a tested FastAPI service, Docker
-container support, GitHub Actions CI, and local MLflow tracking around the
+container support, a protected Azure Container Apps demo deployment path,
+GitHub Actions CI, and local MLflow tracking around the
 existing forecasting workflow, including a local MLflow Registry and
 reproducibility bundle tooling. A responsive React and TypeScript dashboard now
 opens on a read-only retrospective monitoring projection and retains the typed
@@ -69,7 +70,7 @@ each checkpoint was written. This file reflects the latest repository state.
 | Operational Read-only Copilot | Typed deterministic query layer, provider-neutral evaluation boundary, and fixed OpenAI and Gemini candidate adapters implemented; no live candidate evaluation or receipt | `wind_forecast.operational_candidate_evaluation`, `wind_forecast.operational_openai_candidate`, `wind_forecast.operational_gemini_candidate`, 88-case synthetic dataset, dedicated tests and Copilot docs | Both adapters permit only sealed synthetic egress, use separate digest-only receipts, and remain disabled. No activation, MCP, RAG, production authentication, remote exposure, or cloud deployment exists. |
 | React dashboard | Implemented for local/container demonstration with four routed pages | `frontend/`, Vitest and Playwright tests, `docs/DEMO.md` | It shows retrospective monitoring and historical holdout performance; it does not call `/predict` or provide live monitoring. |
 | Training CLIs | V1 baseline preserved; first v2 reference accepted and bootstrapped locally | `wind_forecast.training`, `wind_forecast.v2_training`, dedicated scripts, and `docs/PHASE_4.md` | The v2 result is a historical hindcast used by the local batch, not by API serving; tuned ANN/Optuna remains notebook-based. |
-| Docker support | Implemented baseline with runtime hardening and reproducible demo defaults | Backend and frontend Dockerfiles, Nginx SPA fallback, Compose stack, tracked synthetic demo bundle, CI image builds, backend health check, and full-stack dashboard smoke | No image publishing, digest pinning, or production deployment workflow yet. |
+| Docker and Azure demo deployment | Implemented local/container path plus a protected Azure Container Apps deployment path | Backend/frontend Dockerfiles, Azure Bicep, internal API, Nginx allow-list, immutable demo validator, scheduled Container Apps Job, manual OIDC workflow, budget and Log Analytics configuration | Azure resource provisioning remains an operator-approved step; the deployed path is synthetic, retrospective, and non-production. |
 | CI | Implemented for backend, frontend, and browser-backed validation | `.github/workflows/ci.yml` | CI covers Python tests and Ruff, frontend tests/lint/build, Chromium Playwright checks against Compose, both Docker image builds, Compose validation, and backend health checks; it does not deploy artifacts. |
 | MLflow lifecycle | Implemented; v1 and v2 local integration smokes plus v2 bootstrap completed | Tracking/Registry modules, both training CLIs, tests, and real local SQLite runs | `wind-forecast-v2-hindcast` version 1 is the local `champion` and `stable`; Registry state remains local and serving does not consume aliases. |
 | Artifact versioning | Local real-data release remains blocked; clean-clone synthetic demo is available | Deterministic builder/fetcher/verifier, `artifacts/catalog.json`, tracked `demo/v1` manifest and evidence, API checks, and Compose smoke | No public real-data v1 bundle until provenance/licence/redistribution approval; synthetic demo evidence is not a production or historical-data claim. |
@@ -91,7 +92,7 @@ each checkpoint was written. This file reflects the latest repository state.
 | 9 | Data drift and model-performance monitoring | Completed locally for the accepted historical-batch contract: quality evidence, calibrated 30/90-day drift, as-issued performance, immutable JSON/Markdown reports, and persistent local alerts. |
 | 10 | Batch orchestration with Apache Airflow | Completed locally: Airflow 3.3.0 build/import checks and a serial real-CLI three-date synthetic backfill passed. On 2026-08-10, Task Scheduler also completed an end-to-end local delayed-hindcast cycle with alerts and exit code 0. This is conditional local acceptance, not production deployment. |
 | 11 | PySpark data-processing implementation | Not implemented. |
-| 12 | Azure and Databricks deployment design | Not implemented. |
+| 12 | Azure and Databricks deployment design | Azure Container Apps design and deployment path implemented for the synthetic demo; Databricks and PySpark remain deferred. |
 
 ## Validation Snapshot
 

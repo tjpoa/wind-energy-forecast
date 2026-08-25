@@ -11,10 +11,11 @@ tracking around the existing forecasting workflow.
 
 The project should be read as a software, full-stack, data, and ML engineering
 portfolio project. Its React dashboard and FastAPI service run locally or with
-Docker Compose against explicitly selected local artifacts. It does not
-currently claim cloud deployment, production operation, real-time data,
-enterprise scalability, complete production monitoring, production
-orchestration, or registry-based serving.
+Docker Compose against explicitly selected local artifacts, and an optional
+Azure Container Apps path hosts the tracked synthetic demo bundle. Neither
+path claims production operation, real-time data, enterprise scalability,
+complete production monitoring, production orchestration, or registry-based
+serving.
 
 ## What this project includes
 
@@ -48,6 +49,9 @@ orchestration, or registry-based serving.
 - A tracked `demo/v1` bundle of clearly labelled deterministic synthetic
   performance, monitoring, deployment, and pipeline-run evidence for a clean
   clone demonstration.
+- Bicep and a protected manual GitHub Actions workflow for the synthetic Azure
+  Container Apps demo, including immutable image digests, an internal API,
+  scheduled evidence validation, and cost guardrails.
 
 ## Architecture
 
@@ -644,7 +648,8 @@ The standard CI jobs do not require real WeatherAPI credentials, local models,
 local datasets, generated performance artifacts, or secrets. Compose validation
 checks parsing, interpolation, and the service model; it does not start the
 stack or verify runtime bind-mount contents. CI builds images for validation but
-does not publish or deploy them.
+does not publish or deploy them. The separate `Deploy Azure portfolio demo`
+workflow is manual and approval protected.
 
 ## Current limitations
 
@@ -656,15 +661,15 @@ does not publish or deploy them.
 - The first public artifact release remains blocked until source, licence,
   attribution, and redistribution permission are approved in
   `artifacts/catalog.json`.
-- There is no cloud deployment.
-- There is no production environment or enterprise-scalability claim.
-- Monitoring is retrospective and local; the only additional scheduler emits
+- The Azure path is a synthetic portfolio deployment, not a production
+  forecasting environment or enterprise-scalability claim.
+- Monitoring is retrospective and read-only; the only additional scheduler emits
   monthly retraining/stability recommendations, with no real-time data path or
   external alert delivery.
 - Airflow orchestration is local-only and is not a production deployment.
 - PySpark processing has not been implemented.
-- The FastAPI service is a local/container serving interface, not a deployed
-  production service.
+- The FastAPI service is a local/container interface or an internal API behind
+  the public demo's allow-listed Nginx proxy, not a deployed production service.
 - The frontend integrates historical performance data only; it does not issue
   future prediction requests or provide live monitoring.
 

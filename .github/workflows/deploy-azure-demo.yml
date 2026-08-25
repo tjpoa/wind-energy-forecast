@@ -1,0 +1,222 @@
+name: Deploy Azure portfolio demo
+
+on:
+  workflow_dispatch:
+    inputs:
+      acr_name:
+        description: "Globally unique Azure Container Registry name"
+        required: false
+        default: wfwindforecastdemo
+        type: string
+      bootstrap_foundation:
+        description: "Create or update the subscription-scoped foundation resources"
+        required: false
+        default: false
+        type: boolean
+      api_image:
+        description: "Existing API image digest for rollback; leave empty to build the selected commit"
+        required: false
+        type: string
+      frontend_image:
+        description: "Existing frontend image digest for rollback; leave empty to build the selected commit"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: azure-portfolio-demo
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy immutable demo revision
+    runs-on: ubuntu-latest
+    environment: azure-demo
+    env:
+      AZURE_LOCATION: westeurope
+      AZURE_RESOURCE_GROUP: wind-energy-forecast-demo
+      AZURE_ACR_NAME: ${{ inputs.acr_name }}
+      AZURE_ENVIRONMENT_NAME: wind-forecast-demo-env
+      AZURE_RUNTIME_IDENTITY_NAME: wind-forecast-demo-runtime
+      ROLLBACK_API_IMAGE: ${{ inputs.api_image }}
+      ROLLBACK_FRONTEND_IMAGE: ${{ inputs.frontend_image }}
+
+    steps:
+      - name: Check out selected commit
+        uses: actions/checkout@v4
+
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Validate Bicep templates
+        shell: bash
+        run: |
+          set -euo pipefail
+          az bicep build --file infra/azure/foundation.bicep
+          az bicep build --file infra/azure/workload.bicep
+
+      - name: Deploy Azure foundation (optional bootstrap)
+        if: ${{ inputs.bootstrap_foundation }}
+        shell: bash
+        env:
+          GITHUB_PRINCIPAL_OBJECT_ID: ${{ secrets.AZURE_PRINCIPAL_OBJECT_ID }}
+        run: |
+          set -euo pipefail
+          az deployment sub create \
+            --name "wind-forecast-foundation-${GITHUB_RUN_ID}" \
+            --location "$AZURE_LOCATION" \
+            --template-file infra/azure/foundation.bicep \
+            --parameters \
+              resourceGroupName="$AZURE_RESOURCE_GROUP" \
+              location="$AZURE_LOCATION" \
+              acrName="$AZURE_ACR_NAME" \
+              environmentName="$AZURE_ENVIRONMENT_NAME" \
+              runtimeIdentityName="$AZURE_RUNTIME_IDENTITY_NAME" \
+              githubPrincipalObjectId="$GITHUB_PRINCIPAL_OBJECT_ID" \
+            --output none
+
+      - name: Build and publish immutable images
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACR_LOGIN_SERVER="$(az acr show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_ACR_NAME" --query loginServer --output tsv)"
+          az acr login --name "$AZURE_ACR_NAME"
+
+          if [[ -n "${ROLLBACK_API_IMAGE:-}" && -n "${ROLLBACK_FRONTEND_IMAGE:-}" ]]; then
+            echo "Using supplied immutable image digests for rollback."
+            echo "API_IMAGE=$ROLLBACK_API_IMAGE" >> "$GITHUB_ENV"
+            echo "FRONTEND_IMAGE=$ROLLBACK_FRONTEND_IMAGE" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          if [[ -n "${ROLLBACK_API_IMAGE:-}" || -n "${ROLLBACK_FRONTEND_IMAGE:-}" ]]; then
+            echo "Both rollback image inputs must be supplied together." >&2
+            exit 1
+          fi
+
+          api_tag="$ACR_LOGIN_SERVER/wind-forecast-api:${GITHUB_SHA}"
+          frontend_tag="$ACR_LOGIN_SERVER/wind-forecast-frontend:${GITHUB_SHA}"
+          docker build --file Dockerfile --tag "$api_tag" .
+          docker build \
+            --file frontend/Dockerfile \
+            --build-arg VITE_API_BASE_URL=/backend \
+            --build-arg NGINX_CONFIG=nginx.azure.conf \
+            --tag "$frontend_tag" \
+            frontend
+          docker push "$api_tag"
+          docker push "$frontend_tag"
+          echo "API_IMAGE=$(docker image inspect "$api_tag" --format '{{index .RepoDigests 0}}')" >> "$GITHUB_ENV"
+          echo "FRONTEND_IMAGE=$(docker image inspect "$frontend_tag" --format '{{index .RepoDigests 0}}')" >> "$GITHUB_ENV"
+
+      - name: Show deployment what-if
+        shell: bash
+        env:
+          BUDGET_ALERT_EMAIL: ${{ secrets.AZURE_BUDGET_ALERT_EMAIL }}
+        run: |
+          set -euo pipefail
+          budget_start="$(date -u +%Y-%m-01T00:00:00Z)"
+          budget_end="$(date -u -d '+1 year' +%Y-%m-%dT%H:%M:%SZ)"
+          az deployment group what-if \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --template-file infra/azure/workload.bicep \
+            --parameters \
+              location="$AZURE_LOCATION" \
+              acrName="$AZURE_ACR_NAME" \
+              environmentName="$AZURE_ENVIRONMENT_NAME" \
+              runtimeIdentityName="$AZURE_RUNTIME_IDENTITY_NAME" \
+              apiImage="$API_IMAGE" \
+              frontendImage="$FRONTEND_IMAGE" \
+              budgetAlertEmail="$BUDGET_ALERT_EMAIL" \
+              budgetStartDate="$budget_start" \
+              budgetEndDate="$budget_end"
+
+      - name: Deploy workload from immutable digests
+        shell: bash
+        env:
+          BUDGET_ALERT_EMAIL: ${{ secrets.AZURE_BUDGET_ALERT_EMAIL }}
+        run: |
+          set -euo pipefail
+          budget_start="$(date -u +%Y-%m-01T00:00:00Z)"
+          budget_end="$(date -u -d '+1 year' +%Y-%m-%dT%H:%M:%SZ)"
+          az deployment group create \
+            --name "wind-forecast-workload-${GITHUB_RUN_ID}" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --template-file infra/azure/workload.bicep \
+            --parameters \
+              location="$AZURE_LOCATION" \
+              acrName="$AZURE_ACR_NAME" \
+              environmentName="$AZURE_ENVIRONMENT_NAME" \
+              runtimeIdentityName="$AZURE_RUNTIME_IDENTITY_NAME" \
+              apiImage="$API_IMAGE" \
+              frontendImage="$FRONTEND_IMAGE" \
+              budgetAlertEmail="$BUDGET_ALERT_EMAIL" \
+              budgetStartDate="$budget_start" \
+              budgetEndDate="$budget_end" \
+            --output none
+
+      - name: Smoke test public dashboard and allow-listed proxy
+        shell: bash
+        run: |
+          set -euo pipefail
+          fqdn="$(az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name wind-forecast-web --query properties.configuration.ingress.fqdn --output tsv)"
+          base_url="https://${fqdn}"
+          for attempt in $(seq 1 36); do
+            if curl --fail --silent --show-error "$base_url/backend/health" | jq -e '.status == "ok"' >/dev/null; then
+              break
+            fi
+            if [[ "$attempt" == 36 ]]; then
+              echo "The public API proxy did not become healthy." >&2
+              exit 1
+            fi
+            sleep 10
+          done
+          curl --fail --silent --show-error "$base_url/overview" >/dev/null
+          curl --fail --silent --show-error "$base_url/forecast-replay" >/dev/null
+          curl --fail --silent --show-error "$base_url/backend/api/v1/performance" | jq -e '.observation_count == 14' >/dev/null
+          curl --fail --silent --show-error "$base_url/backend/api/v1/monitoring/latest" | jq -e '.state == "available"' >/dev/null
+          blocked_status="$(curl --silent --output /dev/null --write-out '%{http_code}' "$base_url/backend/predict")"
+          [[ "$blocked_status" == "404" ]]
+          echo "PUBLIC_URL=$base_url" >> "$GITHUB_ENV"
+
+      - name: Start and verify the scheduled validation Job
+        shell: bash
+        run: |
+          set -euo pipefail
+          job_name="wind-forecast-validation"
+          az containerapp job start --resource-group "$AZURE_RESOURCE_GROUP" --name "$job_name" --output none
+          for attempt in $(seq 1 30); do
+            status="$(az containerapp job execution list --resource-group "$AZURE_RESOURCE_GROUP" --name "$job_name" --query '[0].properties.status' --output tsv 2>/dev/null || true)"
+            case "$status" in
+              Succeeded)
+                exit 0
+                ;;
+              Failed|Canceled|TimedOut)
+                echo "Validation Job ended with status $status." >&2
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          echo "Validation Job did not finish within the smoke-test window." >&2
+          exit 1
+
+      - name: Publish deployment summary
+        shell: bash
+        run: |
+          {
+            echo "## Azure portfolio demo"
+            echo
+            echo "- Public URL: ${PUBLIC_URL}"
+            echo "- API image: ${API_IMAGE}"
+            echo "- Frontend image: ${FRONTEND_IMAGE}"
+            echo "- Frontend replicas: 1 warm replica"
+            echo "- API replicas: scale-to-zero enabled"
+            echo "- Validation Job: daily at 06:00 UTC"
+          } >> "$GITHUB_STEP_SUMMARY"

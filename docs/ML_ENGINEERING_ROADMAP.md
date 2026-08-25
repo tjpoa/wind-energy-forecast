@@ -464,6 +464,10 @@ Provide a scalable PySpark implementation of the core data-processing and featur
 
 ## Phase 12 — Azure and Databricks deployment design
 
+Status: Azure Container Apps design and protected deployment path implemented
+for the synthetic portfolio demo. Databricks remains deferred until the
+PySpark phase is approved and implemented.
+
 ### Objective
 Design a cloud deployment architecture for the mature project without forcing immediate migration.
 
@@ -485,12 +489,17 @@ Design a cloud deployment architecture for the mature project without forcing im
 
 ### Acceptance criteria
 - A deployment design exists with clear trade-offs and migration steps.
-- No cloud deployment is performed until explicitly requested.
+- The Azure demo is provisioned only through an explicit, approval-protected
+  workflow; it does not imply production operation.
 
 ### Expected deliverables
 - Azure and Databricks architecture design.
 - Environment and secret-management plan.
 - Deployment backlog and risk register.
+
+The implemented Container Apps runbook is documented in
+[`AZURE_DEPLOYMENT.md`](AZURE_DEPLOYMENT.md) and the corresponding Bicep
+templates and workflow are under `infra/azure/` and `.github/workflows/`.
 
 ### Dependencies on previous phases
 - Phases 0 through 11.

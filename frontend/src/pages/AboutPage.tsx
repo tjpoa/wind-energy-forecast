@@ -42,8 +42,8 @@ export function AboutPage() {
             <span>03</span>
             <h3>Verified artifacts</h3>
             <p>
-              Docker Compose mounts the selected performance and monitoring
-              evidence as immutable, read-only demo inputs.
+              Local Compose mounts the selected evidence read-only; the Azure
+              demo bakes the synthetic bundle into an immutable image digest.
             </p>
           </article>
         </div>
@@ -91,9 +91,9 @@ export function AboutPage() {
         <ul className="about-list">
           <li>React, TypeScript, Vite, and Recharts provide the frontend surface.</li>
           <li>FastAPI and Pydantic keep the browser contract typed and sanitized.</li>
-          <li>Docker Compose and Nginx package the local full-stack demonstration.</li>
-          <li>Monitoring is retrospective and local, with no real-time or ex-ante path.</li>
-          <li>There is no cloud production deployment, automatic retraining, registry serving, or external alert delivery.</li>
+          <li>Docker Compose and Nginx package the local demonstration; Azure Container Apps can host the synthetic portfolio demo.</li>
+          <li>Monitoring is retrospective and read-only, with no real-time or ex-ante path.</li>
+          <li>The cloud path is not a production forecast service and has no automatic retraining, registry serving, or external alert delivery.</li>
         </ul>
         <p className="about-next-step">
           Explore the evidence in <Link to="/overview">Overview</Link>, or use
