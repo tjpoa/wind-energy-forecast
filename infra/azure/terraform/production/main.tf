@@ -121,6 +121,11 @@ resource "azurerm_container_app" "api" {
     target_port                = 8000
     transport                  = "http"
     allow_insecure_connections = true
+
+    traffic_weight {
+      percentage      = 100
+      latest_revision = true
+    }
   }
 
   template {
@@ -188,6 +193,11 @@ resource "azurerm_container_app" "frontend" {
     target_port                = 80
     transport                  = "http"
     allow_insecure_connections = false
+
+    traffic_weight {
+      percentage      = 100
+      latest_revision = true
+    }
   }
 
   template {

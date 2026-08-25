@@ -17,9 +17,9 @@ accepted in a later increment.
   identity permissions, and the monthly budget.
 
 Both roots use the AzureRM provider and contain no credentials or environment
-secrets. The production backend is intentionally configured through
-`-backend-config` values supplied by the protected workflow; backend settings
-are not hardcoded in this repository.
+secrets. The production backend contains only non-secret placeholders required
+by Terraform validation; protected workflows override all backend coordinates
+through `-backend-config` values supplied at initialization time.
 
 ## GitHub controls configured in Increment 2
 
