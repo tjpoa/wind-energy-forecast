@@ -1,5 +1,35 @@
 # Azure Container Apps demo deployment
 
+The active demo deployment remains the legacy Bicep workflow described below.
+parallel Terraform roots under [`terraform/`](terraform/) and
+[`release-production.yml`](../../.github/workflows/release-production.yml)
+implement the first three increments of the planned migration, but they are
+limited to configuration, static validation, and not-yet-enabled promotion and
+rollback paths. They do not replace Bicep or authorize Azure resource changes
+yet.
+
+Increment 2 configured the GitHub `production` environment with manual review
+and protected-branch deployment policy, and protected `master` with the
+aggregate `CI gate`. The current Bicep workflow still targets `azure-demo`;
+the production environment will be consumed by the later Terraform release
+workflow. Azure client identifiers and OIDC credentials have not been added
+because no Azure-authenticated CLI is available in the current workspace.
+
+The Terraform promotion path is intentionally separate from this legacy
+workflow. It waits for successful CI on `master`, publishes one immutable image
+pair, plans against the Terraform remote state, requires the protected
+`production` approval, and applies a fresh exact plan followed by the same
+public and validation-Job smoke checks. It cannot be enabled until the
+Terraform bootstrap outputs, federated credentials, role assignments, and
+resource inventory have been reviewed.
+
+The fourth increment adds
+[`rollback-production.yml`](../../.github/workflows/rollback-production.yml),
+which accepts only prior image digests and applies them through the same
+protected Terraform path. Bicep retirement is deliberately gated by the
+inventory, parity, promotion, and rollback evidence in
+[`AZURE_TERRAFORM_MIGRATION.md`](../../docs/AZURE_TERRAFORM_MIGRATION.md).
+
 This directory deploys the synthetic, retrospective portfolio demo in West
 Europe. It does not deploy live ingestion, provider credentials, PostgreSQL,
 Airflow, Databricks, MLflow Registry serving, or automatic retraining.

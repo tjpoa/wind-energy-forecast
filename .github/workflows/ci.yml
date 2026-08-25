@@ -82,6 +82,49 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+  terraform-format:
+    name: Terraform formatting
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.0"
+
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive infra/azure/terraform
+
+  terraform-validate:
+    name: Terraform validation (${{ matrix.directory }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        directory:
+          - infra/azure/terraform/bootstrap
+          - infra/azure/terraform/production
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.0"
+
+      - name: Initialize Terraform without a backend
+        working-directory: ${{ matrix.directory }}
+        run: terraform init -backend=false -input=false
+
+      - name: Validate Terraform configuration
+        working-directory: ${{ matrix.directory }}
+        run: terraform validate
+
   docker-build:
     name: Docker build
     runs-on: ubuntu-latest
@@ -432,3 +475,59 @@ jobs:
             -e WIND_FORECAST_BATCH_CALIBRATION_DIR=/tmp/calibration \
             wind-energy-forecast-airflow:ci \
             bash -c 'airflow db migrate >/dev/null && python /opt/wind-energy-forecast/airflow/tests/smoke_three_day_backfill.py'
+
+  ci-gate:
+    name: CI gate
+    if: ${{ always() }}
+    needs:
+      - test-and-lint
+      - frontend-quality
+      - terraform-format
+      - terraform-validate
+      - docker-build
+      - frontend-docker-build
+      - compose-validation
+      - demo-compose-smoke
+      - demo-browser-e2e
+      - operational-projection-postgres
+      - operational-projection-benchmark-smoke
+      - airflow-quality
+
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every CI job to pass
+        env:
+          TEST_AND_LINT_RESULT: ${{ needs['test-and-lint'].result }}
+          FRONTEND_RESULT: ${{ needs['frontend-quality'].result }}
+          TERRAFORM_FORMAT_RESULT: ${{ needs['terraform-format'].result }}
+          TERRAFORM_VALIDATE_RESULT: ${{ needs['terraform-validate'].result }}
+          DOCKER_RESULT: ${{ needs['docker-build'].result }}
+          FRONTEND_DOCKER_RESULT: ${{ needs['frontend-docker-build'].result }}
+          COMPOSE_RESULT: ${{ needs['compose-validation'].result }}
+          DEMO_COMPOSE_RESULT: ${{ needs['demo-compose-smoke'].result }}
+          DEMO_BROWSER_RESULT: ${{ needs['demo-browser-e2e'].result }}
+          PROJECTION_RESULT: ${{ needs['operational-projection-postgres'].result }}
+          BENCHMARK_RESULT: ${{ needs['operational-projection-benchmark-smoke'].result }}
+          AIRFLOW_RESULT: ${{ needs['airflow-quality'].result }}
+        run: |
+          set -euo pipefail
+          results=(
+            "$TEST_AND_LINT_RESULT"
+            "$FRONTEND_RESULT"
+            "$TERRAFORM_FORMAT_RESULT"
+            "$TERRAFORM_VALIDATE_RESULT"
+            "$DOCKER_RESULT"
+            "$FRONTEND_DOCKER_RESULT"
+            "$COMPOSE_RESULT"
+            "$DEMO_COMPOSE_RESULT"
+            "$DEMO_BROWSER_RESULT"
+            "$PROJECTION_RESULT"
+            "$BENCHMARK_RESULT"
+            "$AIRFLOW_RESULT"
+          )
+          for result in "${results[@]}"; do
+            if [[ "$result" != "success" ]]; then
+              echo "A required CI job finished with status: $result" >&2
+              exit 1
+            fi
+          done

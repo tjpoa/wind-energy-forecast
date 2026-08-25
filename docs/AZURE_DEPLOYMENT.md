@@ -21,9 +21,10 @@ read-only health, performance, and monitoring paths.
   database DSNs must use Key Vault references and managed identities.
 - Airflow remains local and documented; Databricks and PySpark remain deferred.
 
-## Deployment sequence
+## Legacy Bicep deployment sequence
 
-The manual, approval-protected `Deploy Azure portfolio demo` workflow:
+The manual, approval-protected `Deploy Azure portfolio demo (legacy Bicep)` workflow is the
+legacy Bicep path:
 
 1. Validates both Bicep templates.
 2. Optionally bootstraps the foundation (resource group, Basic ACR, Log
@@ -39,6 +40,19 @@ The manual, approval-protected `Deploy Azure portfolio demo` workflow:
 The one-time GitHub OIDC identity bootstrap and required environment variables
 are documented in [`infra/azure/README.md`](../infra/azure/README.md). Azure
 resource provisioning is intentionally not performed by ordinary CI pushes.
+
+## Terraform promotion and rollback
+
+The supported replacement path is the protected Terraform workflow. New
+releases use [`release-production.yml`](../.github/workflows/release-production.yml);
+rollbacks use [`rollback-production.yml`](../.github/workflows/rollback-production.yml)
+with the previous API and frontend digests. Both workflows plan, require the
+`production` approval, apply immutable image references, and run the public and
+validation-Job smoke checks.
+
+The Bicep path cannot be retired until the inventory, Terraform parity,
+promotion, and rollback gates in
+[`AZURE_TERRAFORM_MIGRATION.md`](AZURE_TERRAFORM_MIGRATION.md) are approved.
 
 ## Rollback and cleanup
 

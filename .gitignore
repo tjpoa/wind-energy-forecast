@@ -50,5 +50,19 @@ data/processed/v2/**
 data/pilot/
 outputs/training/
 
+# Terraform local plugins, state, plans, and machine-specific overrides.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+*.tfvars
+!*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
 .DS_Store
 Thumbs.db

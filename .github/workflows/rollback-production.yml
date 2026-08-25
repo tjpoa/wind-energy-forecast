@@ -1,0 +1,434 @@
+name: Rollback production
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_image:
+        description: "Existing API image reference ending in @sha256:<digest>"
+        required: true
+        type: string
+      frontend_image:
+        description: "Existing frontend image reference ending in @sha256:<digest>"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+env:
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'wind-energy-forecast-demo' }}
+  AZURE_ACR_NAME: ${{ vars.AZURE_ACR_NAME }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ROLLBACK_API_IMAGE: ${{ inputs.api_image }}
+  ROLLBACK_FRONTEND_IMAGE: ${{ inputs.frontend_image }}
+  REQUEST_SHA: ${{ github.sha }}
+
+jobs:
+  validate-request:
+    name: Validate rollback request
+    if: ${{ github.ref == 'refs/heads/master' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the selected protected commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Validate immutable image references
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_pattern='^[^[:space:]]+/[^[:space:]/]+@sha256:[0-9a-f]{64}$'
+          if [[ ! "$ROLLBACK_API_IMAGE" =~ $image_pattern || \
+                ! "$ROLLBACK_FRONTEND_IMAGE" =~ $image_pattern ]]; then
+            echo "Both rollback inputs must be full image references ending in a sha256 digest." >&2
+            exit 1
+          fi
+
+          api_registry="${ROLLBACK_API_IMAGE%%/wind-forecast-api@sha256:*}"
+          frontend_registry="${ROLLBACK_FRONTEND_IMAGE%%/wind-forecast-frontend@sha256:*}"
+          if [[ "$api_registry" == "$ROLLBACK_API_IMAGE" || \
+                "$frontend_registry" == "$ROLLBACK_FRONTEND_IMAGE" || \
+                "$api_registry" != "$frontend_registry" ]]; then
+            echo "Rollback images must use the expected repositories in the same registry." >&2
+            exit 1
+          fi
+          if [[ "$ROLLBACK_API_IMAGE" != */wind-forecast-api@sha256:* || \
+                "$ROLLBACK_FRONTEND_IMAGE" != */wind-forecast-frontend@sha256:* ]]; then
+            echo "Rollback images must target wind-forecast-api and wind-forecast-frontend." >&2
+            exit 1
+          fi
+
+      - name: Create rollback manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg schema_version "1" \
+            --arg request_sha "$REQUEST_SHA" \
+            --arg rollback_run_id "$GITHUB_RUN_ID" \
+            --arg rollback_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg api_image "$ROLLBACK_API_IMAGE" \
+            --arg frontend_image "$ROLLBACK_FRONTEND_IMAGE" \
+            '{
+              schema_version: $schema_version,
+              request_sha: $request_sha,
+              rollback_run_id: $rollback_run_id,
+              rollback_attempt: $rollback_attempt,
+              api_image: $api_image,
+              frontend_image: $frontend_image
+            }' > rollback-manifest.json
+          jq -e \
+            --arg api_image "$ROLLBACK_API_IMAGE" \
+            --arg frontend_image "$ROLLBACK_FRONTEND_IMAGE" \
+            '.api_image == $api_image and .frontend_image == $frontend_image' \
+            rollback-manifest.json >/dev/null
+
+      - name: Upload rollback manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: rollback-manifest
+          path: rollback-manifest.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish rollback request summary
+        shell: bash
+        run: |
+          {
+            echo "## Production rollback request"
+            echo
+            echo "- Request commit: \`${REQUEST_SHA}\`"
+            echo "- API image: \`${ROLLBACK_API_IMAGE}\`"
+            echo "- Frontend image: \`${ROLLBACK_FRONTEND_IMAGE}\`"
+            echo "- The protected \`production\` approval is still required."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  plan-rollback:
+    name: Plan Terraform rollback
+    needs: validate-request
+    if: ${{ needs.validate-request.result == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      TFSTATE_RESOURCE_GROUP_NAME: ${{ vars.TFSTATE_RESOURCE_GROUP_NAME }}
+      TFSTATE_STORAGE_ACCOUNT_NAME: ${{ vars.TFSTATE_STORAGE_ACCOUNT_NAME }}
+      TFSTATE_CONTAINER_NAME: ${{ vars.TFSTATE_CONTAINER_NAME || 'tfstate' }}
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+      ARM_CLIENT_ID: ${{ secrets.AZURE_PLANNER_CLIENT_ID }}
+      TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
+      TF_VAR_location: ${{ vars.AZURE_LOCATION || 'westeurope' }}
+      TF_VAR_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP || 'wind-energy-forecast-demo' }}
+      TF_VAR_acr_name: ${{ vars.AZURE_ACR_NAME }}
+      TF_VAR_environment_name: ${{ vars.AZURE_ENVIRONMENT_NAME || 'wind-forecast-demo-env' }}
+      TF_VAR_runtime_identity_name: ${{ vars.AZURE_RUNTIME_IDENTITY_NAME || 'wind-forecast-demo-runtime' }}
+      TF_VAR_publisher_principal_id: ${{ secrets.AZURE_PUBLISHER_PRINCIPAL_ID }}
+      TF_VAR_planner_principal_id: ${{ secrets.AZURE_PLANNER_PRINCIPAL_ID }}
+      TF_VAR_deployer_principal_id: ${{ secrets.AZURE_DEPLOYER_PRINCIPAL_ID }}
+      TF_VAR_api_image: ${{ inputs.api_image }}
+      TF_VAR_frontend_image: ${{ inputs.frontend_image }}
+      TF_VAR_budget_amount: ${{ vars.AZURE_BUDGET_AMOUNT || '10' }}
+      TF_VAR_budget_alert_email: ${{ secrets.AZURE_BUDGET_ALERT_EMAIL }}
+      TF_VAR_budget_start_date: ${{ vars.AZURE_BUDGET_START_DATE }}
+      TF_VAR_budget_end_date: ${{ vars.AZURE_BUDGET_END_DATE }}
+
+    steps:
+      - name: Check out the selected protected commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Download rollback manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: rollback-manifest
+
+      - name: Validate planning configuration and manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            AZURE_ACR_NAME
+            AZURE_RESOURCE_GROUP
+            AZURE_TENANT_ID
+            AZURE_SUBSCRIPTION_ID
+            TFSTATE_RESOURCE_GROUP_NAME
+            TFSTATE_STORAGE_ACCOUNT_NAME
+            ARM_CLIENT_ID
+            TF_VAR_publisher_principal_id
+            TF_VAR_planner_principal_id
+            TF_VAR_deployer_principal_id
+            TF_VAR_budget_alert_email
+            TF_VAR_budget_start_date
+            TF_VAR_budget_end_date
+          )
+          for variable_name in "${required[@]}"; do
+            if [[ -z "${!variable_name:-}" ]]; then
+              echo "::error::Required Terraform rollback configuration is missing: ${variable_name}" >&2
+              exit 1
+            fi
+          done
+          jq -e \
+            --arg api_image "$ROLLBACK_API_IMAGE" \
+            --arg frontend_image "$ROLLBACK_FRONTEND_IMAGE" \
+            '.api_image == $api_image and .frontend_image == $frontend_image' \
+            rollback-manifest.json >/dev/null
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.0"
+
+      - name: Initialize the production backend with OIDC
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir=infra/azure/terraform/production init \
+            -reconfigure \
+            -input=false \
+            -backend-config="resource_group_name=${TFSTATE_RESOURCE_GROUP_NAME}" \
+            -backend-config="storage_account_name=${TFSTATE_STORAGE_ACCOUNT_NAME}" \
+            -backend-config="container_name=${TFSTATE_CONTAINER_NAME}" \
+            -backend-config="key=production.tfstate"
+
+      - name: Generate Terraform rollback plan
+        shell: bash
+        run: terraform -chdir=infra/azure/terraform/production plan -input=false -lock-timeout=5m -out=rollback.tfplan
+
+      - name: Publish a non-sensitive rollback plan summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "## Terraform rollback plan (pre-approval)"
+            echo
+            echo "- API image: \`${ROLLBACK_API_IMAGE}\`"
+            echo "- Frontend image: \`${ROLLBACK_FRONTEND_IMAGE}\`"
+            echo "- The binary plan remains on this ephemeral runner and is not uploaded."
+            echo
+            echo '```json'
+            terraform -chdir=infra/azure/terraform/production show -json rollback.tfplan | \
+              jq '{resource_changes: [.resource_changes[]? | {address, actions: .change.actions}]}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  rollback-production:
+    name: Apply approved Terraform rollback and smoke test
+    needs:
+      - validate-request
+      - plan-rollback
+    if: ${{ needs.validate-request.result == 'success' && needs.plan-rollback.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      TFSTATE_RESOURCE_GROUP_NAME: ${{ vars.TFSTATE_RESOURCE_GROUP_NAME }}
+      TFSTATE_STORAGE_ACCOUNT_NAME: ${{ vars.TFSTATE_STORAGE_ACCOUNT_NAME }}
+      TFSTATE_CONTAINER_NAME: ${{ vars.TFSTATE_CONTAINER_NAME || 'tfstate' }}
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+      ARM_CLIENT_ID: ${{ secrets.AZURE_DEPLOYER_CLIENT_ID }}
+      TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
+      TF_VAR_location: ${{ vars.AZURE_LOCATION || 'westeurope' }}
+      TF_VAR_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP || 'wind-energy-forecast-demo' }}
+      TF_VAR_acr_name: ${{ vars.AZURE_ACR_NAME }}
+      TF_VAR_environment_name: ${{ vars.AZURE_ENVIRONMENT_NAME || 'wind-forecast-demo-env' }}
+      TF_VAR_runtime_identity_name: ${{ vars.AZURE_RUNTIME_IDENTITY_NAME || 'wind-forecast-demo-runtime' }}
+      TF_VAR_publisher_principal_id: ${{ secrets.AZURE_PUBLISHER_PRINCIPAL_ID }}
+      TF_VAR_planner_principal_id: ${{ secrets.AZURE_PLANNER_PRINCIPAL_ID }}
+      TF_VAR_deployer_principal_id: ${{ secrets.AZURE_DEPLOYER_PRINCIPAL_ID }}
+      TF_VAR_api_image: ${{ inputs.api_image }}
+      TF_VAR_frontend_image: ${{ inputs.frontend_image }}
+      TF_VAR_budget_amount: ${{ vars.AZURE_BUDGET_AMOUNT || '10' }}
+      TF_VAR_budget_alert_email: ${{ secrets.AZURE_BUDGET_ALERT_EMAIL }}
+      TF_VAR_budget_start_date: ${{ vars.AZURE_BUDGET_START_DATE }}
+      TF_VAR_budget_end_date: ${{ vars.AZURE_BUDGET_END_DATE }}
+
+    steps:
+      - name: Check out the selected protected commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Download rollback manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: rollback-manifest
+
+      - name: Validate deployment configuration and manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            AZURE_ACR_NAME
+            AZURE_RESOURCE_GROUP
+            AZURE_TENANT_ID
+            AZURE_SUBSCRIPTION_ID
+            TFSTATE_RESOURCE_GROUP_NAME
+            TFSTATE_STORAGE_ACCOUNT_NAME
+            ARM_CLIENT_ID
+            TF_VAR_publisher_principal_id
+            TF_VAR_planner_principal_id
+            TF_VAR_deployer_principal_id
+            TF_VAR_budget_alert_email
+            TF_VAR_budget_start_date
+            TF_VAR_budget_end_date
+          )
+          for variable_name in "${required[@]}"; do
+            if [[ -z "${!variable_name:-}" ]]; then
+              echo "::error::Required Terraform rollback configuration is missing: ${variable_name}" >&2
+              exit 1
+            fi
+          done
+          jq -e \
+            --arg api_image "$ROLLBACK_API_IMAGE" \
+            --arg frontend_image "$ROLLBACK_FRONTEND_IMAGE" \
+            '.api_image == $api_image and .frontend_image == $frontend_image' \
+            rollback-manifest.json >/dev/null
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.0"
+
+      - name: Sign in to Azure with protected deployer OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_DEPLOYER_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Initialize the production backend with OIDC
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir=infra/azure/terraform/production init \
+            -reconfigure \
+            -input=false \
+            -backend-config="resource_group_name=${TFSTATE_RESOURCE_GROUP_NAME}" \
+            -backend-config="storage_account_name=${TFSTATE_STORAGE_ACCOUNT_NAME}" \
+            -backend-config="container_name=${TFSTATE_CONTAINER_NAME}" \
+            -backend-config="key=production.tfstate"
+
+      - name: Generate the exact rollback plan to apply
+        shell: bash
+        run: terraform -chdir=infra/azure/terraform/production plan -input=false -lock-timeout=5m -out=rollback.tfplan
+
+      - name: Reject destructive changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          destructive_count="$(terraform -chdir=infra/azure/terraform/production show -json rollback.tfplan | \
+            jq '[.resource_changes[]? | select((.change.actions // []) | index("delete"))] | length')"
+          if [[ "$destructive_count" != "0" ]]; then
+            echo "The protected rollback contains ${destructive_count} destructive resource change(s)." >&2
+            terraform -chdir=infra/azure/terraform/production show -json rollback.tfplan | \
+              jq '[.resource_changes[]? | select((.change.actions // []) | index("delete")) | {address, actions: .change.actions}]' >&2
+            exit 1
+          fi
+
+      - name: Apply the exact approved rollback plan
+        shell: bash
+        run: terraform -chdir=infra/azure/terraform/production apply -input=false rollback.tfplan
+
+      - name: Capture rolled-back revision names
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "API_REVISION_NAME=$(terraform -chdir=infra/azure/terraform/production output -raw api_revision_name)" >> "$GITHUB_ENV"
+          echo "FRONTEND_REVISION_NAME=$(terraform -chdir=infra/azure/terraform/production output -raw frontend_revision_name)" >> "$GITHUB_ENV"
+
+      - name: Smoke test public dashboard and allow-listed proxy
+        shell: bash
+        run: |
+          set -euo pipefail
+          fqdn="$(az containerapp show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name wind-forecast-web \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)"
+          base_url="https://${fqdn}"
+          for attempt in $(seq 1 36); do
+            if curl --fail --silent --show-error "$base_url/backend/health" | \
+              jq -e '.status == "ok"' >/dev/null; then
+              break
+            fi
+            if [[ "$attempt" == 36 ]]; then
+              echo "The public API proxy did not become healthy after rollback." >&2
+              exit 1
+            fi
+            sleep 10
+          done
+          curl --fail --silent --show-error "$base_url/overview" >/dev/null
+          curl --fail --silent --show-error "$base_url/forecast-replay" >/dev/null
+          curl --fail --silent --show-error "$base_url/backend/api/v1/performance" | \
+            jq -e '.observation_count == 14' >/dev/null
+          curl --fail --silent --show-error "$base_url/backend/api/v1/monitoring/latest" | \
+            jq -e '.state == "available"' >/dev/null
+          blocked_status="$(curl --silent --output /dev/null --write-out '%{http_code}' "$base_url/backend/predict")"
+          [[ "$blocked_status" == "404" ]]
+          echo "PUBLIC_URL=$base_url" >> "$GITHUB_ENV"
+
+      - name: Start and verify the scheduled validation Job
+        shell: bash
+        run: |
+          set -euo pipefail
+          job_name="wind-forecast-validation"
+          previous_execution="$(az containerapp job execution list \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$job_name" \
+            --query '[0].name' \
+            --output tsv 2>/dev/null || true)"
+          az containerapp job start \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$job_name" \
+            --output none
+          for attempt in $(seq 1 30); do
+            latest_execution="$(az containerapp job execution list \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$job_name" \
+              --query '[0]' \
+              --output json 2>/dev/null || echo '{}')"
+            execution_name="$(jq -r '.name // empty' <<< "$latest_execution")"
+            status="$(jq -r '.properties.status // empty' <<< "$latest_execution")"
+            if [[ -z "$execution_name" || "$execution_name" == "$previous_execution" ]]; then
+              sleep 10
+              continue
+            fi
+            case "$status" in
+              Succeeded)
+                exit 0
+                ;;
+              Failed|Canceled|TimedOut)
+                echo "Validation Job ended with status ${status} after rollback." >&2
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          echo "Validation Job did not finish within the rollback smoke-test window." >&2
+          exit 1
+
+      - name: Publish rollback summary
+        shell: bash
+        run: |
+          {
+            echo "## Production rollback"
+            echo
+            echo "- Request commit: \`${REQUEST_SHA}\`"
+            echo "- Public URL: ${PUBLIC_URL}"
+            echo "- API image: \`${ROLLBACK_API_IMAGE}\`"
+            echo "- Frontend image: \`${ROLLBACK_FRONTEND_IMAGE}\`"
+            echo "- API revision: \`${API_REVISION_NAME}\`"
+            echo "- Frontend revision: \`${FRONTEND_REVISION_NAME}\`"
+            echo "- Terraform rollback plan: applied after the protected \`production\` approval"
+          } >> "$GITHUB_STEP_SUMMARY"

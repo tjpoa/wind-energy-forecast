@@ -1,4 +1,6 @@
-name: Deploy Azure portfolio demo
+# LEGACY BICEP PATH: retain only until docs/AZURE_TERRAFORM_MIGRATION.md is
+# approved with live inventory, Terraform parity, promotion, and rollback evidence.
+name: Deploy Azure portfolio demo (legacy Bicep)
 
 on:
   workflow_dispatch:
