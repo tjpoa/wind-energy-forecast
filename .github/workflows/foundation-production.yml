@@ -151,12 +151,47 @@ jobs:
         shell: bash
         run: terraform -chdir=infra/azure/terraform/foundation apply -input=false foundation.tfplan
 
-      - name: Publish foundation apply summary
+      - name: Verify Terraform foundation state is drift-free after apply
         shell: bash
         run: |
+          set -uo pipefail
+          set +e
+          terraform -chdir=infra/azure/terraform/foundation plan \
+            -detailed-exitcode \
+            -input=false \
+            -lock-timeout=5m \
+            -out=post-foundation.tfplan
+          plan_exit=$?
+          set -e
+
           {
-            echo "## Terraform foundation applied"
+            echo "## Terraform foundation post-apply verification"
             echo
-            echo "- Applied after the protected `production` maintainer confirmation."
-            echo "- The foundation state key is `foundation.tfstate`."
+            echo "- Applied after the protected \`production\` maintainer confirmation."
+            echo "- The foundation state key is \`foundation.tfstate\`."
+            echo "- The binary plan remains on this ephemeral runner and is not uploaded."
           } >> "$GITHUB_STEP_SUMMARY"
+
+          case "$plan_exit" in
+            0)
+              echo "- Result: drift-free (Terraform detailed exit code 0)." >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            2)
+              {
+                echo "- Result: drift detected; the workflow failed closed."
+                echo
+                echo '```json'
+                terraform -chdir=infra/azure/terraform/foundation show \
+                  -json post-foundation.tfplan | \
+                  jq '{resource_changes: [.resource_changes[]? | select((.change.actions // []) != ["no-op"]) | {address, actions: .change.actions}]}'
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "Terraform detected drift after the protected foundation apply." >&2
+              exit 1
+              ;;
+            *)
+              echo "- Result: plan failed with exit code ${plan_exit}." >> "$GITHUB_STEP_SUMMARY"
+              echo "Post-apply Terraform foundation plan failed with exit code ${plan_exit}." >&2
+              exit "$plan_exit"
+              ;;
+          esac

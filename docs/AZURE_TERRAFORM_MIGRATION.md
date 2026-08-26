@@ -1,6 +1,6 @@
 # Azure Terraform migration and Bicep retirement gate
 
-Status: **blocked pending Azure evidence** (reviewed 2026-08-25).
+Status: **blocked pending Azure evidence** (reviewed 2026-08-26).
 
 The repository now contains separate Terraform `bootstrap`, `foundation`, and
 `production` roots, a promotion workflow, and a protected digest-based
@@ -62,7 +62,21 @@ separate, explicitly approved operation with an independently checked target.
 
 - GitHub `master` protection and `production` maintainer-confirmation controls:
   configured for the single-maintainer profile.
-- Terraform roots and OIDC release/rollback workflows: present locally.
+- Terraform roots and OIDC release/rollback workflows: present locally. The
+  production planner now signs in explicitly before backend initialization;
+  the publisher has bootstrap-managed workload `Reader`; and the deployer's
+  RBAC delegation is conditioned to `AcrPull`/`AcrPush` assignments for service
+  principals only.
+- Foundation post-apply verification: configured to fail closed on any drift
+  or Terraform plan error and to emit only a non-sensitive address/action
+  summary. It has not run against Azure.
+- Bootstrap operator permissions and conditioned deployer RBAC: documented,
+  including the temporary Blob data-plane access required for state migration
+  and the workload-resource-group scope of the AcrPull/AcrPush delegation. ARM
+  acceptance of the condition remains a first-apply stop gate.
+- Rollback planner OIDC readiness: deferred; no live rollback may be claimed
+  until its planner authentication receives the equivalent reviewed fix and
+  Azure evidence.
 - Azure subscription inventory and Terraform state comparison: unavailable;
   Azure CLI and an authenticated session are not present in this workspace.
 - Successful Terraform promotion and rollback: not executed.

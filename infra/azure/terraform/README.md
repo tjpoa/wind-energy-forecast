@@ -10,7 +10,15 @@ the target subscription.
 
 - `bootstrap/` describes the remote state storage and the user-assigned
   identities used by GitHub Actions, creates the workload resource group, and
-  grants the state and workload permissions used by later roots. Its first
+  grants the state and workload permissions used by later roots. The publisher
+  receives workload-resource-group `Reader` for the management-plane registry
+  lookup used before publication. The protected deployer receives
+  `Contributor` plus a condition-version-2.0 `Role Based Access Control
+  Administrator` assignment that permits only `AcrPull` and `AcrPush`
+  assignments to service principals. The delegation applies across the
+  workload resource group, so it can manage those two roles for any service
+  principal in that scope; this is narrower than arbitrary RBAC delegation but
+  is not restricted to only the publisher and runtime principals. Its first
   application requires a subscription operator because it creates the trust
   boundary used by later OIDC workflows.
 - `foundation/` describes the ACR, Log Analytics workspace, Container Apps
@@ -28,11 +36,24 @@ non-secret placeholders required by Terraform validation; protected workflows
 override the backend coordinates through `-backend-config` values supplied at
 initialization time.
 
+Each root commits its own `.terraform.lock.hcl`. The reviewed lockfiles select
+AzureRM `5.2.0` for the declared `~> 5.0` constraint so local bootstrap and
+protected workflows resolve the same provider build. Provider upgrades require
+a separate reviewed lockfile change.
+
 The first bootstrap run is intentionally local and must be initialized with
 `-backend=false`. After the state storage has been created, the operator must
 migrate and verify that state in the `bootstrap.tfstate` Azure Blob before
 using the `foundation` or `production` roots. This task does not perform that
 migration or create Azure resources.
+
+The bootstrap operator must have resource-management access for the target
+subscription scopes and `Microsoft.Authorization/roleAssignments/write` for
+the bootstrap-managed assignments. Because the state account disables shared
+keys, the operator also needs a temporary, explicitly approved Blob data-plane
+assignment such as `Storage Blob Data Contributor` while migrating and
+verifying state. Do not replace a failed conditioned assignment with an
+unconditioned RBAC administrator grant; stop and review the ARM rejection.
 
 ## GitHub controls configured for protected Azure workflows
 
@@ -83,7 +104,9 @@ checks out `github.event.workflow_run.head_sha`, and then:
 3. stores a schema-validated release manifest containing the source SHA, CI
    run, release run, image digests, and OCI labels;
 4. runs a Terraform plan and rejects deletes or replacements before
-   confirmation;
+   confirmation, after explicitly signing the planner in through
+   GitHub-to-Azure OIDC and supplying the matching ARM client, tenant, and
+   subscription identifiers;
 5. waits for the protected `production` maintainer confirmation;
 6. re-plans after confirmation, rejects deletes or replacements again, applies
    the exact plan, verifies active Container Apps image references against the
@@ -136,9 +159,13 @@ provisioned.
 plans and applies only the Terraform `foundation` root. It uses the same
 concurrency group and protected `production` maintainer confirmation. Both the
 pre-confirmation and post-confirmation plans reject deletes and replacements.
-The protected identity used for its apply must have the reviewed Azure
-permission to create the ACR role assignments in the workload resource group;
-the workflow does not infer or elevate that permission.
+The protected identity used for its apply receives the bootstrap-managed,
+conditioned RBAC delegation described above; it cannot assign arbitrary roles
+or assign the permitted ACR roles to users or groups, but it can manage those
+roles for service principals across the workload resource group. After the
+exact plan is applied, the workflow runs a fresh plan with detailed exit
+codes, publishes only resource addresses and action types when drift exists,
+and fails for any drift or plan error.
 
 [`rollback-production.yml`](../../../.github/workflows/rollback-production.yml)
 is manually dispatched from the protected `master` branch with a successful
@@ -149,6 +176,10 @@ deletes or replacements before and after confirmation, applies the exact plan,
 verifies active image references, repeats the public dashboard, proxy, and
 validation-Job smoke tests, and performs a fail-closed post-rollback drift
 check. It uploads a receipt linked to the original release run.
+
+This readiness increment does not add the planner-login correction to the
+rollback workflow. A live rollback remains blocked until its planner OIDC
+authentication is reviewed and validated in a separate increment.
 
 The rollback workflow never rebuilds or pushes an image. A rollback is a new
 Container Apps revision selected by the registered prior release manifest.

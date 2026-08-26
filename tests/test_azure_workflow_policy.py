@@ -20,10 +20,15 @@ from scripts.azure_workflow_policy import (
 
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "azure_workflow"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _fixture(name: str) -> dict:
     return json.loads((FIXTURE_ROOT / name).read_text(encoding="utf-8"))
+
+
+def _repository_text(path: str) -> str:
+    return (REPOSITORY_ROOT / path).read_text(encoding="utf-8")
 
 
 def test_release_flag_and_configuration_fail_closed() -> None:
@@ -146,3 +151,76 @@ def test_forbidden_tracked_paths_are_detected_without_content_scanning() -> None
         "docs/allowed.tfvars.example",
     ]
     assert forbidden_tracked_paths(paths) == sorted(paths[:4])
+
+
+def test_production_plan_uses_explicit_planner_oidc_before_backend_init() -> None:
+    workflow = _repository_text(".github/workflows/release-production.yml")
+    plan_start = workflow.index("  terraform-plan:")
+    plan_end = workflow.index("\n  deploy-production:", plan_start)
+    plan_job = workflow[plan_start:plan_end]
+
+    login = "      - name: Sign in to Azure with production planner OIDC"
+    backend_init = "      - name: Initialize the production backend with OIDC"
+    assert plan_job.index(login) < plan_job.index(backend_init)
+    assert "        uses: azure/login@v2" in plan_job
+    assert "          client-id: ${{ secrets.AZURE_PLANNER_CLIENT_ID }}" in plan_job
+    assert '      ARM_USE_OIDC: "true"' in plan_job
+    assert '      ARM_USE_AZUREAD: "true"' in plan_job
+    assert "      ARM_CLIENT_ID: ${{ secrets.AZURE_PLANNER_CLIENT_ID }}" in plan_job
+    assert "      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}" in plan_job
+    assert (
+        "      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+        in plan_job
+    )
+
+
+def test_bootstrap_limits_deployer_rbac_delegation_to_acr_data_roles() -> None:
+    bootstrap = _repository_text("infra/azure/terraform/bootstrap/main.tf")
+    publisher_start = bootstrap.index(
+        'resource "azurerm_role_assignment" "publisher_workload_reader"'
+    )
+    assignment_start = bootstrap.index(
+        'resource "azurerm_role_assignment" '
+        '"deployer_workload_rbac_administrator"'
+    )
+    publisher = bootstrap[publisher_start:assignment_start]
+    assignment = bootstrap[assignment_start:]
+
+    assert "scope              = azurerm_resource_group.workload.id" in publisher
+    assert "data.azurerm_role_definition.reader.role_definition_id" in publisher
+    assert "azurerm_user_assigned_identity.publisher.principal_id" in publisher
+    assert 'name = "Role Based Access Control Administrator"' in bootstrap
+    assert "scope              = azurerm_resource_group.workload.id" in assignment
+    assert "data.azurerm_role_definition.rbac_administrator" in assignment
+    assert "azurerm_user_assigned_identity.deployer.principal_id" in assignment
+    assert 'condition_version  = "2.0"' in assignment
+    assert "Microsoft.Authorization/roleAssignments/write" in assignment
+    assert "Microsoft.Authorization/roleAssignments/delete" in assignment
+    assert assignment.count("ForAnyOfAnyValues:GuidEquals") == 2
+    assert assignment.count("${local.acr_pull_role_definition_guid}") == 2
+    assert assignment.count("${local.acr_push_role_definition_guid}") == 2
+    assert assignment.count("PrincipalType") == 2
+    assert assignment.count(
+        "ForAnyOfAnyValues:StringEqualsIgnoreCase {'ServicePrincipal'}"
+    ) == 2
+    assert "7f951dda-4ed3-4680-a7ca-43fe172d538d" in bootstrap
+    assert "8311e382-0749-4cb8-b61a-304f252e45ec" in bootstrap
+
+
+def test_foundation_apply_fails_closed_on_any_post_apply_drift() -> None:
+    workflow = _repository_text(".github/workflows/foundation-production.yml")
+    apply_start = workflow.index("  apply-foundation:")
+    apply_job = workflow[apply_start:]
+    apply_plan = apply_job.index(
+        "      - name: Apply the exact approved foundation plan"
+    )
+    drift_check = apply_job.index(
+        "      - name: Verify Terraform foundation state is drift-free after apply"
+    )
+
+    assert apply_plan < drift_check
+    assert "-detailed-exitcode" in apply_job[drift_check:]
+    assert 'case "$plan_exit" in' in apply_job[drift_check:]
+    assert "drift detected; the workflow failed closed" in apply_job[drift_check:]
+    assert "{address, actions: .change.actions}" in apply_job[drift_check:]
+    assert "exit 1" in apply_job[drift_check:]
