@@ -2,11 +2,12 @@
 
 Status: **blocked pending Azure evidence** (reviewed 2026-08-25).
 
-The repository now contains a Terraform production root, a promotion workflow,
-and a protected digest-based rollback workflow. The original Bicep workflow is
-kept as a legacy recovery path until the migration has been proven against the
-actual subscription. Removing it before that evidence exists would make the
-deployment path harder to recover and would not prove parity.
+The repository now contains separate Terraform `bootstrap`, `foundation`, and
+`production` roots, a promotion workflow, and a protected digest-based
+rollback workflow. The original Bicep workflow is kept as a legacy recovery
+path until the migration has been proven against the actual subscription.
+Removing it before that evidence exists would make the deployment path harder
+to recover and would not prove parity.
 
 ## Required evidence before retirement
 

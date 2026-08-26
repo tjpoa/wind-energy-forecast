@@ -259,14 +259,9 @@ jobs:
       ARM_CLIENT_ID: ${{ secrets.AZURE_PLANNER_CLIENT_ID }}
       TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
-      TF_VAR_location: ${{ vars.AZURE_LOCATION || 'westeurope' }}
-      TF_VAR_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP || 'wind-energy-forecast-demo' }}
-      TF_VAR_acr_name: ${{ vars.AZURE_ACR_NAME }}
-      TF_VAR_environment_name: ${{ vars.AZURE_ENVIRONMENT_NAME || 'wind-forecast-demo-env' }}
-      TF_VAR_runtime_identity_name: ${{ vars.AZURE_RUNTIME_IDENTITY_NAME || 'wind-forecast-demo-runtime' }}
-      TF_VAR_publisher_principal_id: ${{ secrets.AZURE_PUBLISHER_PRINCIPAL_ID }}
-      TF_VAR_planner_principal_id: ${{ secrets.AZURE_PLANNER_PRINCIPAL_ID }}
-      TF_VAR_deployer_principal_id: ${{ secrets.AZURE_DEPLOYER_PRINCIPAL_ID }}
+      TF_VAR_tfstate_resource_group_name: ${{ vars.TFSTATE_RESOURCE_GROUP_NAME }}
+      TF_VAR_tfstate_storage_account_name: ${{ vars.TFSTATE_STORAGE_ACCOUNT_NAME }}
+      TF_VAR_tfstate_container_name: ${{ vars.TFSTATE_CONTAINER_NAME || 'tfstate' }}
       TF_VAR_budget_amount: ${{ vars.AZURE_BUDGET_AMOUNT || '10' }}
       TF_VAR_budget_alert_email: ${{ secrets.AZURE_BUDGET_ALERT_EMAIL }}
       TF_VAR_budget_start_date: ${{ vars.AZURE_BUDGET_START_DATE }}
@@ -295,9 +290,6 @@ jobs:
             TFSTATE_RESOURCE_GROUP_NAME
             TFSTATE_STORAGE_ACCOUNT_NAME
             ARM_CLIENT_ID
-            TF_VAR_publisher_principal_id
-            TF_VAR_planner_principal_id
-            TF_VAR_deployer_principal_id
             TF_VAR_budget_alert_email
             TF_VAR_budget_start_date
             TF_VAR_budget_end_date
@@ -376,14 +368,9 @@ jobs:
       ARM_CLIENT_ID: ${{ secrets.AZURE_DEPLOYER_CLIENT_ID }}
       TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
-      TF_VAR_location: ${{ vars.AZURE_LOCATION || 'westeurope' }}
-      TF_VAR_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP || 'wind-energy-forecast-demo' }}
-      TF_VAR_acr_name: ${{ vars.AZURE_ACR_NAME }}
-      TF_VAR_environment_name: ${{ vars.AZURE_ENVIRONMENT_NAME || 'wind-forecast-demo-env' }}
-      TF_VAR_runtime_identity_name: ${{ vars.AZURE_RUNTIME_IDENTITY_NAME || 'wind-forecast-demo-runtime' }}
-      TF_VAR_publisher_principal_id: ${{ secrets.AZURE_PUBLISHER_PRINCIPAL_ID }}
-      TF_VAR_planner_principal_id: ${{ secrets.AZURE_PLANNER_PRINCIPAL_ID }}
-      TF_VAR_deployer_principal_id: ${{ secrets.AZURE_DEPLOYER_PRINCIPAL_ID }}
+      TF_VAR_tfstate_resource_group_name: ${{ vars.TFSTATE_RESOURCE_GROUP_NAME }}
+      TF_VAR_tfstate_storage_account_name: ${{ vars.TFSTATE_STORAGE_ACCOUNT_NAME }}
+      TF_VAR_tfstate_container_name: ${{ vars.TFSTATE_CONTAINER_NAME || 'tfstate' }}
       TF_VAR_budget_amount: ${{ vars.AZURE_BUDGET_AMOUNT || '10' }}
       TF_VAR_budget_alert_email: ${{ secrets.AZURE_BUDGET_ALERT_EMAIL }}
       TF_VAR_budget_start_date: ${{ vars.AZURE_BUDGET_START_DATE }}
@@ -412,9 +399,6 @@ jobs:
             TFSTATE_RESOURCE_GROUP_NAME
             TFSTATE_STORAGE_ACCOUNT_NAME
             ARM_CLIENT_ID
-            TF_VAR_publisher_principal_id
-            TF_VAR_planner_principal_id
-            TF_VAR_deployer_principal_id
             TF_VAR_budget_alert_email
             TF_VAR_budget_start_date
             TF_VAR_budget_end_date

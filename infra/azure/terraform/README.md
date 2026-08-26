@@ -9,17 +9,30 @@ the target subscription.
 ## Layout
 
 - `bootstrap/` describes the remote state storage and the user-assigned
-  identities used by GitHub Actions. Its first application requires a
-  subscription operator because it creates the trust boundary used by later
-  OIDC workflows.
-- `production/` describes the existing cost-bounded Container Apps portfolio
-  demo: ACR, Log Analytics, Container Apps, the validation Job, managed
-  identity permissions, and the monthly budget.
+  identities used by GitHub Actions, creates the workload resource group, and
+  grants the state and workload permissions used by later roots. Its first
+  application requires a subscription operator because it creates the trust
+  boundary used by later OIDC workflows.
+- `foundation/` describes the ACR, Log Analytics workspace, Container Apps
+  Environment, runtime identity, and the `AcrPush`/`AcrPull` role assignments.
+  It consumes the workload resource group and publisher identity outputs from
+  `bootstrap.tfstate`.
+- `production/` describes only the API and frontend Container Apps, the
+  validation Job, and the monthly budget. It consumes `foundation` outputs via
+  the `foundation.tfstate` remote state.
 
-Both roots use the AzureRM provider and contain no credentials or environment
-secrets. The production backend contains only non-secret placeholders required
-by Terraform validation; protected workflows override all backend coordinates
-through `-backend-config` values supplied at initialization time.
+All three roots use the AzureRM provider and contain no credentials or
+environment secrets. Their state keys are separate: `bootstrap.tfstate`,
+`foundation.tfstate`, and `production.tfstate`. The backends contain only
+non-secret placeholders required by Terraform validation; protected workflows
+override the backend coordinates through `-backend-config` values supplied at
+initialization time.
+
+The first bootstrap run is intentionally local and must be initialized with
+`-backend=false`. After the state storage has been created, the operator must
+migrate and verify that state in the `bootstrap.tfstate` Azure Blob before
+using the `foundation` or `production` roots. This task does not perform that
+migration or create Azure resources.
 
 ## GitHub controls configured in Increment 2
 
@@ -65,28 +78,32 @@ non-sensitive review summary. The workflow uses GitHub-to-Azure OIDC for the
 publisher, planner, and protected deployer identities. No client secret,
 registry admin password, or long-lived cloud credential is expected.
 
-Before enabling the workflow, configure these GitHub Actions repository or
-environment values from the outputs of the approved bootstrap:
+Before enabling the workflows, configure these GitHub Actions repository or
+environment values from the outputs of the approved bootstrap and foundation:
 
-- Variables: `AZURE_ACR_NAME`, `TFSTATE_RESOURCE_GROUP_NAME`,
-  `TFSTATE_STORAGE_ACCOUNT_NAME`, and optionally `TFSTATE_CONTAINER_NAME`.
-  The workflow defaults the workload resource group, location, Container Apps
-  environment, runtime identity, and budget amount to the Terraform defaults.
+- Variables: `AZURE_ACR_NAME`, `AZURE_RESOURCE_GROUP`,
+  `TFSTATE_RESOURCE_GROUP_NAME`, `TFSTATE_STORAGE_ACCOUNT_NAME`, and
+  optionally `TFSTATE_CONTAINER_NAME`. The production Terraform root reads the
+  workload resource group, Container Apps Environment, runtime identity, and
+  registry server from `foundation.tfstate`; the release and rollback CLI
+  smoke/publish steps continue to use `AZURE_RESOURCE_GROUP` and
+  `AZURE_ACR_NAME`.
 - Variables required by the budget contract:
   `AZURE_BUDGET_START_DATE` and `AZURE_BUDGET_END_DATE`.
-- Secrets: `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
-  `AZURE_PUBLISHER_CLIENT_ID`, `AZURE_PLANNER_CLIENT_ID`,
-  `AZURE_PUBLISHER_PRINCIPAL_ID`, `AZURE_PLANNER_PRINCIPAL_ID`,
-  `AZURE_DEPLOYER_PRINCIPAL_ID`, and `AZURE_BUDGET_ALERT_EMAIL`.
+- Secrets used by the production workflows: `AZURE_TENANT_ID`,
+  `AZURE_SUBSCRIPTION_ID`, `AZURE_PUBLISHER_CLIENT_ID`,
+  `AZURE_PLANNER_CLIENT_ID`, and `AZURE_BUDGET_ALERT_EMAIL`.
 - Protected `production` environment secret:
   `AZURE_DEPLOYER_CLIENT_ID`.
 
-The client IDs and principal IDs are identifiers, not client credentials; they
-are listed as secrets to keep the workflow configuration out of logs and to
-make the trust boundary explicit. Do not create placeholder values. The
-workflow cannot run successfully until the Terraform bootstrap has created the
-remote state, federated credentials, role assignments, and the production
-portfolio has been imported or provisioned.
+The bootstrap principal IDs are consumed by `foundation`; they are not runtime
+secrets and do not need to be passed to the production roots.
+The client IDs are identifiers, not client credentials; they are kept out of
+logs to make the trust boundary explicit. Do not create placeholder values.
+The production workflow cannot run successfully until the Terraform bootstrap
+has created the remote state, federated credentials, role assignments, the
+foundation state, and the production portfolio has been imported or
+provisioned.
 
 ## Rollback workflow added in Increment 4
 
@@ -107,12 +124,14 @@ prior release evidence.
 
 ## Static validation
 
-From the repository root, the CI checks both roots without contacting Azure:
+From the repository root, the CI checks all three roots without contacting Azure:
 
 ```text
 terraform fmt -check -recursive infra/azure/terraform
 terraform -chdir=infra/azure/terraform/bootstrap init -backend=false -input=false
 terraform -chdir=infra/azure/terraform/bootstrap validate
+terraform -chdir=infra/azure/terraform/foundation init -backend=false -input=false
+terraform -chdir=infra/azure/terraform/foundation validate
 terraform -chdir=infra/azure/terraform/production init -backend=false -input=false
 terraform -chdir=infra/azure/terraform/production validate
 ```
@@ -124,9 +143,9 @@ committed.
 ## Deliberate stop boundary
 
 This workspace has not run `terraform plan`, `terraform apply`, `terraform
-import`, Azure CLI, or a network-backed provider operation. The four increments
-add the release and rollback workflows, but they are not yet operational in
-this workspace. Terraform parity, a successful promotion, and a successful
-rollback remain mandatory gates before the legacy Bicep workflow can be
-retired. The complete gate is documented in
+import`, Azure CLI, or a network-backed provider operation. The roots and
+workflow wiring remain configuration-only in this workspace. Terraform parity,
+a successful promotion, and a successful rollback remain mandatory gates
+before the legacy Bicep workflow can be retired. The complete gate is
+documented in
 [`AZURE_TERRAFORM_MIGRATION.md`](../../../docs/AZURE_TERRAFORM_MIGRATION.md).

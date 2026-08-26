@@ -17,6 +17,14 @@ resource "azurerm_resource_group" "state" {
   tags     = local.common_tags
 }
 
+resource "azurerm_resource_group" "workload" {
+  name     = var.workload_resource_group_name
+  location = var.location
+  tags = merge(local.common_tags, {
+    environment = "portfolio-demo"
+  })
+}
+
 resource "azurerm_storage_account" "state" {
   name                            = var.state_storage_account_name
   resource_group_name             = azurerm_resource_group.state.name
@@ -87,17 +95,21 @@ resource "azurerm_federated_identity_credential" "deployer" {
   subject                   = local.environment_subject
 }
 
-data "azurerm_role_definition" "storage_blob_data_reader" {
-  name = "Storage Blob Data Reader"
-}
-
 data "azurerm_role_definition" "storage_blob_data_contributor" {
   name = "Storage Blob Data Contributor"
 }
 
+data "azurerm_role_definition" "reader" {
+  name = "Reader"
+}
+
+data "azurerm_role_definition" "contributor" {
+  name = "Contributor"
+}
+
 resource "azurerm_role_assignment" "planner_state_reader" {
   scope              = azurerm_storage_account.state.id
-  role_definition_id = data.azurerm_role_definition.storage_blob_data_reader.role_definition_id
+  role_definition_id = data.azurerm_role_definition.storage_blob_data_contributor.role_definition_id
   principal_id       = azurerm_user_assigned_identity.planner.principal_id
   principal_type     = "ServicePrincipal"
 }
@@ -105,6 +117,20 @@ resource "azurerm_role_assignment" "planner_state_reader" {
 resource "azurerm_role_assignment" "deployer_state_contributor" {
   scope              = azurerm_storage_account.state.id
   role_definition_id = data.azurerm_role_definition.storage_blob_data_contributor.role_definition_id
+  principal_id       = azurerm_user_assigned_identity.deployer.principal_id
+  principal_type     = "ServicePrincipal"
+}
+
+resource "azurerm_role_assignment" "planner_workload_reader" {
+  scope              = azurerm_resource_group.workload.id
+  role_definition_id = data.azurerm_role_definition.reader.role_definition_id
+  principal_id       = azurerm_user_assigned_identity.planner.principal_id
+  principal_type     = "ServicePrincipal"
+}
+
+resource "azurerm_role_assignment" "deployer_workload_contributor" {
+  scope              = azurerm_resource_group.workload.id
+  role_definition_id = data.azurerm_role_definition.contributor.role_definition_id
   principal_id       = azurerm_user_assigned_identity.deployer.principal_id
   principal_type     = "ServicePrincipal"
 }

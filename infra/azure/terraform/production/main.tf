@@ -4,111 +4,27 @@ locals {
     environment = "portfolio-demo"
     managed_by  = "terraform"
   }
-}
-
-resource "azurerm_resource_group" "this" {
-  name     = var.resource_group_name
-  location = var.location
-  tags     = local.common_tags
-}
-
-resource "azurerm_container_registry" "this" {
-  name                          = var.acr_name
-  resource_group_name           = azurerm_resource_group.this.name
-  location                      = azurerm_resource_group.this.location
-  sku                           = "Basic"
-  admin_enabled                 = false
-  public_network_access_enabled = true
-  tags                          = local.common_tags
-}
-
-resource "azurerm_log_analytics_workspace" "this" {
-  name                = "wind-forecast-demo-logs"
-  location            = azurerm_resource_group.this.location
-  resource_group_name = azurerm_resource_group.this.name
-  sku                 = "PerGB2018"
-  retention_in_days   = 30
-  tags                = local.common_tags
-}
-
-resource "azurerm_container_app_environment" "this" {
-  name                       = var.environment_name
-  location                   = azurerm_resource_group.this.location
-  resource_group_name        = azurerm_resource_group.this.name
-  logs_destination           = "log-analytics"
-  log_analytics_workspace_id = azurerm_log_analytics_workspace.this.id
-  tags                       = local.common_tags
-}
-
-resource "azurerm_user_assigned_identity" "runtime" {
-  name                = var.runtime_identity_name
-  resource_group_name = azurerm_resource_group.this.name
-  location            = azurerm_resource_group.this.location
-  tags                = local.common_tags
-}
-
-data "azurerm_role_definition" "acr_pull" {
-  name = "AcrPull"
-}
-
-data "azurerm_role_definition" "acr_push" {
-  name = "AcrPush"
-}
-
-data "azurerm_role_definition" "reader" {
-  name = "Reader"
-}
-
-resource "azurerm_role_assignment" "runtime_acr_pull" {
-  scope              = azurerm_container_registry.this.id
-  role_definition_id = data.azurerm_role_definition.acr_pull.role_definition_id
-  principal_id       = azurerm_user_assigned_identity.runtime.principal_id
-  principal_type     = "ServicePrincipal"
-}
-
-resource "azurerm_role_assignment" "github_acr_push" {
-  scope              = azurerm_container_registry.this.id
-  role_definition_id = data.azurerm_role_definition.acr_push.role_definition_id
-  principal_id       = var.publisher_principal_id
-  principal_type     = "ServicePrincipal"
-}
-
-resource "azurerm_role_assignment" "github_resource_group_reader" {
-  scope              = azurerm_resource_group.this.id
-  role_definition_id = data.azurerm_role_definition.reader.role_definition_id
-  principal_id       = var.planner_principal_id
-  principal_type     = "ServicePrincipal"
-}
-
-resource "azurerm_role_assignment" "github_resource_group_contributor" {
-  scope              = azurerm_resource_group.this.id
-  role_definition_id = data.azurerm_role_definition.contributor.role_definition_id
-  principal_id       = var.deployer_principal_id
-  principal_type     = "ServicePrincipal"
-}
-
-data "azurerm_role_definition" "contributor" {
-  name = "Contributor"
+  foundation = data.terraform_remote_state.foundation.outputs
 }
 
 locals {
-  registry_server = azurerm_container_registry.this.login_server
+  registry_server = local.foundation.registry_login_server
   registry = {
     server   = local.registry_server
-    identity = azurerm_user_assigned_identity.runtime.id
+    identity = local.foundation.runtime_identity_id
   }
 }
 
 resource "azurerm_container_app" "api" {
   name                         = "wind-forecast-api"
-  container_app_environment_id = azurerm_container_app_environment.this.id
-  resource_group_name          = azurerm_resource_group.this.name
+  container_app_environment_id = local.foundation.container_app_environment_id
+  resource_group_name          = local.foundation.resource_group_name
   revision_mode                = "Single"
   tags                         = merge(local.common_tags, { component = "api" })
 
   identity {
     type         = "UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.runtime.id]
+    identity_ids = [local.foundation.runtime_identity_id]
   }
 
   registry {
@@ -173,14 +89,14 @@ resource "azurerm_container_app" "api" {
 
 resource "azurerm_container_app" "frontend" {
   name                         = "wind-forecast-web"
-  container_app_environment_id = azurerm_container_app_environment.this.id
-  resource_group_name          = azurerm_resource_group.this.name
+  container_app_environment_id = local.foundation.container_app_environment_id
+  resource_group_name          = local.foundation.resource_group_name
   revision_mode                = "Single"
   tags                         = merge(local.common_tags, { component = "frontend" })
 
   identity {
     type         = "UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.runtime.id]
+    identity_ids = [local.foundation.runtime_identity_id]
   }
 
   registry {
@@ -225,16 +141,16 @@ resource "azurerm_container_app" "frontend" {
 
 resource "azurerm_container_app_job" "validation" {
   name                         = "wind-forecast-validation"
-  location                     = azurerm_resource_group.this.location
-  resource_group_name          = azurerm_resource_group.this.name
-  container_app_environment_id = azurerm_container_app_environment.this.id
+  location                     = local.foundation.resource_group_location
+  resource_group_name          = local.foundation.resource_group_name
+  container_app_environment_id = local.foundation.container_app_environment_id
   replica_timeout_in_seconds   = 300
   replica_retry_limit          = 1
   tags                         = merge(local.common_tags, { component = "validation-job" })
 
   identity {
     type         = "UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.runtime.id]
+    identity_ids = [local.foundation.runtime_identity_id]
   }
 
   registry {
@@ -261,7 +177,7 @@ resource "azurerm_container_app_job" "validation" {
 
 resource "azurerm_consumption_budget_resource_group" "this" {
   name              = "wind-forecast-demo-budget"
-  resource_group_id = azurerm_resource_group.this.id
+  resource_group_id = local.foundation.resource_group_id
   amount            = var.budget_amount
   time_grain        = "Monthly"
 
