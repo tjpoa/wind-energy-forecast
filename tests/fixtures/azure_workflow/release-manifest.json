@@ -1,0 +1,12 @@
+{
+  "api_image": "example.azurecr.io/wind-forecast-api@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "api_source_label": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "ci_run_id": "100",
+  "frontend_image": "example.azurecr.io/wind-forecast-frontend@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "frontend_source_label": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "manifest_type": "release",
+  "release_attempt": "1",
+  "release_run_id": "200",
+  "schema_version": "wind_forecast.production_release_manifest.v2",
+  "source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

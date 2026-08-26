@@ -14,6 +14,10 @@ RUN npm run build
 FROM nginx:alpine
 
 ARG NGINX_CONFIG=nginx.conf
+ARG SOURCE_SHA=unknown
+
+LABEL org.opencontainers.image.revision="$SOURCE_SHA"
+
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY ${NGINX_CONFIG} /etc/nginx/conf.d/default.conf
 

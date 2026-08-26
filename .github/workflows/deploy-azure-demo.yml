@@ -15,12 +15,8 @@ on:
         required: false
         default: false
         type: boolean
-      api_image:
-        description: "Existing API image digest for rollback; leave empty to build the selected commit"
-        required: false
-        type: string
-      frontend_image:
-        description: "Existing frontend image digest for rollback; leave empty to build the selected commit"
+      release_run_id:
+        description: "Registered production release run to restore; leave empty to build the selected commit"
         required: false
         type: string
 
@@ -29,7 +25,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: azure-portfolio-demo
+  group: azure-production-mutation
   cancel-in-progress: false
 
 jobs:
@@ -38,17 +34,41 @@ jobs:
     runs-on: ubuntu-latest
     environment: azure-demo
     env:
+      PRODUCTION_RELEASE_ENABLED: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
       AZURE_LOCATION: westeurope
       AZURE_RESOURCE_GROUP: wind-energy-forecast-demo
       AZURE_ACR_NAME: ${{ inputs.acr_name }}
       AZURE_ENVIRONMENT_NAME: wind-forecast-demo-env
       AZURE_RUNTIME_IDENTITY_NAME: wind-forecast-demo-runtime
-      ROLLBACK_API_IMAGE: ${{ inputs.api_image }}
-      ROLLBACK_FRONTEND_IMAGE: ${{ inputs.frontend_image }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_PRINCIPAL_OBJECT_ID: ${{ secrets.AZURE_PRINCIPAL_OBJECT_ID }}
+      AZURE_BUDGET_ALERT_EMAIL: ${{ secrets.AZURE_BUDGET_ALERT_EMAIL }}
+      RELEASE_RUN_ID: ${{ inputs.release_run_id }}
 
     steps:
       - name: Check out selected commit
         uses: actions/checkout@v4
+
+      - name: Run protected Azure preflight
+        uses: ./.github/actions/azure-preflight
+        with:
+          mode: legacy-bicep
+          release-enabled: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
+
+      - name: Download registered release manifest for legacy rollback
+        if: ${{ inputs.release_run_id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: release-manifest
+          run-id: ${{ inputs.release_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate registered legacy rollback manifest
+        if: ${{ inputs.release_run_id != '' }}
+        shell: bash
+        run: python scripts/validate_azure_workflow.py manifest --path release-manifest.json --expected-release-run-id "$RELEASE_RUN_ID"
 
       - name: Sign in to Azure with OIDC
         uses: azure/login@v2
@@ -91,22 +111,18 @@ jobs:
           ACR_LOGIN_SERVER="$(az acr show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_ACR_NAME" --query loginServer --output tsv)"
           az acr login --name "$AZURE_ACR_NAME"
 
-          if [[ -n "${ROLLBACK_API_IMAGE:-}" && -n "${ROLLBACK_FRONTEND_IMAGE:-}" ]]; then
-            echo "Using supplied immutable image digests for rollback."
-            echo "API_IMAGE=$ROLLBACK_API_IMAGE" >> "$GITHUB_ENV"
-            echo "FRONTEND_IMAGE=$ROLLBACK_FRONTEND_IMAGE" >> "$GITHUB_ENV"
+          if [[ -n "${RELEASE_RUN_ID:-}" ]]; then
+            echo "Using immutable images from registered release run ${RELEASE_RUN_ID}."
+            echo "API_IMAGE=$(jq -r '.api_image' release-manifest.json)" >> "$GITHUB_ENV"
+            echo "FRONTEND_IMAGE=$(jq -r '.frontend_image' release-manifest.json)" >> "$GITHUB_ENV"
             exit 0
-          fi
-
-          if [[ -n "${ROLLBACK_API_IMAGE:-}" || -n "${ROLLBACK_FRONTEND_IMAGE:-}" ]]; then
-            echo "Both rollback image inputs must be supplied together." >&2
-            exit 1
           fi
 
           api_tag="$ACR_LOGIN_SERVER/wind-forecast-api:${GITHUB_SHA}"
           frontend_tag="$ACR_LOGIN_SERVER/wind-forecast-frontend:${GITHUB_SHA}"
-          docker build --file Dockerfile --tag "$api_tag" .
+          docker build --build-arg SOURCE_SHA="$GITHUB_SHA" --file Dockerfile --tag "$api_tag" .
           docker build \
+            --build-arg SOURCE_SHA="$GITHUB_SHA" \
             --file frontend/Dockerfile \
             --build-arg VITE_API_BASE_URL=/backend \
             --build-arg NGINX_CONFIG=nginx.azure.conf \

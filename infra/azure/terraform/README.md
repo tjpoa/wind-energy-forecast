@@ -34,28 +34,42 @@ migrate and verify that state in the `bootstrap.tfstate` Azure Blob before
 using the `foundation` or `production` roots. This task does not perform that
 migration or create Azure resources.
 
-## GitHub controls configured in Increment 2
+## GitHub controls configured for protected Azure workflows
 
 The repository controls are now configured as follows:
 
 - `master` requires a pull request, resolved conversations, linear history,
-  and the `CI gate` check. The required approval count is currently zero
-  because this repository has one maintainer and GitHub does not allow the
-  pull-request author to approve their own change. Administrator bypass and
-  force pushes are disabled. Restore one required approval when an
-  independent maintainer is available.
+  and the `CI gate` check. It requires one independent approval, approval of
+  the latest reviewable push, and dismissal of stale reviews. Administrator
+  bypass, force pushes, and branch deletion are disabled.
 - `production` requires a manual review, accepts deployments only from
-  protected branches, and disallows administrator bypass.
-- The current repository owner is the environment reviewer and self-review is
-  permitted because this is a single-owner repository. Add an independent
-  reviewer before enabling `prevent_self_review`.
+  protected branches, disallows administrator bypass, and prevents the person
+  who started a deployment from approving it. Keep an independent reviewer in
+  the environment reviewer list.
+
+The independent-reviewer configuration is an external GitHub control and must
+be rechecked as part of the final evidence matrix; it cannot be represented by
+repository code.
 
 The Azure identifiers and OIDC client IDs are not stored in the repository.
 The later bootstrap/application step must populate the protected environment
 with the required Azure identifiers and grant the generated identities the
 permissions represented by the Terraform roots.
 
-## Promotion workflow added in Increment 3
+## Protected Azure workflow controls
+
+The release, foundation, legacy recovery, and rollback workflows share the
+`azure-production-mutation` concurrency group. Only one Azure mutation can run
+at a time. Each workflow calls the central preflight action before Azure login
+or publication. The preflight requires the explicit
+`PRODUCTION_RELEASE_ENABLED=true` repository variable and validates only the
+mode-specific configuration without printing values.
+
+The CI workflow rejects tracked Terraform state, plans, non-example `.tfvars`,
+password/client-secret paths, and credential-file extensions. The policy is
+implemented in testable Python with JSON fixtures.
+
+## Promotion workflow
 
 [`release-production.yml`](../../../.github/workflows/release-production.yml)
 is a promotion workflow, not a second independent build path. It runs only
@@ -63,13 +77,18 @@ after the `CI` workflow succeeds for a push to the protected `master` branch,
 checks out `github.event.workflow_run.head_sha`, and then:
 
 1. builds and smoke-tests the API and frontend images once;
-2. publishes both images to ACR and records their immutable registry digests;
-3. stores a small release manifest containing the source SHA and both digests;
-4. runs a read-only Terraform plan and publishes only address/action metadata;
+2. labels both images with `org.opencontainers.image.revision` equal to the
+   source SHA, publishes them to ACR, and records immutable registry digests;
+3. stores a schema-validated release manifest containing the source SHA, CI
+   run, release run, image digests, and OCI labels;
+4. runs a Terraform plan and rejects deletes or replacements before approval;
 5. waits for the protected `production` environment approval;
-6. re-plans after approval, rejects destructive changes, applies that exact
-   plan, runs the public dashboard and validation-Job smoke tests, and fails
-   closed if a post-deployment Terraform plan reports drift.
+6. re-plans after approval, rejects deletes or replacements again, applies the
+   exact plan, verifies active Container Apps image references against the
+   manifest, runs smoke tests, and fails closed if the post-deployment plan
+   reports drift;
+7. uploads a receipt containing commit/run IDs, digests, revisions, approval
+   gate status, smoke results, and the post-deployment drift result.
 
 The binary Terraform plan is deliberately not uploaded because it can contain
 sensitive state. The post-approval job applies the exact plan it generated
@@ -81,9 +100,11 @@ registry admin password, or long-lived cloud credential is expected.
 Before enabling the workflows, configure these GitHub Actions repository or
 environment values from the outputs of the approved bootstrap and foundation:
 
-- Variables: `AZURE_ACR_NAME`, `AZURE_RESOURCE_GROUP`,
+- Variables: `PRODUCTION_RELEASE_ENABLED`, `AZURE_ACR_NAME`,
+  `AZURE_RESOURCE_GROUP`,
   `TFSTATE_RESOURCE_GROUP_NAME`, `TFSTATE_STORAGE_ACCOUNT_NAME`, and
-  optionally `TFSTATE_CONTAINER_NAME`. The production Terraform root reads the
+  optionally `TFSTATE_CONTAINER_NAME`, `AZURE_ENVIRONMENT_NAME`, and
+  `AZURE_RUNTIME_IDENTITY_NAME`. The production Terraform root reads the
   workload resource group, Container Apps Environment, runtime identity, and
   registry server from `foundation.tfstate`; the release and rollback CLI
   smoke/publish steps continue to use `AZURE_RESOURCE_GROUP` and
@@ -105,22 +126,29 @@ has created the remote state, federated credentials, role assignments, the
 foundation state, and the production portfolio has been imported or
 provisioned.
 
-## Rollback workflow added in Increment 4
+## Foundation and rollback workflows
+
+[`foundation-production.yml`](../../../.github/workflows/foundation-production.yml)
+plans and applies only the Terraform `foundation` root. It uses the same
+concurrency group and protected `production` approval. Both the pre-approval
+and post-approval plans reject deletes and replacements.
+The protected identity used for its apply must have the reviewed Azure
+permission to create the ACR role assignments in the workload resource group;
+the workflow does not infer or elevate that permission.
 
 [`rollback-production.yml`](../../../.github/workflows/rollback-production.yml)
-is manually dispatched from the protected `master` branch with the previous
-API and frontend image references. Both references must use the same registry,
-the expected repositories, and a full `@sha256:<64 hexadecimal characters>`
-digest. The workflow records the request manifest, creates a non-sensitive
-Terraform plan summary, waits for the protected `production` approval, rejects
-destructive changes, applies the exact post-approval plan, and repeats the
-public dashboard, proxy, and validation-Job smoke tests, followed by a
-fail-closed post-rollback drift check.
+is manually dispatched from the protected `master` branch with a successful
+`release_run_id`. It downloads the registered release manifest from that run;
+operators cannot supply arbitrary image digests. The workflow records a
+rollback manifest, creates a non-sensitive Terraform plan summary, rejects
+deletes or replacements before and after approval, applies the exact plan,
+verifies active image references, repeats the public dashboard, proxy, and
+validation-Job smoke tests, and performs a fail-closed post-rollback drift
+check. It uploads a receipt linked to the original release run.
 
 The rollback workflow never rebuilds or pushes an image. A rollback is a new
-Container Apps revision selected by the prior immutable digests. Keep the
-workflow summary and manifest as the rollback receipt; do not overwrite the
-prior release evidence.
+Container Apps revision selected by the registered prior release manifest.
+Keep both the original release evidence and the immutable rollback receipt.
 
 ## Static validation
 

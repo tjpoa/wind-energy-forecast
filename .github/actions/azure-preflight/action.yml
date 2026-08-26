@@ -1,0 +1,24 @@
+name: Azure workflow preflight
+description: Validate protected Azure workflow configuration before any mutation.
+
+inputs:
+  mode:
+    description: Protected workflow mode whose configuration is required.
+    required: true
+  release-enabled:
+    description: Explicit PRODUCTION_RELEASE_ENABLED feature flag.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Validate protected Azure configuration
+      shell: bash
+      env:
+        RELEASE_ENABLED: ${{ inputs.release-enabled }}
+      run: |
+        set -euo pipefail
+        python "$GITHUB_WORKSPACE/scripts/validate_azure_workflow.py" \
+          preflight \
+          --mode "${{ inputs.mode }}" \
+          --release-enabled "$RELEASE_ENABLED"

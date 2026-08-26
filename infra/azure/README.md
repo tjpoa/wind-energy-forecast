@@ -25,8 +25,8 @@ resource inventory have been reviewed.
 
 The fourth increment adds
 [`rollback-production.yml`](../../.github/workflows/rollback-production.yml),
-which accepts only prior image digests and applies them through the same
-protected Terraform path. Bicep retirement is deliberately gated by the
+which accepts only a prior `release_run_id`, downloads its registered manifest,
+and applies it through the same protected Terraform path. Bicep retirement is deliberately gated by the
 inventory, parity, promotion, and rollback evidence in
 [`AZURE_TERRAFORM_MIGRATION.md`](../../docs/AZURE_TERRAFORM_MIGRATION.md).
 
@@ -77,7 +77,7 @@ allow-listed same-origin Nginx proxy paths.
 
 ## Rollback
 
-Record the API and frontend image digests and revision names emitted by each
-successful deployment. A rollback is a new protected deployment using the
-previous digests, followed by the same frontend, API-proxy, and validation-job
-smoke checks. Do not mutate or overwrite the evidence bundle.
+Record the `release_run_id`, image digests, and revision names emitted by each
+successful Terraform release. A rollback is a new protected deployment using
+the registered release manifest, followed by the same frontend, API-proxy, and
+validation-job smoke checks. Do not mutate or overwrite the evidence bundle.
