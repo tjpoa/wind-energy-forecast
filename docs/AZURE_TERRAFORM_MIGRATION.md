@@ -12,8 +12,14 @@ to recover and would not prove parity.
 ## Required evidence before retirement
 
 An operator with access to the target subscription must attach the following
-to a reviewed pull request or decision record. The evidence must cover the
+to a pull request that has passed branch protection and the self-review
+checklist, or to a decision record. The evidence must cover the
 same resource group and registry names used by the protected workflows.
+
+This repository uses the single-maintainer governance profile documented in
+[`GITHUB_GOVERNANCE.md`](GITHUB_GOVERNANCE.md). Unless a real external
+reviewer participates, independent human review is not applicable; deployment
+approval evidence must be labelled as maintainer confirmation.
 
 1. A read-only inventory of the Bicep-created resource IDs, names, regions,
    SKUs, identities, role assignments, Container Apps settings, Job schedule,
@@ -37,7 +43,8 @@ been imported or compared with the live subscription.
 
 ## Retirement action
 
-Only after all evidence above is reviewed and approved should a separate,
+Only after all evidence above is validated by CI and explicitly accepted by
+the maintainer should a separate,
 small pull request:
 
 - disable and then remove the legacy Bicep deployment workflow;
@@ -53,7 +60,8 @@ separate, explicitly approved operation with an independently checked target.
 
 ## Current gate result
 
-- GitHub `master` protection and `production` approval controls: configured.
+- GitHub `master` protection and `production` maintainer-confirmation controls:
+  configured for the single-maintainer profile.
 - Terraform roots and OIDC release/rollback workflows: present locally.
 - Azure subscription inventory and Terraform state comparison: unavailable;
   Azure CLI and an authenticated session are not present in this workspace.

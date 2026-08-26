@@ -76,7 +76,7 @@ jobs:
         shell: bash
         run: terraform -chdir=infra/azure/terraform/foundation plan -input=false -lock-timeout=5m -out=foundation.tfplan
 
-      - name: Reject destructive or replacement changes before approval
+      - name: Reject destructive or replacement changes before production confirmation
         shell: bash
         run: terraform -chdir=infra/azure/terraform/foundation show -json foundation.tfplan | python scripts/validate_azure_workflow.py plan --stdin
 
@@ -143,7 +143,7 @@ jobs:
         shell: bash
         run: terraform -chdir=infra/azure/terraform/foundation plan -input=false -lock-timeout=5m -out=foundation.tfplan
 
-      - name: Reject destructive or replacement changes after approval
+      - name: Reject destructive or replacement changes after production confirmation
         shell: bash
         run: terraform -chdir=infra/azure/terraform/foundation show -json foundation.tfplan | python scripts/validate_azure_workflow.py plan --stdin
 
@@ -157,6 +157,6 @@ jobs:
           {
             echo "## Terraform foundation applied"
             echo
-            echo "- Applied after the protected `production` approval."
+            echo "- Applied after the protected `production` maintainer confirmation."
             echo "- The foundation state key is `foundation.tfstate`."
           } >> "$GITHUB_STEP_SUMMARY"

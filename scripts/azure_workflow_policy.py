@@ -306,6 +306,8 @@ def build_receipt(
             "environment": "production",
             "manual_required": True,
             "gate_passed": True,
+            "mode": "maintainer_confirmation",
+            "independent_human_review": "not_applicable_single_maintainer",
         },
         "smoke_tests": dict(smoke_tests),
         "terraform_post_deployment_plan_exit_code": terraform_post_plan_exit_code,

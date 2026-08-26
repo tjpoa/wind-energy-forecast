@@ -39,17 +39,18 @@ migration or create Azure resources.
 The repository controls are now configured as follows:
 
 - `master` requires a pull request, resolved conversations, linear history,
-  and the `CI gate` check. It requires one independent approval, approval of
-  the latest reviewable push, and dismissal of stale reviews. Administrator
-  bypass, force pushes, and branch deletion are disabled.
-- `production` requires a manual review, accepts deployments only from
-  protected branches, disallows administrator bypass, and prevents the person
-  who started a deployment from approving it. Keep an independent reviewer in
-  the environment reviewer list.
+  and the `CI gate` check. It intentionally requires zero human approvals;
+  the maintainer records the self-review checklist in the pull request.
+  Administrator bypass, force pushes, and branch deletion are disabled.
+- `production` requires a manual maintainer confirmation, accepts deployments
+  only from protected branches, disallows administrator bypass, and allows
+  the single maintainer to confirm the deployment. It does not claim an
+  independent reviewer.
 
-The independent-reviewer configuration is an external GitHub control and must
-be rechecked as part of the final evidence matrix; it cannot be represented by
-repository code.
+The single-maintainer configuration is documented in
+[`docs/GITHUB_GOVERNANCE.md`](../../../docs/GITHUB_GOVERNANCE.md) and must be
+rechecked as part of the final evidence matrix; it cannot be represented by
+repository code alone.
 
 The Azure identifiers and OIDC client IDs are not stored in the repository.
 The later bootstrap/application step must populate the protected environment
@@ -81,17 +82,20 @@ checks out `github.event.workflow_run.head_sha`, and then:
    source SHA, publishes them to ACR, and records immutable registry digests;
 3. stores a schema-validated release manifest containing the source SHA, CI
    run, release run, image digests, and OCI labels;
-4. runs a Terraform plan and rejects deletes or replacements before approval;
-5. waits for the protected `production` environment approval;
-6. re-plans after approval, rejects deletes or replacements again, applies the
-   exact plan, verifies active Container Apps image references against the
+4. runs a Terraform plan and rejects deletes or replacements before
+   confirmation;
+5. waits for the protected `production` maintainer confirmation;
+6. re-plans after confirmation, rejects deletes or replacements again, applies
+   the exact plan, verifies active Container Apps image references against the
    manifest, runs smoke tests, and fails closed if the post-deployment plan
    reports drift;
 7. uploads a receipt containing commit/run IDs, digests, revisions, approval
-   gate status, smoke results, and the post-deployment drift result.
+   mode, smoke results, and the post-deployment drift result. The receipt
+   labels the single-maintainer confirmation and does not claim independent
+   human review.
 
 The binary Terraform plan is deliberately not uploaded because it can contain
-sensitive state. The post-approval job applies the exact plan it generated
+sensitive state. The post-confirmation job applies the exact plan it generated
 immediately before `terraform apply`; the preceding plan job provides a
 non-sensitive review summary. The workflow uses GitHub-to-Azure OIDC for the
 publisher, planner, and protected deployer identities. No client secret,
@@ -130,8 +134,8 @@ provisioned.
 
 [`foundation-production.yml`](../../../.github/workflows/foundation-production.yml)
 plans and applies only the Terraform `foundation` root. It uses the same
-concurrency group and protected `production` approval. Both the pre-approval
-and post-approval plans reject deletes and replacements.
+concurrency group and protected `production` maintainer confirmation. Both the
+pre-confirmation and post-confirmation plans reject deletes and replacements.
 The protected identity used for its apply must have the reviewed Azure
 permission to create the ACR role assignments in the workload resource group;
 the workflow does not infer or elevate that permission.
@@ -141,7 +145,7 @@ is manually dispatched from the protected `master` branch with a successful
 `release_run_id`. It downloads the registered release manifest from that run;
 operators cannot supply arbitrary image digests. The workflow records a
 rollback manifest, creates a non-sensitive Terraform plan summary, rejects
-deletes or replacements before and after approval, applies the exact plan,
+deletes or replacements before and after confirmation, applies the exact plan,
 verifies active image references, repeats the public dashboard, proxy, and
 validation-Job smoke tests, and performs a fail-closed post-rollback drift
 check. It uploads a receipt linked to the original release run.
