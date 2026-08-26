@@ -26,6 +26,12 @@ variable "state_container_name" {
   default     = "tfstate"
 }
 
+variable "workload_resource_group_name" {
+  description = "Resource group containing the portfolio demo workload."
+  type        = string
+  default     = "wind-energy-forecast-demo"
+}
+
 variable "github_repository" {
   description = "GitHub owner/repository used in federated identity subjects."
   type        = string

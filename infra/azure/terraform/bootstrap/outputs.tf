@@ -42,3 +42,8 @@ output "deployer_principal_id" {
   description = "Object ID for the environment-scoped production deployer identity."
   value       = azurerm_user_assigned_identity.deployer.principal_id
 }
+
+output "workload_resource_group_name" {
+  description = "Resource group containing the portfolio demo workload."
+  value       = azurerm_resource_group.workload.name
+}

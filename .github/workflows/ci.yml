@@ -106,6 +106,7 @@ jobs:
       matrix:
         directory:
           - infra/azure/terraform/bootstrap
+          - infra/azure/terraform/foundation
           - infra/azure/terraform/production
 
     steps:

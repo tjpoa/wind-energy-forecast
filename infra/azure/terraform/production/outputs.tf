@@ -1,11 +1,11 @@
 output "resource_group_name" {
   description = "Resource group containing the portfolio demo."
-  value       = azurerm_resource_group.this.name
+  value       = local.foundation.resource_group_name
 }
 
 output "registry_login_server" {
   description = "ACR login server used by the image publisher."
-  value       = azurerm_container_registry.this.login_server
+  value       = local.registry_server
 }
 
 output "frontend_fqdn" {

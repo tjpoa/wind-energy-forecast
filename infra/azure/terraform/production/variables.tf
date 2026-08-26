@@ -10,48 +10,20 @@ variable "tenant_id" {
   sensitive   = true
 }
 
-variable "location" {
-  description = "Azure region for the portfolio demo."
-  type        = string
-  default     = "westeurope"
-}
-
-variable "resource_group_name" {
-  description = "Resource group containing the portfolio demo workload."
-  type        = string
-  default     = "wind-energy-forecast-demo"
-}
-
-variable "acr_name" {
-  description = "Globally unique Azure Container Registry name."
+variable "tfstate_resource_group_name" {
+  description = "Resource group containing the remote Terraform state storage."
   type        = string
 }
 
-variable "environment_name" {
-  description = "Azure Container Apps environment name."
-  type        = string
-  default     = "wind-forecast-demo-env"
-}
-
-variable "runtime_identity_name" {
-  description = "User-assigned identity used by Container Apps to pull images."
-  type        = string
-  default     = "wind-forecast-demo-runtime"
-}
-
-variable "publisher_principal_id" {
-  description = "Object ID of the branch-scoped GitHub publisher identity."
+variable "tfstate_storage_account_name" {
+  description = "Storage account containing the remote Terraform state."
   type        = string
 }
 
-variable "planner_principal_id" {
-  description = "Object ID of the branch-scoped GitHub planner identity."
+variable "tfstate_container_name" {
+  description = "Blob container containing the remote Terraform state."
   type        = string
-}
-
-variable "deployer_principal_id" {
-  description = "Object ID of the protected GitHub deployer identity."
-  type        = string
+  default     = "tfstate"
 }
 
 variable "api_image" {
