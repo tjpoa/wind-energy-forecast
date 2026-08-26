@@ -30,8 +30,8 @@ legacy Bicep path:
 2. Optionally bootstraps the foundation (resource group, Basic ACR, Log
    Analytics, Container Apps environment, and managed identity) when the
    `bootstrap_foundation` input is enabled.
-3. Builds and pushes the API and cloud frontend images, unless two existing
-   image digests are supplied for rollback.
+3. Builds and pushes the API and cloud frontend images, unless a registered
+   `release_run_id` is supplied for rollback.
 4. Runs Bicep `what-if`, deploys the apps, Job, and €10 monthly budget, and
    records the resulting revision names and digests.
 5. Smoke-tests the public URL, SPA routes, proxy allow-list, internal API
@@ -44,15 +44,24 @@ resource provisioning is intentionally not performed by ordinary CI pushes.
 ## Terraform promotion and rollback
 
 The supported replacement path is the protected Terraform workflow. New
+foundation changes use [`foundation-production.yml`](../.github/workflows/foundation-production.yml);
 deployments use separate `bootstrap`, `foundation`, and `production` roots;
 releases use [`release-production.yml`](../.github/workflows/release-production.yml);
 rollbacks use [`rollback-production.yml`](../.github/workflows/rollback-production.yml)
-with the previous API and frontend digests. The production root reads the
+with a registered `release_run_id`, which downloads the exact prior release
+manifest instead of accepting arbitrary image digests. The production root reads the
 foundation outputs from `foundation.tfstate`. Both workflows plan, require
 the `production` approval, apply immutable image references, and run the
 public and validation-Job smoke checks. Each protected apply is followed by a
 Terraform plan with detailed exit codes; any post-deployment drift fails the
 workflow.
+
+All Azure mutation workflows share one concurrency group. A central preflight
+requires `PRODUCTION_RELEASE_ENABLED=true` and the mode-specific OIDC/state
+configuration before Azure login or image publication. Terraform plans reject
+deletes and replacements both before and after the protected approval. Release
+and rollback receipts record the source/release run, image digests, active
+revisions, approval gate, smoke tests, and drift result.
 
 The Bicep path cannot be retired until the inventory, Terraform parity,
 promotion, and rollback gates in
@@ -60,10 +69,11 @@ promotion, and rollback gates in
 
 ## Rollback and cleanup
 
-Record the image digests from each successful workflow summary. Roll back by
-running the same protected workflow with the prior API and frontend digests;
-the deployment creates a new revision and repeats the smoke checks. Do not
-overwrite the evidence bundle or claim a production rollback.
+Record the `release_run_id` from each successful release receipt. Roll back by
+running the protected rollback workflow with that run ID; the deployment
+creates a new revision from the registered prior manifest and repeats the
+smoke checks. Do not overwrite the evidence bundle or claim a production
+rollback.
 
 When the portfolio demo is no longer needed, delete the dedicated resource
 group after confirming that no unrelated resources are in it. Budget alerts

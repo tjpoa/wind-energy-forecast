@@ -1,0 +1,10 @@
+{
+  "resource_changes": [
+    {
+      "address": "azurerm_container_app.api",
+      "change": {
+        "actions": ["delete", "create"]
+      }
+    }
+  ]
+}

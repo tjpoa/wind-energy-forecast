@@ -126,6 +126,17 @@ jobs:
         working-directory: ${{ matrix.directory }}
         run: terraform validate
 
+  tracked-artifact-safety:
+    name: Tracked deployment-artifact safety
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Reject tracked state, plans, variables, passwords, and client secrets
+        run: python scripts/check_tracked_forbidden_files.py
+
   docker-build:
     name: Docker build
     runs-on: ubuntu-latest
@@ -135,7 +146,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build FastAPI Docker image
-        run: docker build --file Dockerfile --tag wind-energy-forecast-api:ci .
+        run: docker build --build-arg SOURCE_SHA=${{ github.sha }} --file Dockerfile --tag wind-energy-forecast-api:ci .
 
       - name: Run FastAPI Docker container
         run: docker run --detach --name wind-energy-forecast-api-ci --publish 8000:8000 wind-energy-forecast-api:ci
@@ -187,7 +198,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build frontend Docker image
-        run: docker build --file frontend/Dockerfile --tag wind-energy-forecast-frontend:ci frontend
+        run: docker build --build-arg SOURCE_SHA=${{ github.sha }} --file frontend/Dockerfile --tag wind-energy-forecast-frontend:ci frontend
 
   compose-validation:
     name: Docker Compose validation
@@ -485,6 +496,7 @@ jobs:
       - frontend-quality
       - terraform-format
       - terraform-validate
+      - tracked-artifact-safety
       - docker-build
       - frontend-docker-build
       - compose-validation
@@ -502,6 +514,7 @@ jobs:
           FRONTEND_RESULT: ${{ needs['frontend-quality'].result }}
           TERRAFORM_FORMAT_RESULT: ${{ needs['terraform-format'].result }}
           TERRAFORM_VALIDATE_RESULT: ${{ needs['terraform-validate'].result }}
+          TRACKED_ARTIFACT_RESULT: ${{ needs['tracked-artifact-safety'].result }}
           DOCKER_RESULT: ${{ needs['docker-build'].result }}
           FRONTEND_DOCKER_RESULT: ${{ needs['frontend-docker-build'].result }}
           COMPOSE_RESULT: ${{ needs['compose-validation'].result }}
@@ -517,6 +530,7 @@ jobs:
             "$FRONTEND_RESULT"
             "$TERRAFORM_FORMAT_RESULT"
             "$TERRAFORM_VALIDATE_RESULT"
+            "$TRACKED_ARTIFACT_RESULT"
             "$DOCKER_RESULT"
             "$FRONTEND_DOCKER_RESULT"
             "$COMPOSE_RESULT"

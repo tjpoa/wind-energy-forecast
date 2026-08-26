@@ -11,10 +11,11 @@ permissions:
   id-token: write
 
 concurrency:
-  group: production-release
+  group: azure-production-mutation
   cancel-in-progress: false
 
 env:
+  PRODUCTION_RELEASE_ENABLED: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
   SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
   AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'wind-energy-forecast-demo' }}
   AZURE_ACR_NAME: ${{ vars.AZURE_ACR_NAME }}
@@ -39,23 +40,11 @@ jobs:
         with:
           ref: ${{ env.SOURCE_SHA }}
 
-      - name: Validate publisher configuration
-        shell: bash
-        run: |
-          set -euo pipefail
-          required=(
-            AZURE_ACR_NAME
-            AZURE_RESOURCE_GROUP
-            AZURE_TENANT_ID
-            AZURE_SUBSCRIPTION_ID
-            AZURE_PUBLISHER_CLIENT_ID
-          )
-          for variable_name in "${required[@]}"; do
-            if [[ -z "${!variable_name:-}" ]]; then
-              echo "::error::Required release configuration is missing: ${variable_name}" >&2
-              exit 1
-            fi
-          done
+      - name: Run protected Azure preflight
+        uses: ./.github/actions/azure-preflight
+        with:
+          mode: release-publish
+          release-enabled: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
 
       - name: Sign in to Azure with publisher OIDC
         uses: azure/login@v2
@@ -81,10 +70,12 @@ jobs:
           frontend_tag="${acr_login_server}/wind-forecast-frontend:${release_tag}"
 
           docker build \
+            --build-arg SOURCE_SHA="$SOURCE_SHA" \
             --file Dockerfile \
             --tag "$api_tag" \
             .
           docker build \
+            --build-arg SOURCE_SHA="$SOURCE_SHA" \
             --file frontend/Dockerfile \
             --build-arg VITE_API_BASE_URL=/backend \
             --build-arg NGINX_CONFIG=nginx.azure.conf \
@@ -185,42 +176,55 @@ jobs:
             echo "The published frontend image did not resolve to a digest." >&2
             exit 1
           fi
+          api_source_label="$(docker image inspect "$API_TAG" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+          frontend_source_label="$(docker image inspect "$FRONTEND_TAG" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+          if [[ "$api_source_label" != "$SOURCE_SHA" || "$frontend_source_label" != "$SOURCE_SHA" ]]; then
+            echo "Published image OCI revision labels do not match the CI source SHA." >&2
+            exit 1
+          fi
 
           echo "api_image=$api_image" >> "$GITHUB_OUTPUT"
           echo "frontend_image=$frontend_image" >> "$GITHUB_OUTPUT"
+          echo "api_source_label=$api_source_label" >> "$GITHUB_OUTPUT"
+          echo "frontend_source_label=$frontend_source_label" >> "$GITHUB_OUTPUT"
 
       - name: Create release manifest
         env:
           API_IMAGE: ${{ steps.publish.outputs.api_image }}
           FRONTEND_IMAGE: ${{ steps.publish.outputs.frontend_image }}
+          API_SOURCE_LABEL: ${{ steps.publish.outputs.api_source_label }}
+          FRONTEND_SOURCE_LABEL: ${{ steps.publish.outputs.frontend_source_label }}
           CI_RUN_ID: ${{ github.event.workflow_run.id }}
           RELEASE_ATTEMPT: ${{ github.run_attempt }}
         shell: bash
         run: |
           set -euo pipefail
           jq -n \
-            --arg schema_version "1" \
+            --arg schema_version "wind_forecast.production_release_manifest.v2" \
             --arg source_sha "$SOURCE_SHA" \
             --arg ci_run_id "$CI_RUN_ID" \
             --arg release_run_id "$GITHUB_RUN_ID" \
             --arg release_attempt "$RELEASE_ATTEMPT" \
             --arg api_image "$API_IMAGE" \
             --arg frontend_image "$FRONTEND_IMAGE" \
+            --arg api_source_label "$API_SOURCE_LABEL" \
+            --arg frontend_source_label "$FRONTEND_SOURCE_LABEL" \
             '{
               schema_version: $schema_version,
+              manifest_type: "release",
               source_sha: $source_sha,
               ci_run_id: $ci_run_id,
               release_run_id: $release_run_id,
               release_attempt: $release_attempt,
               api_image: $api_image,
-              frontend_image: $frontend_image
+              frontend_image: $frontend_image,
+              api_source_label: $api_source_label,
+              frontend_source_label: $frontend_source_label
             }' > release-manifest.json
-          jq -e \
-            --arg expected_sha "$SOURCE_SHA" \
-            '.source_sha == $expected_sha and
-             (.api_image | test("@sha256:[0-9a-f]{64}$")) and
-             (.frontend_image | test("@sha256:[0-9a-f]{64}$"))' \
-            release-manifest.json >/dev/null
+          python scripts/validate_azure_workflow.py manifest \
+            --path release-manifest.json \
+            --expected-source-sha "$SOURCE_SHA" \
+            --expected-release-run-id "$GITHUB_RUN_ID"
 
       - name: Upload release manifest
         uses: actions/upload-artifact@v4
@@ -228,7 +232,7 @@ jobs:
           name: release-manifest
           path: release-manifest.json
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
 
       - name: Publish release summary
         env:
@@ -273,44 +277,25 @@ jobs:
         with:
           ref: ${{ env.SOURCE_SHA }}
 
+      - name: Run protected Azure preflight
+        uses: ./.github/actions/azure-preflight
+        with:
+          mode: release-plan
+          release-enabled: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
+
       - name: Download release manifest
         uses: actions/download-artifact@v4
         with:
           name: release-manifest
 
-      - name: Validate planning configuration
-        shell: bash
-        run: |
-          set -euo pipefail
-          required=(
-            AZURE_ACR_NAME
-            AZURE_RESOURCE_GROUP
-            AZURE_TENANT_ID
-            AZURE_SUBSCRIPTION_ID
-            TFSTATE_RESOURCE_GROUP_NAME
-            TFSTATE_STORAGE_ACCOUNT_NAME
-            ARM_CLIENT_ID
-            TF_VAR_budget_alert_email
-            TF_VAR_budget_start_date
-            TF_VAR_budget_end_date
-          )
-          for variable_name in "${required[@]}"; do
-            if [[ -z "${!variable_name:-}" ]]; then
-              echo "::error::Required Terraform release configuration is missing: ${variable_name}" >&2
-              exit 1
-            fi
-          done
-
       - name: Load immutable image references
         shell: bash
         run: |
           set -euo pipefail
-          jq -e \
-            --arg expected_sha "$SOURCE_SHA" \
-            '.source_sha == $expected_sha and
-             (.api_image | test("@sha256:[0-9a-f]{64}$")) and
-             (.frontend_image | test("@sha256:[0-9a-f]{64}$"))' \
-            release-manifest.json >/dev/null
+          python scripts/validate_azure_workflow.py manifest \
+            --path release-manifest.json \
+            --expected-source-sha "$SOURCE_SHA" \
+            --expected-release-run-id "$GITHUB_RUN_ID"
           echo "TF_VAR_api_image=$(jq -r '.api_image' release-manifest.json)" >> "$GITHUB_ENV"
           echo "TF_VAR_frontend_image=$(jq -r '.frontend_image' release-manifest.json)" >> "$GITHUB_ENV"
 
@@ -334,6 +319,10 @@ jobs:
       - name: Generate Terraform plan
         shell: bash
         run: terraform -chdir=infra/azure/terraform/production plan -input=false -lock-timeout=5m -out=production.tfplan
+
+      - name: Reject destructive or replacement changes before approval
+        shell: bash
+        run: terraform -chdir=infra/azure/terraform/production show -json production.tfplan | python scripts/validate_azure_workflow.py plan --stdin
 
       - name: Publish a non-sensitive plan summary
         shell: bash
@@ -382,39 +371,25 @@ jobs:
         with:
           ref: ${{ env.SOURCE_SHA }}
 
+      - name: Run protected Azure preflight
+        uses: ./.github/actions/azure-preflight
+        with:
+          mode: release-deploy
+          release-enabled: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
+
       - name: Download release manifest
         uses: actions/download-artifact@v4
         with:
           name: release-manifest
 
-      - name: Validate deployment configuration and manifest
+      - name: Validate the registered release manifest
         shell: bash
         run: |
           set -euo pipefail
-          required=(
-            AZURE_ACR_NAME
-            AZURE_RESOURCE_GROUP
-            AZURE_TENANT_ID
-            AZURE_SUBSCRIPTION_ID
-            TFSTATE_RESOURCE_GROUP_NAME
-            TFSTATE_STORAGE_ACCOUNT_NAME
-            ARM_CLIENT_ID
-            TF_VAR_budget_alert_email
-            TF_VAR_budget_start_date
-            TF_VAR_budget_end_date
-          )
-          for variable_name in "${required[@]}"; do
-            if [[ -z "${!variable_name:-}" ]]; then
-              echo "::error::Required Terraform release configuration is missing: ${variable_name}" >&2
-              exit 1
-            fi
-          done
-          jq -e \
-            --arg expected_sha "$SOURCE_SHA" \
-            '.source_sha == $expected_sha and
-             (.api_image | test("@sha256:[0-9a-f]{64}$")) and
-             (.frontend_image | test("@sha256:[0-9a-f]{64}$"))' \
-            release-manifest.json >/dev/null
+          python scripts/validate_azure_workflow.py manifest \
+            --path release-manifest.json \
+            --expected-source-sha "$SOURCE_SHA" \
+            --expected-release-run-id "$GITHUB_RUN_ID"
 
       - name: Load immutable image references
         shell: bash
@@ -451,18 +426,9 @@ jobs:
         shell: bash
         run: terraform -chdir=infra/azure/terraform/production plan -input=false -lock-timeout=5m -out=production.tfplan
 
-      - name: Reject destructive changes
+      - name: Reject destructive or replacement changes after approval
         shell: bash
-        run: |
-          set -euo pipefail
-          destructive_count="$(terraform -chdir=infra/azure/terraform/production show -json production.tfplan | \
-            jq '[.resource_changes[]? | select((.change.actions // []) | index("delete"))] | length')"
-          if [[ "$destructive_count" != "0" ]]; then
-            echo "The protected production release contains ${destructive_count} destructive resource change(s)." >&2
-            terraform -chdir=infra/azure/terraform/production show -json production.tfplan | \
-              jq '[.resource_changes[]? | select((.change.actions // []) | index("delete")) | {address, actions: .change.actions}]' >&2
-            exit 1
-          fi
+        run: terraform -chdir=infra/azure/terraform/production show -json production.tfplan | python scripts/validate_azure_workflow.py plan --stdin
 
       - name: Apply the exact reviewed-run plan
         shell: bash
@@ -474,6 +440,29 @@ jobs:
           set -euo pipefail
           echo "API_REVISION_NAME=$(terraform -chdir=infra/azure/terraform/production output -raw api_revision_name)" >> "$GITHUB_ENV"
           echo "FRONTEND_REVISION_NAME=$(terraform -chdir=infra/azure/terraform/production output -raw frontend_revision_name)" >> "$GITHUB_ENV"
+
+      - name: Verify active image digests
+        shell: bash
+        run: |
+          set -euo pipefail
+          api_active_image="$(az containerapp show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name wind-forecast-api \
+            --query 'properties.template.containers[0].image' \
+            --output tsv)"
+          frontend_active_image="$(az containerapp show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name wind-forecast-web \
+            --query 'properties.template.containers[0].image' \
+            --output tsv)"
+          jq -n \
+            --arg api_image "$api_active_image" \
+            --arg frontend_image "$frontend_active_image" \
+            '{api_image: $api_image, frontend_image: $frontend_image}' > active-images.json
+          python scripts/validate_azure_workflow.py active-images \
+            --manifest release-manifest.json \
+            --observed active-images.json \
+            --kind release
 
       - name: Smoke test public dashboard and allow-listed proxy
         shell: bash
@@ -574,6 +563,40 @@ jobs:
               exit "$plan_exit"
               ;;
           esac
+
+      - name: Create release receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -n \
+            '{public_dashboard: true,
+              proxy_health: true,
+              performance_endpoint: true,
+              monitoring_endpoint: true,
+              prediction_blocked: true,
+              validation_job: true}' > smoke-tests.json
+          python scripts/create_azure_receipt.py receipt \
+            --operation release \
+            --manifest release-manifest.json \
+            --active-images active-images.json \
+            --smoke-tests smoke-tests.json \
+            --api-revision "$API_REVISION_NAME" \
+            --frontend-revision "$FRONTEND_REVISION_NAME" \
+            --terraform-post-plan-exit-code 0 \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --output release-receipt.json
+
+      - name: Upload release receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-release-receipt-${{ github.run_id }}
+          path: |
+            release-manifest.json
+            release-receipt.json
+            active-images.json
+            smoke-tests.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Publish deployment summary
         shell: bash
