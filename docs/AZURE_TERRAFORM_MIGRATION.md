@@ -27,6 +27,8 @@ same resource group and registry names used by the protected workflows.
    using the prior image digests and producing the same smoke evidence.
 5. A final read-only comparison confirming that the rollback-capable Terraform
    state and the deployed Container Apps contract still match the inventory.
+6. A successful post-deployment and post-rollback Terraform plan with detailed
+   exit code `0`, recorded in the protected workflow summaries.
 
 The comparison must explicitly record any intentional difference. A clean
 Terraform plan alone is not sufficient evidence when the state has not first

@@ -1,10 +1,10 @@
 # Terraform Azure deployment foundation
 
-This directory is the Terraform source for the future Azure Container Apps
-deployment path. It is intentionally introduced alongside the existing Bicep
-templates. The current Bicep workflow remains the active deployment path until
-the Terraform resources have been imported or provisioned, compared, and
-accepted in a later increment.
+This directory is the Terraform source for the protected Azure Container Apps
+deployment path. It was introduced alongside the existing Bicep templates;
+the Bicep workflow remains a legacy recovery path until the Terraform
+resources have been imported or provisioned, compared, and accepted against
+the target subscription.
 
 ## Layout
 
@@ -25,9 +25,12 @@ through `-backend-config` values supplied at initialization time.
 
 The repository controls are now configured as follows:
 
-- `master` requires a pull request, one approval, resolved conversations,
-  linear history, and the `CI gate` check. Administrator bypass and force
-  pushes are disabled.
+- `master` requires a pull request, resolved conversations, linear history,
+  and the `CI gate` check. The required approval count is currently zero
+  because this repository has one maintainer and GitHub does not allow the
+  pull-request author to approve their own change. Administrator bypass and
+  force pushes are disabled. Restore one required approval when an
+  independent maintainer is available.
 - `production` requires a manual review, accepts deployments only from
   protected branches, and disallows administrator bypass.
 - The current repository owner is the environment reviewer and self-review is
@@ -52,7 +55,8 @@ checks out `github.event.workflow_run.head_sha`, and then:
 4. runs a read-only Terraform plan and publishes only address/action metadata;
 5. waits for the protected `production` environment approval;
 6. re-plans after approval, rejects destructive changes, applies that exact
-   plan, and runs the public dashboard, proxy, and validation-Job smoke tests.
+   plan, runs the public dashboard and validation-Job smoke tests, and fails
+   closed if a post-deployment Terraform plan reports drift.
 
 The binary Terraform plan is deliberately not uploaded because it can contain
 sensitive state. The post-approval job applies the exact plan it generated
@@ -93,7 +97,8 @@ the expected repositories, and a full `@sha256:<64 hexadecimal characters>`
 digest. The workflow records the request manifest, creates a non-sensitive
 Terraform plan summary, waits for the protected `production` approval, rejects
 destructive changes, applies the exact post-approval plan, and repeats the
-public dashboard, proxy, and validation-Job smoke tests.
+public dashboard, proxy, and validation-Job smoke tests, followed by a
+fail-closed post-rollback drift check.
 
 The rollback workflow never rebuilds or pushes an image. A rollback is a new
 Container Apps revision selected by the prior immutable digests. Keep the
