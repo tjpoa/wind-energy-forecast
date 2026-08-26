@@ -48,7 +48,8 @@ releases use [`release-production.yml`](../.github/workflows/release-production.
 rollbacks use [`rollback-production.yml`](../.github/workflows/rollback-production.yml)
 with the previous API and frontend digests. Both workflows plan, require the
 `production` approval, apply immutable image references, and run the public and
-validation-Job smoke checks.
+validation-Job smoke checks. Each protected apply is followed by a Terraform
+plan with detailed exit codes; any post-deployment drift fails the workflow.
 
 The Bicep path cannot be retired until the inventory, Terraform parity,
 promotion, and rollback gates in
