@@ -110,7 +110,7 @@ jobs:
             echo "- Source SHA: \`$(jq -r '.source_sha' release-manifest.json)\`"
             echo "- API image: \`$(jq -r '.api_image' release-manifest.json)\`"
             echo "- Frontend image: \`$(jq -r '.frontend_image' release-manifest.json)\`"
-            echo "- The protected \`production\` approval is still required."
+            echo "- The protected \`production\` maintainer confirmation is still required."
           } >> "$GITHUB_STEP_SUMMARY"
 
   plan-rollback:
@@ -183,7 +183,7 @@ jobs:
         shell: bash
         run: terraform -chdir=infra/azure/terraform/production plan -input=false -lock-timeout=5m -out=rollback.tfplan
 
-      - name: Reject destructive or replacement changes before approval
+      - name: Reject destructive or replacement changes before production confirmation
         shell: bash
         run: terraform -chdir=infra/azure/terraform/production show -json rollback.tfplan | python scripts/validate_azure_workflow.py plan --stdin
 
@@ -192,7 +192,7 @@ jobs:
         run: |
           set -euo pipefail
           {
-            echo "## Terraform rollback plan (pre-approval)"
+            echo "## Terraform rollback plan (pre-confirmation)"
             echo
             echo "- API image: \`$(jq -r '.api_image' rollback-manifest.json)\`"
             echo "- Frontend image: \`$(jq -r '.frontend_image' rollback-manifest.json)\`"
@@ -284,7 +284,7 @@ jobs:
         shell: bash
         run: terraform -chdir=infra/azure/terraform/production plan -input=false -lock-timeout=5m -out=rollback.tfplan
 
-      - name: Reject destructive or replacement changes after approval
+      - name: Reject destructive or replacement changes after production confirmation
         shell: bash
         run: terraform -chdir=infra/azure/terraform/production show -json rollback.tfplan | python scripts/validate_azure_workflow.py plan --stdin
 
@@ -469,5 +469,5 @@ jobs:
             echo "- Frontend image: \`$(jq -r '.frontend_image' rollback-manifest.json)\`"
             echo "- API revision: \`${API_REVISION_NAME}\`"
             echo "- Frontend revision: \`${FRONTEND_REVISION_NAME}\`"
-            echo "- Terraform rollback plan: applied after the protected \`production\` approval"
+            echo "- Terraform rollback plan: applied after the protected \`production\` maintainer confirmation"
           } >> "$GITHUB_STEP_SUMMARY"

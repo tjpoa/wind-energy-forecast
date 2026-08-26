@@ -90,6 +90,11 @@ def test_receipt_requires_passed_smoke_and_drift_checks() -> None:
     )
     assert receipt["release_run_id"] == "200"
     assert receipt["approval"]["gate_passed"] is True
+    assert receipt["approval"]["mode"] == "maintainer_confirmation"
+    assert (
+        receipt["approval"]["independent_human_review"]
+        == "not_applicable_single_maintainer"
+    )
     with pytest.raises(WorkflowPolicyError):
         build_receipt(
             operation="release",

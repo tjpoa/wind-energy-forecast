@@ -6,6 +6,11 @@ a daily scheduled Container Apps Job that verifies the immutable `demo/v1`
 bundle. The API is not publicly addressable; Nginx exposes only the dashboard's
 read-only health, performance, and monitoring paths.
 
+GitHub branch and deployment controls follow the single-maintainer profile in
+[`GITHUB_GOVERNANCE.md`](GITHUB_GOVERNANCE.md). The `production` environment
+therefore records a manual maintainer confirmation, not an independent human
+approval.
+
 ## Runtime contract
 
 - Region: West Europe.
@@ -51,17 +56,18 @@ rollbacks use [`rollback-production.yml`](../.github/workflows/rollback-producti
 with a registered `release_run_id`, which downloads the exact prior release
 manifest instead of accepting arbitrary image digests. The production root reads the
 foundation outputs from `foundation.tfstate`. Both workflows plan, require
-the `production` approval, apply immutable image references, and run the
-public and validation-Job smoke checks. Each protected apply is followed by a
-Terraform plan with detailed exit codes; any post-deployment drift fails the
-workflow.
+the `production` maintainer confirmation, apply immutable image references,
+and run the public and validation-Job smoke checks. Each protected apply is
+followed by a Terraform plan with detailed exit codes; any post-deployment
+drift fails the workflow.
 
 All Azure mutation workflows share one concurrency group. A central preflight
 requires `PRODUCTION_RELEASE_ENABLED=true` and the mode-specific OIDC/state
 configuration before Azure login or image publication. Terraform plans reject
-deletes and replacements both before and after the protected approval. Release
+deletes and replacements both before and after the protected production
+confirmation. Release
 and rollback receipts record the source/release run, image digests, active
-revisions, approval gate, smoke tests, and drift result.
+revisions, approval mode, smoke tests, and drift result.
 
 The Bicep path cannot be retired until the inventory, Terraform parity,
 promotion, and rollback gates in

@@ -8,6 +8,7 @@ This folder keeps project documentation organized by purpose and roadmap phase.
 | --- | --- |
 | [ML Engineering Roadmap](ML_ENGINEERING_ROADMAP.md) | Source-of-truth roadmap for the phased Data/ML Engineering evolution. |
 | [Project Status](PROJECT_STATUS.md) | Current portfolio-facing status, capabilities, limitations, and next steps. |
+| [GitHub Governance](GITHUB_GOVERNANCE.md) | Single-maintainer branch, pull-request, deployment, and evidence controls. |
 
 ## Portfolio Guide
 

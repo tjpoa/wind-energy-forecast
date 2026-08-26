@@ -8,9 +8,10 @@ limited to configuration, static validation, and not-yet-enabled promotion and
 rollback paths. They do not replace Bicep or authorize Azure resource changes
 yet.
 
-Increment 2 configured the GitHub `production` environment with manual review
-and protected-branch deployment policy, and protected `master` with the
-aggregate `CI gate`. The current Bicep workflow still targets `azure-demo`;
+Increment 2 configured the GitHub `production` environment with manual
+maintainer confirmation and protected-branch deployment policy, and protected
+`master` with the aggregate `CI gate`. The current Bicep workflow still targets
+`azure-demo`;
 the production environment will be consumed by the later Terraform release
 workflow. Azure client identifiers and OIDC credentials have not been added
 because no Azure-authenticated CLI is available in the current workspace.
@@ -18,9 +19,9 @@ because no Azure-authenticated CLI is available in the current workspace.
 The Terraform promotion path is intentionally separate from this legacy
 workflow. It waits for successful CI on `master`, publishes one immutable image
 pair, plans against the Terraform remote state, requires the protected
-`production` approval, and applies a fresh exact plan followed by the same
-public and validation-Job smoke checks. It cannot be enabled until the
-Terraform bootstrap outputs, federated credentials, role assignments, and
+`production` maintainer confirmation, and applies a fresh exact plan followed
+by the same public and validation-Job smoke checks. It cannot be enabled until
+the Terraform bootstrap outputs, federated credentials, role assignments, and
 resource inventory have been reviewed.
 
 The fourth increment adds
@@ -53,7 +54,8 @@ the monthly budget.
    `AZURE_PRINCIPAL_OBJECT_ID`, and `AZURE_BUDGET_ALERT_EMAIL` to the protected
    GitHub environment. No client secret or registry admin password is used.
 
-The workflow is manual and approval-protected. The `bootstrap_foundation` input
+The workflow is manual and maintainer-confirmation protected. The
+`bootstrap_foundation` input
 is disabled by default after the one-time foundation deployment. It builds images tagged with
 the commit SHA, resolves their registry digests, and deploys only those
 immutable digests. The frontend image is built with `VITE_API_BASE_URL=/backend`
