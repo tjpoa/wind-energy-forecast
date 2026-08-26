@@ -9,6 +9,11 @@ locals {
   github_oidc_audience = ["api://AzureADTokenExchange"]
   branch_subject       = "repo:${var.github_repository}:ref:refs/heads/${var.github_branch}"
   environment_subject  = "repo:${var.github_repository}:environment:${var.github_environment}"
+
+  # These built-in role IDs match the existing ACR assignments in
+  # infra/azure/foundation.bicep and constrain the deployer's RBAC delegation.
+  acr_pull_role_definition_guid = "7f951dda-4ed3-4680-a7ca-43fe172d538d"
+  acr_push_role_definition_guid = "8311e382-0749-4cb8-b61a-304f252e45ec"
 }
 
 resource "azurerm_resource_group" "state" {
@@ -107,6 +112,10 @@ data "azurerm_role_definition" "contributor" {
   name = "Contributor"
 }
 
+data "azurerm_role_definition" "rbac_administrator" {
+  name = "Role Based Access Control Administrator"
+}
+
 resource "azurerm_role_assignment" "planner_state_reader" {
   scope              = azurerm_storage_account.state.id
   role_definition_id = data.azurerm_role_definition.storage_blob_data_contributor.role_definition_id
@@ -128,9 +137,49 @@ resource "azurerm_role_assignment" "planner_workload_reader" {
   principal_type     = "ServicePrincipal"
 }
 
+resource "azurerm_role_assignment" "publisher_workload_reader" {
+  scope              = azurerm_resource_group.workload.id
+  role_definition_id = data.azurerm_role_definition.reader.role_definition_id
+  principal_id       = azurerm_user_assigned_identity.publisher.principal_id
+  principal_type     = "ServicePrincipal"
+}
+
 resource "azurerm_role_assignment" "deployer_workload_contributor" {
   scope              = azurerm_resource_group.workload.id
   role_definition_id = data.azurerm_role_definition.contributor.role_definition_id
   principal_id       = azurerm_user_assigned_identity.deployer.principal_id
   principal_type     = "ServicePrincipal"
+}
+
+resource "azurerm_role_assignment" "deployer_workload_rbac_administrator" {
+  scope              = azurerm_resource_group.workload.id
+  role_definition_id = data.azurerm_role_definition.rbac_administrator.role_definition_id
+  principal_id       = azurerm_user_assigned_identity.deployer.principal_id
+  principal_type     = "ServicePrincipal"
+  condition_version  = "2.0"
+  condition          = <<-EOT
+    (
+      (
+        !(ActionMatches{'Microsoft.Authorization/roleAssignments/write'})
+      )
+      OR
+      (
+        @Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {${local.acr_pull_role_definition_guid}, ${local.acr_push_role_definition_guid}}
+        AND
+        @Request[Microsoft.Authorization/roleAssignments:PrincipalType] ForAnyOfAnyValues:StringEqualsIgnoreCase {'ServicePrincipal'}
+      )
+    )
+    AND
+    (
+      (
+        !(ActionMatches{'Microsoft.Authorization/roleAssignments/delete'})
+      )
+      OR
+      (
+        @Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {${local.acr_pull_role_definition_guid}, ${local.acr_push_role_definition_guid}}
+        AND
+        @Resource[Microsoft.Authorization/roleAssignments:PrincipalType] ForAnyOfAnyValues:StringEqualsIgnoreCase {'ServicePrincipal'}
+      )
+    )
+  EOT
 }
