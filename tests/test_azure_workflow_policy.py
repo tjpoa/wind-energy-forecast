@@ -187,11 +187,11 @@ def test_bootstrap_limits_deployer_rbac_delegation_to_acr_data_roles() -> None:
     assignment = bootstrap[assignment_start:]
 
     assert "scope              = azurerm_resource_group.workload.id" in publisher
-    assert "data.azurerm_role_definition.reader.role_definition_id" in publisher
+    assert "role_definition_id = local.reader_role_id" in publisher
     assert "azurerm_user_assigned_identity.publisher.principal_id" in publisher
     assert 'name = "Role Based Access Control Administrator"' in bootstrap
     assert "scope              = azurerm_resource_group.workload.id" in assignment
-    assert "data.azurerm_role_definition.rbac_administrator" in assignment
+    assert "role_definition_id = local.rbac_administrator_role_id" in assignment
     assert "azurerm_user_assigned_identity.deployer.principal_id" in assignment
     assert 'condition_version  = "2.0"' in assignment
     assert "Microsoft.Authorization/roleAssignments/write" in assignment
@@ -205,6 +205,12 @@ def test_bootstrap_limits_deployer_rbac_delegation_to_acr_data_roles() -> None:
     ) == 2
     assert "7f951dda-4ed3-4680-a7ca-43fe172d538d" in bootstrap
     assert "8311e382-0749-4cb8-b61a-304f252e45ec" in bootstrap
+    assert "data.azurerm_client_config.current.subscription_id" in bootstrap
+    assert "basename(data.azurerm_role_definition.reader.role_definition_id)" in bootstrap
+    assert (
+        "basename(data.azurerm_role_definition.rbac_administrator.role_definition_id)"
+        in bootstrap
+    )
 
 
 def test_foundation_apply_fails_closed_on_any_post_apply_drift() -> None:

@@ -14,6 +14,14 @@ locals {
   # infra/azure/foundation.bicep and constrain the deployer's RBAC delegation.
   acr_pull_role_definition_guid = "7f951dda-4ed3-4680-a7ca-43fe172d538d"
   acr_push_role_definition_guid = "8311e382-0749-4cb8-b61a-304f252e45ec"
+
+  # Azure returns role definition IDs with a subscription-qualified resource
+  # path. Keep the same canonical form in Terraform state so imported and
+  # newly-created assignments do not appear as replacements.
+  storage_blob_data_contributor_role_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/${basename(data.azurerm_role_definition.storage_blob_data_contributor.role_definition_id)}"
+  reader_role_id                        = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/${basename(data.azurerm_role_definition.reader.role_definition_id)}"
+  contributor_role_id                   = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/${basename(data.azurerm_role_definition.contributor.role_definition_id)}"
+  rbac_administrator_role_id            = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/${basename(data.azurerm_role_definition.rbac_administrator.role_definition_id)}"
 }
 
 resource "azurerm_resource_group" "state" {
@@ -100,6 +108,8 @@ resource "azurerm_federated_identity_credential" "deployer" {
   subject                   = local.environment_subject
 }
 
+data "azurerm_client_config" "current" {}
+
 data "azurerm_role_definition" "storage_blob_data_contributor" {
   name = "Storage Blob Data Contributor"
 }
@@ -118,42 +128,42 @@ data "azurerm_role_definition" "rbac_administrator" {
 
 resource "azurerm_role_assignment" "planner_state_reader" {
   scope              = azurerm_storage_account.state.id
-  role_definition_id = data.azurerm_role_definition.storage_blob_data_contributor.role_definition_id
+  role_definition_id = local.storage_blob_data_contributor_role_id
   principal_id       = azurerm_user_assigned_identity.planner.principal_id
   principal_type     = "ServicePrincipal"
 }
 
 resource "azurerm_role_assignment" "deployer_state_contributor" {
   scope              = azurerm_storage_account.state.id
-  role_definition_id = data.azurerm_role_definition.storage_blob_data_contributor.role_definition_id
+  role_definition_id = local.storage_blob_data_contributor_role_id
   principal_id       = azurerm_user_assigned_identity.deployer.principal_id
   principal_type     = "ServicePrincipal"
 }
 
 resource "azurerm_role_assignment" "planner_workload_reader" {
   scope              = azurerm_resource_group.workload.id
-  role_definition_id = data.azurerm_role_definition.reader.role_definition_id
+  role_definition_id = local.reader_role_id
   principal_id       = azurerm_user_assigned_identity.planner.principal_id
   principal_type     = "ServicePrincipal"
 }
 
 resource "azurerm_role_assignment" "publisher_workload_reader" {
   scope              = azurerm_resource_group.workload.id
-  role_definition_id = data.azurerm_role_definition.reader.role_definition_id
+  role_definition_id = local.reader_role_id
   principal_id       = azurerm_user_assigned_identity.publisher.principal_id
   principal_type     = "ServicePrincipal"
 }
 
 resource "azurerm_role_assignment" "deployer_workload_contributor" {
   scope              = azurerm_resource_group.workload.id
-  role_definition_id = data.azurerm_role_definition.contributor.role_definition_id
+  role_definition_id = local.contributor_role_id
   principal_id       = azurerm_user_assigned_identity.deployer.principal_id
   principal_type     = "ServicePrincipal"
 }
 
 resource "azurerm_role_assignment" "deployer_workload_rbac_administrator" {
   scope              = azurerm_resource_group.workload.id
-  role_definition_id = data.azurerm_role_definition.rbac_administrator.role_definition_id
+  role_definition_id = local.rbac_administrator_role_id
   principal_id       = azurerm_user_assigned_identity.deployer.principal_id
   principal_type     = "ServicePrincipal"
   condition_version  = "2.0"
