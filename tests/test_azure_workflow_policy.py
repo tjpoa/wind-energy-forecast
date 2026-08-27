@@ -230,3 +230,12 @@ def test_foundation_apply_fails_closed_on_any_post_apply_drift() -> None:
     assert "drift detected; the workflow failed closed" in apply_job[drift_check:]
     assert "{address, actions: .change.actions}" in apply_job[drift_check:]
     assert "exit 1" in apply_job[drift_check:]
+
+
+def test_foundation_uses_subscription_qualified_acr_role_ids() -> None:
+    foundation = _repository_text("infra/azure/terraform/foundation/main.tf")
+    assert "role_definition_id = local.acr_pull_role_id" in foundation
+    assert "role_definition_id = local.acr_push_role_id" in foundation
+    assert "data.azurerm_client_config.current.subscription_id" in foundation
+    assert "basename(data.azurerm_role_definition.acr_pull.role_definition_id)" in foundation
+    assert "basename(data.azurerm_role_definition.acr_push.role_definition_id)" in foundation
