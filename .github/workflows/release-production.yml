@@ -261,6 +261,7 @@ jobs:
       ARM_USE_OIDC: "true"
       ARM_USE_AZUREAD: "true"
       ARM_CLIENT_ID: ${{ secrets.AZURE_PLANNER_CLIENT_ID }}
+      AZURE_PLANNER_CLIENT_ID: ${{ secrets.AZURE_PLANNER_CLIENT_ID }}
       ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -364,6 +365,7 @@ jobs:
       ARM_USE_OIDC: "true"
       ARM_USE_AZUREAD: "true"
       ARM_CLIENT_ID: ${{ secrets.AZURE_DEPLOYER_CLIENT_ID }}
+      AZURE_DEPLOYER_CLIENT_ID: ${{ secrets.AZURE_DEPLOYER_CLIENT_ID }}
       TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
       TF_VAR_tfstate_resource_group_name: ${{ vars.TFSTATE_RESOURCE_GROUP_NAME }}
