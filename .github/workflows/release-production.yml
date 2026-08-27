@@ -274,6 +274,9 @@ jobs:
       TF_VAR_budget_alert_email: ${{ secrets.AZURE_BUDGET_ALERT_EMAIL }}
       TF_VAR_budget_start_date: ${{ vars.AZURE_BUDGET_START_DATE }}
       TF_VAR_budget_end_date: ${{ vars.AZURE_BUDGET_END_DATE }}
+      AZURE_BUDGET_ALERT_EMAIL: ${{ secrets.AZURE_BUDGET_ALERT_EMAIL }}
+      AZURE_BUDGET_START_DATE: ${{ vars.AZURE_BUDGET_START_DATE }}
+      AZURE_BUDGET_END_DATE: ${{ vars.AZURE_BUDGET_END_DATE }}
 
     steps:
       - name: Check out the exact CI commit
@@ -376,6 +379,9 @@ jobs:
       TF_VAR_budget_alert_email: ${{ secrets.AZURE_BUDGET_ALERT_EMAIL }}
       TF_VAR_budget_start_date: ${{ vars.AZURE_BUDGET_START_DATE }}
       TF_VAR_budget_end_date: ${{ vars.AZURE_BUDGET_END_DATE }}
+      AZURE_BUDGET_ALERT_EMAIL: ${{ secrets.AZURE_BUDGET_ALERT_EMAIL }}
+      AZURE_BUDGET_START_DATE: ${{ vars.AZURE_BUDGET_START_DATE }}
+      AZURE_BUDGET_END_DATE: ${{ vars.AZURE_BUDGET_END_DATE }}
 
     steps:
       - name: Check out the exact CI commit

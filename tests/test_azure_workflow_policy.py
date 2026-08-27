@@ -174,6 +174,30 @@ def test_production_plan_uses_explicit_planner_oidc_before_backend_init() -> Non
     )
 
 
+def test_protected_production_jobs_expose_budget_configuration_to_preflight() -> None:
+    workflow = _repository_text(".github/workflows/release-production.yml")
+
+    for job_name, next_job in (
+        ("  terraform-plan:", "\n  deploy-production:"),
+        ("  deploy-production:", None),
+    ):
+        job_start = workflow.index(job_name)
+        job_end = workflow.index(next_job, job_start) if next_job else len(workflow)
+        job = workflow[job_start:job_end]
+        assert (
+            "      AZURE_BUDGET_ALERT_EMAIL: ${{ secrets.AZURE_BUDGET_ALERT_EMAIL }}"
+            in job
+        )
+        assert (
+            "      AZURE_BUDGET_START_DATE: ${{ vars.AZURE_BUDGET_START_DATE }}"
+            in job
+        )
+        assert (
+            "      AZURE_BUDGET_END_DATE: ${{ vars.AZURE_BUDGET_END_DATE }}"
+            in job
+        )
+
+
 def test_release_frontend_smoke_resolves_azure_upstream_locally() -> None:
     workflow = _repository_text(".github/workflows/release-production.yml")
     smoke_start = workflow.index(
