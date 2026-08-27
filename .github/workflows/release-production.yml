@@ -129,6 +129,7 @@ jobs:
           set -euo pipefail
           docker run --detach \
             --name "$FRONTEND_SMOKE_CONTAINER" \
+            --add-host wind-forecast-api:host-gateway \
             --publish 8080:80 \
             "$FRONTEND_TAG"
           for attempt in $(seq 1 30); do
