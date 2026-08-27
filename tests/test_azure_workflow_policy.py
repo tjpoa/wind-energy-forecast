@@ -174,6 +174,19 @@ def test_production_plan_uses_explicit_planner_oidc_before_backend_init() -> Non
     )
 
 
+def test_release_frontend_smoke_resolves_azure_upstream_locally() -> None:
+    workflow = _repository_text(".github/workflows/release-production.yml")
+    smoke_start = workflow.index(
+        "      - name: Smoke test the exact frontend image before publication"
+    )
+    smoke_end = workflow.index(
+        "      - name: Show frontend smoke logs on failure", smoke_start
+    )
+    smoke = workflow[smoke_start:smoke_end]
+
+    assert "--add-host wind-forecast-api:host-gateway" in smoke
+
+
 def test_bootstrap_limits_deployer_rbac_delegation_to_acr_data_roles() -> None:
     bootstrap = _repository_text("infra/azure/terraform/bootstrap/main.tf")
     publisher_start = bootstrap.index(
