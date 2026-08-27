@@ -37,6 +37,7 @@ jobs:
       ARM_USE_OIDC: "true"
       ARM_USE_AZUREAD: "true"
       ARM_CLIENT_ID: ${{ secrets.AZURE_PLANNER_CLIENT_ID }}
+      AZURE_PLANNER_CLIENT_ID: ${{ secrets.AZURE_PLANNER_CLIENT_ID }}
 
     steps:
       - name: Check out the protected master commit
@@ -104,6 +105,7 @@ jobs:
       ARM_USE_OIDC: "true"
       ARM_USE_AZUREAD: "true"
       ARM_CLIENT_ID: ${{ secrets.AZURE_DEPLOYER_CLIENT_ID }}
+      AZURE_DEPLOYER_CLIENT_ID: ${{ secrets.AZURE_DEPLOYER_CLIENT_ID }}
 
     steps:
       - name: Check out the protected master commit
