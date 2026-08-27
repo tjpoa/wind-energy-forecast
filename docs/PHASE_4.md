@@ -311,3 +311,8 @@ reproduction.
 
 This stage does not replace `/predict`, modify v1 artifacts, register a model,
 or promote a model automatically.
+
+The separately versioned v2 scaler fit is documented in
+[`PHASE_2_V2_SCALER_ACCEPTANCE.md`](PHASE_2_V2_SCALER_ACCEPTANCE.md). It is
+prepared for a future ANN path and is not consumed by this tree-based
+reference model.
