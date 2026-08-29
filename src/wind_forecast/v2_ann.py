@@ -604,6 +604,11 @@ def _load_scaler_bundle(
         raise V2ANNError("Versioned scaler feature order differs from the dataset.")
     if manifest.get("feature_count") != len(feature_names):
         raise V2ANNError("Versioned scaler feature count is inconsistent.")
+    fit_end = manifest.get("fit_end")
+    if fit_end is not None and pd.Timestamp(fit_end) >= pd.Timestamp(DEFAULT_TEST_START):
+        raise V2ANNError("Versioned scalers must exclude the sealed ANN test period.")
+    if manifest.get("v1_artifacts_untouched") is False:
+        raise V2ANNError("Versioned scaler manifest reports modified v1 artifacts.")
     transformations = manifest.get("target_transformations") or {}
     if transformations.get("original") != "identity" or transformations.get("log") != "log1p":
         raise V2ANNError("Versioned scaler target transformations are incompatible.")
