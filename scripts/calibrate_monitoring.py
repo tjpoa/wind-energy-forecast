@@ -32,6 +32,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=Path,
         help="Accepted sealed retraining backtest to calibrate independently.",
     )
+    subject.add_argument(
+        "--challenger-candidate",
+        type=Path,
+        help="Accepted sealed ANN challenger backtest to calibrate independently.",
+    )
     parser.add_argument(
         "--policy",
         type=Path,
@@ -56,6 +61,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             output_root=args.output_root,
             backtest_stride_days=args.backtest_stride_days,
             retraining_candidate=args.retraining_candidate,
+            challenger_candidate=args.challenger_candidate,
         )
     )
     print(json.dumps(result.summary(), indent=2, sort_keys=True))

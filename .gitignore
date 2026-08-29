@@ -49,6 +49,7 @@ data/processed/v2/**
 !data/processed/v2/ml_features/.gitkeep
 data/pilot/
 outputs/training/
+outputs/backtests/
 
 # Terraform local plugins, state, plans, and machine-specific overrides.
 .terraform/

@@ -29,6 +29,7 @@ This folder keeps project documentation organized by purpose and roadmap phase.
 | 1 | [PHASE_1.md](PHASE_1.md) | Modularization closure summary and compatibility notes. |
 | 2 | [PHASE_2.md](PHASE_2.md) | Data-source assessment, v2 data contracts, REN/ERA5-Land backfill records, and acceptance checks. |
 | 4 | [PHASE_4.md](PHASE_4.md) | Baseline training CLI, model card, data card, and local experiment-tracking context. |
+| 4 (ANN v2) | [PHASE_4_V2_ANN_CANDIDATE.md](PHASE_4_V2_ANN_CANDIDATE.md) | Governed scaled ANN challenger, sealed backtest, candidate-only Registry path, and promotion/Azure boundaries. |
 | 5 | [PHASE_5.md](PHASE_5.md) | FastAPI prediction, historical evidence, and local operational-query API documentation. |
 | 8 | [PHASE_8.md](PHASE_8.md) | Transactional, idempotent v2 dataset updates, revision policy, observability, and recovery. |
 | 9 | [PHASE_9.md](PHASE_9.md) | Delayed historical batch contract, immutable evidence, calibrated drift/performance reports, and local alerts. |
