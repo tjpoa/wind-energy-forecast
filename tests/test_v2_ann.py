@@ -102,6 +102,7 @@ def test_ann_candidate_seals_scaled_bundle_and_reloads(tmp_path: Path) -> None:
     assert manifest["schema_version"] == ANN_MODEL_MANIFEST_SCHEMA
     assert manifest["artifact_type"] == "keras_scaled_v2"
     assert manifest["scaler_required"] is True
+    assert manifest["parameters"]["output_activation"] == "softplus"
     predictor = load_v2_ann_bundle(result.output_dir)
     reloaded = predictor.predict(frame[["Feature_A", "Wind_Production_Lag1"]])
     expected = pd.read_csv(result.paths["training_evidence"])["Expected_Prediction"]

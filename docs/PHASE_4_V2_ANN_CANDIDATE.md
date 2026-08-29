@@ -15,7 +15,8 @@ artefactos v1 ou o estado Azure.
   `2010-01-15`–`2022-12-31`. A escolha usa MAE em unidades originais em
   `2023-01-01`–`2024-12-31`, com desempate por `original`; o teste selado nunca
   participa na escolha.
-- Receita fixa: `Dense(32, relu)`, `Dropout(0.2)`, `Dense(1)`, Adam `1e-3`, MSE,
+- Receita autorizada: `Dense(32, relu)`, `Dropout(0.2)`, `Dense(1, softplus)` (saída
+  não-negativa), Adam `1e-3`, MSE,
   batch `32`, no máximo 200 épocas, patience 50, seed 42 e operações
   determinísticas em CPU. A variante vencedora é recriada sobre treino+validação
   com os scalers versionados e o número de épocas selecionado.
@@ -77,5 +78,6 @@ nesse gate, sem clipping e sem bundle candidato; por isso não existem IDs de
 backtest, calibração, run ou versão MLflow para registar. O teste completo do
 repositório passou (`772 passed, 17 skipped`) e as suites ANN direcionadas
 passaram (`4 passed`). A causa fica como limitação operacional a investigar num
-plano posterior (por exemplo, uma receita ANN explicitamente não-negativa), sem
-alterar esta receita fixa nem promover um modelo inválido.
+plano posterior. A autorização posterior do utilizador permite agora a saída
+`softplus`; a execução de aceitação deve ser repetida com esta receita e os
+mesmos gates, sem promover um modelo inválido.

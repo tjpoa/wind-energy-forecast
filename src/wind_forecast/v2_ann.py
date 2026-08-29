@@ -314,6 +314,7 @@ def fit_v2_ann_candidate(config: ANNTrainingConfig) -> ANNTrainingResult:
             "hidden_units": 32,
             "activation": "relu",
             "dropout": 0.2,
+            "output_activation": "softplus",
             "optimizer": "Adam",
             "learning_rate": 0.001,
             "loss": "mean_squared_error",
@@ -462,6 +463,8 @@ def load_v2_ann_bundle(path: str | Path) -> V2ANNPredictor:
         raise V2ANNError("Unsupported ANN model manifest schema.")
     if manifest.get("artifact_type") != "keras_scaled_v2":
         raise V2ANNError("Bundle is not a scaled ANN v2 artifact.")
+    if (manifest.get("parameters") or {}).get("output_activation") != "softplus":
+        raise V2ANNError("ANN bundle does not use the authorized non-negative output recipe.")
     feature_names = tuple(str(value) for value in manifest.get("feature_names") or ())
     if not feature_names:
         raise V2ANNError("ANN model manifest has no features.")
@@ -663,7 +666,7 @@ def _build_model(feature_count: int, *, seed: int) -> Any:
             tf.keras.layers.Input(shape=(feature_count,)),
             tf.keras.layers.Dense(32, activation="relu"),
             tf.keras.layers.Dropout(0.2),
-            tf.keras.layers.Dense(1, activation="linear"),
+            tf.keras.layers.Dense(1, activation="softplus"),
         ]
     )
     model.compile(
