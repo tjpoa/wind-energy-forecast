@@ -101,3 +101,27 @@ ficheiros tocados passou; a suite completa anterior passou (`772 passed,
 17 skipped`) antes desta alteração limitada à ativação de saída. A decisão
 governada é manter o candidato rejeitado e abrir novo plano apenas se for
 proposta outra receita ou alteração dos gates.
+
+### Experiência v2.1 — cabeça `sigmoid`
+
+No branch experimental, a única alteração foi tornar a cabeça final
+`Dense(1, sigmoid)` configurável, mantendo a seleção `original`/`log1p`, os
+scalers, splits, seed e gates. A execução foi selada no SHA
+`b92bb7b7f96b92a397a673e24d86722f6838eb11`; selecionou `original` em 195 épocas,
+com os mesmos hashes de dataset, scalers e split acima. A MAE de validação foi
+`18905.28` e a de teste `23393.29`.
+
+O backtest correspondente, com os mesmos 15 folds × 30 observações e os mesmos
+comparadores, recebeu o ID
+`66d67030a3cf75e6e24ec4b951664b7d3d5bbc61d91976d672fbea10290c9aae` e foi
+`rejected`. A MAE agregada do candidato (`23393.28`) foi inferior à do incumbent
+(`25541.04`) e à persistência (`69577.15`), mas os folds 4, 5, 12, 13 e 15
+continuaram piores que o incumbent. O número de folds aprovados subiu de 6/15
+com `softplus` para 10/15 com `sigmoid`, sem satisfazer o gate de todos os
+folds.
+
+O bundle rejeitado conserva evidência, hashes e lineage apenas localmente. Não
+foi criada calibração de candidato, não houve run/versão MLflow nem alteração de
+`candidate`, `champion` ou `stable`; promoção e Azure continuam sem execução.
+Esta experiência termina aqui. Qualquer nova receita, retreino temporal ou
+alteração de gates exige um plano e autorização próprios.
