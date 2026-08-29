@@ -68,3 +68,14 @@ promoção é `NO-GO`.
 Os modelos, backtests e calibrações gerados permanecem locais e ignorados pelo
 Git. A execução de aceitação deve ocorrer num `master` limpo e no mesmo SHA,
 seguida de uma revisão documental dos IDs, métricas e hashes.
+
+## Estado da execução desta implementação
+
+No SHA `be3ccb90f`, a execução local determinística foi iniciada com o dataset e
+scalers aceites, mas o refit final gerou previsões negativas. O fluxo terminou
+nesse gate, sem clipping e sem bundle candidato; por isso não existem IDs de
+backtest, calibração, run ou versão MLflow para registar. O teste completo do
+repositório passou (`772 passed, 17 skipped`) e as suites ANN direcionadas
+passaram (`4 passed`). A causa fica como limitação operacional a investigar num
+plano posterior (por exemplo, uma receita ANN explicitamente não-negativa), sem
+alterar esta receita fixa nem promover um modelo inválido.
