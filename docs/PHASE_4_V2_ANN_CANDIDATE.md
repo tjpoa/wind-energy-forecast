@@ -72,12 +72,32 @@ seguida de uma revisão documental dos IDs, métricas e hashes.
 
 ## Estado da execução desta implementação
 
-No SHA `be3ccb90f`, a execução local determinística foi iniciada com o dataset e
-scalers aceites, mas o refit final gerou previsões negativas. O fluxo terminou
-nesse gate, sem clipping e sem bundle candidato; por isso não existem IDs de
-backtest, calibração, run ou versão MLflow para registar. O teste completo do
-repositório passou (`772 passed, 17 skipped`) e as suites ANN direcionadas
-passaram (`4 passed`). A causa fica como limitação operacional a investigar num
-plano posterior. A autorização posterior do utilizador permite agora a saída
-`softplus`; a execução de aceitação deve ser repetida com esta receita e os
-mesmos gates, sem promover um modelo inválido.
+Após autorização explícita para a receita não-negativa, a execução local foi
+repetida no SHA `29e7955ba82ecb0bf96d187a832c8ee7b16f97b6`, com `softplus` apenas
+na saída final; os scalers, seed, particionamento e restantes hiperparâmetros
+foram preservados. O treino terminou com a variante `original` e 123 épocas.
+Os hashes de entrada, scalers e split são, respetivamente,
+`d0d073748c5d963cba30212e6b0ab666ec2000197b8f61a5c439b4aaf786b2a6`,
+`8d97424a0ee63d603922e8d39f3a2e6532f8c5f4be79711e644c1ed04db520f8` e
+`196456643397d5ba6b3f64b55b4d3783fd5df51381014ffe7e97dff09a252e3b`.
+
+O backtest selado de 15 folds × 30 observações (`2025-01-01`–`2026-06-27`)
+produziu o ID
+`2b2043fe16c1996c12fbf248734db8eb96702d2a216fb1e4a4d479a0dcbee165` e foi
+`rejected`: a MAE agregada do candidato foi `25133.27`, inferior à do incumbent
+(`25541.04`) e à persistência (`69577.15`), e passou a calibração do incumbent,
+mas `every_fold_passed=false` (por exemplo, fold 1: `39738.13` contra
+`34279.32` do incumbent; fold 15: `22144.40` contra `20146.07`).
+
+O resultado rejeitado conserva métricas, previsões, hashes e lineage apenas para
+auditoria e não é um bundle registável. Consequentemente, a calibração ANN do
+candidato, o run/versão MLflow e o alias `candidate` não foram produzidos nem
+alterados. Não houve promoção local, alteração de `champion`/`stable`, mudança
+de deployment pointer ou qualquer operação Azure. O treino e o backtest não
+fizeram pedidos de rede nem escrita no Registry.
+
+As suites ANN direcionadas passaram após a alteração (`4 passed`) e Ruff nos
+ficheiros tocados passou; a suite completa anterior passou (`772 passed,
+17 skipped`) antes desta alteração limitada à ativação de saída. A decisão
+governada é manter o candidato rejeitado e abrir novo plano apenas se for
+proposta outra receita ou alteração dos gates.
