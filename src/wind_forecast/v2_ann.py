@@ -50,6 +50,7 @@ ANN_MODEL_MANIFEST_SCHEMA = "wind_forecast.v2_ann_model_manifest.v1"
 ANN_DATASET_MANIFEST_SCHEMA = "wind_forecast.v2_ann_dataset_manifest.v1"
 ANN_TRAINING_SCHEMA = "wind_forecast.v2_ann_training_run.v1"
 ANN_PREDICTION_CONTRACT = "raw_features_to_original_target"
+ANN_OUTPUT_ACTIVATIONS = ("softplus", "sigmoid")
 DEFAULT_DATASET_PATH = (
     project_root()
     / "data/processed/v2/ml_features/feature_ready_ren_era5_land_v2/feature_ready_daily.csv"
@@ -97,6 +98,7 @@ class ANNTrainingConfig:
     max_epochs: int = 200
     batch_size: int = 32
     patience: int = 50
+    output_activation: str = "softplus"
 
     def __post_init__(self) -> None:
         for name in ("input_path", "scaler_dir", "output_dir"):
@@ -105,6 +107,12 @@ class ANNTrainingConfig:
             raise ValueError("seed must be non-negative.")
         if self.max_epochs < 1 or self.batch_size < 1 or self.patience < 1:
             raise ValueError("Training limits must be positive.")
+        if self.output_activation not in ANN_OUTPUT_ACTIVATIONS:
+            raise ValueError(
+                "output_activation must be one of: "
+                + ", ".join(ANN_OUTPUT_ACTIVATIONS)
+                + "."
+            )
 
 
 @dataclass(frozen=True)
@@ -120,6 +128,7 @@ class ANNTrainingResult:
     input_sha256: str
     scaler_manifest_sha256: str
     split_sha256: str
+    output_activation: str
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -132,6 +141,7 @@ class ANNTrainingResult:
             "input_sha256": self.input_sha256,
             "scaler_manifest_sha256": self.scaler_manifest_sha256,
             "split_sha256": self.split_sha256,
+            "output_activation": self.output_activation,
         }
 
 
@@ -209,6 +219,7 @@ def fit_v2_ann_candidate(config: ANNTrainingConfig) -> ANNTrainingResult:
             max_epochs=config.max_epochs,
             batch_size=config.batch_size,
             patience=config.patience,
+            output_activation=config.output_activation,
         )
     valid_variants = [
         name for name, value in variant_results.items() if value.get("valid", False)
@@ -236,7 +247,9 @@ def fit_v2_ann_candidate(config: ANNTrainingConfig) -> ANNTrainingResult:
     x_scaled = selected_scaler_x.transform(refit_x)
     y_transformed = refit_y if selected_variant == "original" else np.log1p(refit_y)
     y_scaled = selected_scaler_y.transform(y_transformed.reshape(-1, 1))
-    model = _build_model(len(features.columns), seed=config.seed)
+    model = _build_model(
+        len(features.columns), seed=config.seed, output_activation=config.output_activation
+    )
     model.fit(
         x_scaled,
         y_scaled,
@@ -314,7 +327,7 @@ def fit_v2_ann_candidate(config: ANNTrainingConfig) -> ANNTrainingResult:
             "hidden_units": 32,
             "activation": "relu",
             "dropout": 0.2,
-            "output_activation": "softplus",
+            "output_activation": config.output_activation,
             "optimizer": "Adam",
             "learning_rate": 0.001,
             "loss": "mean_squared_error",
@@ -387,6 +400,7 @@ def fit_v2_ann_candidate(config: ANNTrainingConfig) -> ANNTrainingResult:
             "scaler_manifest_sha256": scaler_manifest_sha256,
             "split_sha256": split_sha256,
             "feature_schema_sha256": _feature_schema_sha256(feature_names),
+            "output_activation": config.output_activation,
             "git": _git_state(),
             "safeguards": {
                 "test_used_for_selection": False,
@@ -410,6 +424,7 @@ def fit_v2_ann_candidate(config: ANNTrainingConfig) -> ANNTrainingResult:
             "target_variant": selected_variant,
             "target_transform": "identity" if selected_variant == "original" else "log1p",
             "inverse_transform": "identity" if selected_variant == "original" else "expm1",
+            "output_activation": config.output_activation,
             "output_contract": "Wind_Production in original units; finite and non-negative",
         },
     )
@@ -419,6 +434,7 @@ def fit_v2_ann_candidate(config: ANNTrainingConfig) -> ANNTrainingResult:
             "schema_version": ANN_TRAINING_SCHEMA,
             "selected_variant": selected_variant,
             "selected_epochs": selected_epochs,
+            "output_activation": config.output_activation,
             "input_sha256": input_sha256,
             "scaler_manifest_sha256": scaler_manifest_sha256,
             "split_sha256": split_sha256,
@@ -452,6 +468,7 @@ def fit_v2_ann_candidate(config: ANNTrainingConfig) -> ANNTrainingResult:
         input_sha256=input_sha256,
         scaler_manifest_sha256=scaler_manifest_sha256,
         split_sha256=split_sha256,
+        output_activation=config.output_activation,
     )
 
 
@@ -463,8 +480,9 @@ def load_v2_ann_bundle(path: str | Path) -> V2ANNPredictor:
         raise V2ANNError("Unsupported ANN model manifest schema.")
     if manifest.get("artifact_type") != "keras_scaled_v2":
         raise V2ANNError("Bundle is not a scaled ANN v2 artifact.")
-    if (manifest.get("parameters") or {}).get("output_activation") != "softplus":
-        raise V2ANNError("ANN bundle does not use the authorized non-negative output recipe.")
+    output_activation = (manifest.get("parameters") or {}).get("output_activation")
+    if output_activation not in ANN_OUTPUT_ACTIVATIONS:
+        raise V2ANNError("ANN bundle does not use an authorized non-negative output recipe.")
     feature_names = tuple(str(value) for value in manifest.get("feature_names") or ())
     if not feature_names:
         raise V2ANNError("ANN model manifest has no features.")
@@ -515,6 +533,9 @@ def load_v2_ann_bundle(path: str | Path) -> V2ANNPredictor:
         model = tf.keras.models.load_model(model_path, compile=False)
     except Exception as exc:  # Keras exposes format-specific exceptions.
         raise V2ANNError("Could not reload the ANN Keras model.") from exc
+    actual_activation = getattr(getattr(model.layers[-1], "activation", None), "__name__", None)
+    if actual_activation != output_activation:
+        raise V2ANNError("ANN model output activation differs from its manifest.")
     return V2ANNPredictor(
         model=model,
         scaler_x=scaler_x,
@@ -532,6 +553,7 @@ def _fit_selection_variant(
     max_epochs: int,
     batch_size: int,
     patience: int,
+    output_activation: str,
 ) -> dict[str, Any]:
     features = [column for column in split.train.columns if column not in {DATE_COLUMN, TARGET_COLUMN}]
     x_train = split.train[features].apply(pd.to_numeric, errors="coerce")
@@ -550,7 +572,9 @@ def _fit_selection_variant(
     y_validation_scaled = scaler_y.transform(
         (y_validation if variant == "original" else np.log1p(y_validation)).reshape(-1, 1)
     )
-    model = _build_model(len(features), seed=seed)
+    model = _build_model(
+        len(features), seed=seed, output_activation=output_activation
+    )
     tf = _load_tensorflow()
     callback = tf.keras.callbacks.EarlyStopping(
         monitor="val_mae", patience=patience, restore_best_weights=True
@@ -658,7 +682,11 @@ def _load_scaler_bundle(
     return {**scalers, "paths": paths, "manifest_path": manifest_path, "manifest": manifest}
 
 
-def _build_model(feature_count: int, *, seed: int) -> Any:
+def _build_model(feature_count: int, *, seed: int, output_activation: str) -> Any:
+    if output_activation not in ANN_OUTPUT_ACTIVATIONS:
+        raise V2ANNError(
+            f"Unsupported ANN output activation: {output_activation!r}."
+        )
     tf = _load_tensorflow()
     _set_determinism(seed)
     model = tf.keras.Sequential(
@@ -666,7 +694,7 @@ def _build_model(feature_count: int, *, seed: int) -> Any:
             tf.keras.layers.Input(shape=(feature_count,)),
             tf.keras.layers.Dense(32, activation="relu"),
             tf.keras.layers.Dropout(0.2),
-            tf.keras.layers.Dense(1, activation="softplus"),
+            tf.keras.layers.Dense(1, activation=output_activation),
         ]
     )
     model.compile(
