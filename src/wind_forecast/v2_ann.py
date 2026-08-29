@@ -210,10 +210,19 @@ def fit_v2_ann_candidate(config: ANNTrainingConfig) -> ANNTrainingResult:
             batch_size=config.batch_size,
             patience=config.patience,
         )
+    valid_variants = [
+        name for name, value in variant_results.items() if value.get("valid", False)
+    ]
+    if not valid_variants:
+        raise V2ANNError("Both ANN target variants produced invalid validation predictions.")
     selected_variant = (
         "original"
-        if variant_results["original"]["metrics"]["MAE"]
-        <= variant_results["log1p"]["metrics"]["MAE"]
+        if variant_results["original"].get("valid")
+        and (
+            not variant_results["log1p"].get("valid")
+            or variant_results["original"]["metrics"]["MAE"]
+            <= variant_results["log1p"]["metrics"]["MAE"]
+        )
         else "log1p"
     )
     selected_epochs = int(variant_results[selected_variant]["best_epoch"])
@@ -357,6 +366,8 @@ def fit_v2_ann_candidate(config: ANNTrainingConfig) -> ANNTrainingResult:
                 name: {
                     "metrics": value["metrics"],
                     "best_epoch": value["best_epoch"],
+                    "valid": value["valid"],
+                    "invalid_reason": value.get("invalid_reason"),
                 }
                 for name, value in variant_results.items()
             },
@@ -555,12 +566,23 @@ def _fit_selection_variant(
     inverse = scaler_y.inverse_transform(raw).reshape(-1)
     predictions = np.expm1(inverse) if variant == "log1p" else inverse
     if not np.isfinite(predictions).all() or (predictions < 0).any():
-        raise V2ANNError(f"ANN {variant} validation predictions are invalid.")
+        val_history = [float(value) for value in history.history.get("val_mae", [])]
+        return {
+            "metrics": None,
+            "best_epoch": int(np.argmin(val_history) + 1) if val_history else max_epochs,
+            "valid": False,
+            "invalid_reason": "non_finite_or_negative_validation_prediction",
+            "history": {
+                key: [float(value) for value in values]
+                for key, values in history.history.items()
+            },
+        }
     val_history = [float(value) for value in history.history.get("val_mae", [])]
     best_epoch = int(np.argmin(val_history) + 1) if val_history else max_epochs
     return {
         "metrics": _metrics(split.validation[TARGET_COLUMN], predictions),
         "best_epoch": best_epoch,
+        "valid": True,
         "history": {
             key: [float(value) for value in values]
             for key, values in history.history.items()
