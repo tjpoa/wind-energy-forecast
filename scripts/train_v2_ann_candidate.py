@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Sequence
 
 from wind_forecast.v2_ann import (
+    ANN_OUTPUT_ACTIVATIONS,
     ANNTrainingConfig,
     DEFAULT_DATASET_PATH,
     DEFAULT_SCALER_DIR,
@@ -30,6 +31,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--validation-end", default="2024-12-31")
     parser.add_argument("--test-start", default="2025-01-01")
     parser.add_argument("--test-end", default="2026-06-27")
+    parser.add_argument(
+        "--output-activation",
+        choices=ANN_OUTPUT_ACTIVATIONS,
+        default="softplus",
+        help="Non-negative output activation for the normalized target.",
+    )
     return parser.parse_args(argv)
 
 
@@ -47,6 +54,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             validation_end=args.validation_end,
             test_start=args.test_start,
             test_end=args.test_end,
+            output_activation=args.output_activation,
         )
     )
     print(json.dumps(result.summary(), indent=2, sort_keys=True))

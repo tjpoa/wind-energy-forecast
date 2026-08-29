@@ -72,7 +72,10 @@ def _scaler_bundle(root: Path, input_path: Path, frame: pd.DataFrame) -> Path:
     return scaler_dir
 
 
-def test_ann_candidate_seals_scaled_bundle_and_reloads(tmp_path: Path) -> None:
+@pytest.mark.parametrize("output_activation", ["softplus", "sigmoid"])
+def test_ann_candidate_seals_scaled_bundle_and_reloads(
+    tmp_path: Path, output_activation: str
+) -> None:
     frame = _frame()
     input_path = tmp_path / "features.csv"
     frame.to_csv(input_path, index=False)
@@ -91,6 +94,7 @@ def test_ann_candidate_seals_scaled_bundle_and_reloads(tmp_path: Path) -> None:
             validation_end="2024-01-22",
             test_start="2024-01-23",
             test_end="2024-01-30",
+            output_activation=output_activation,
         )
     )
 
@@ -102,7 +106,7 @@ def test_ann_candidate_seals_scaled_bundle_and_reloads(tmp_path: Path) -> None:
     assert manifest["schema_version"] == ANN_MODEL_MANIFEST_SCHEMA
     assert manifest["artifact_type"] == "keras_scaled_v2"
     assert manifest["scaler_required"] is True
-    assert manifest["parameters"]["output_activation"] == "softplus"
+    assert manifest["parameters"]["output_activation"] == output_activation
     predictor = load_v2_ann_bundle(result.output_dir)
     reloaded = predictor.predict(frame[["Feature_A", "Wind_Production_Lag1"]])
     expected = pd.read_csv(result.paths["training_evidence"])["Expected_Prediction"]
@@ -115,6 +119,11 @@ def test_ann_candidate_seals_scaled_bundle_and_reloads(tmp_path: Path) -> None:
     assert set(path.name for path in result.output_dir.iterdir()) == set(
         ANN_OUTPUT_FILENAMES.values()
     )
+
+
+def test_ann_training_rejects_unsupported_output_activation() -> None:
+    with pytest.raises(ValueError, match="output_activation"):
+        ANNTrainingConfig(output_activation="linear")
 
 
 def test_ann_candidate_rejects_scaler_dataset_mismatch(tmp_path: Path) -> None:
