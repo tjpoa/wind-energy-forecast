@@ -195,6 +195,15 @@ def plan_v2_ann_challenger_backtest(
             incumbent_model.predict(part[feature_names]), dtype=float
         ).reshape(-1)
         persistence_prediction = part[PERSISTENCE_COLUMN].to_numpy(dtype=float)
+        for model_name, values in (
+            ("candidate", candidate_prediction),
+            ("incumbent", incumbent_prediction),
+            ("persistence", persistence_prediction),
+        ):
+            if len(values) != len(part) or not np.isfinite(values).all():
+                raise ChallengerBacktestError(
+                    f"{model_name} produced non-finite challenger predictions."
+                )
         predictions = {
             "candidate": candidate_prediction,
             "incumbent": incumbent_prediction,
