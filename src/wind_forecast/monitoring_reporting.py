@@ -85,19 +85,30 @@ class CalibrationConfig:
     """Inputs for one explicit immutable calibration."""
 
     dataset_path: Path
-    model_bundle: Path
+    model_bundle: Path | None
     policy_path: Path
     output_root: Path
     backtest_stride_days: int = 7
     retraining_candidate: Path | None = None
+    challenger_candidate: Path | None = None
 
     def __post_init__(self) -> None:
-        for name in ("dataset_path", "model_bundle", "policy_path", "output_root"):
+        for name in ("dataset_path", "policy_path", "output_root"):
             object.__setattr__(self, name, Path(getattr(self, name)))
+        if self.model_bundle is not None:
+            object.__setattr__(self, "model_bundle", Path(self.model_bundle))
         if self.retraining_candidate is not None:
             object.__setattr__(
                 self, "retraining_candidate", Path(self.retraining_candidate)
             )
+        if self.challenger_candidate is not None:
+            object.__setattr__(
+                self, "challenger_candidate", Path(self.challenger_candidate)
+            )
+        if self.retraining_candidate is not None and self.challenger_candidate is not None:
+            raise ValueError("Retraining and challenger candidates are mutually exclusive.")
+        if self.model_bundle is None and self.retraining_candidate is None and self.challenger_candidate is None:
+            raise ValueError("model_bundle or an accepted candidate bundle is required.")
         if self.backtest_stride_days < 1:
             raise ValueError("backtest_stride_days must be at least one.")
 
@@ -182,6 +193,7 @@ def calibrate_monitoring_reference(config: CalibrationConfig) -> CalibrationResu
     """Build the model-fit reference and resolve thresholds by historical backtest."""
     policy = MonitoringPolicy.load(config.policy_path)
     candidate = None
+    challenger = None
     if config.retraining_candidate is not None:
         from wind_forecast.retraining_backtesting import (
             RetrainingBacktestError,
@@ -231,7 +243,43 @@ def calibrate_monitoring_reference(config: CalibrationConfig) -> CalibrationResu
                 },
             },
         }
+    elif config.challenger_candidate is not None:
+        from wind_forecast.v2_ann_challenger import (
+            ChallengerBacktestError,
+            load_v2_ann_challenger_bundle,
+        )
+
+        try:
+            challenger = load_v2_ann_challenger_bundle(config.challenger_candidate)
+        except ChallengerBacktestError as exc:
+            raise MonitoringReportingError(str(exc)) from exc
+        candidate_root = Path(config.challenger_candidate)
+        model_manifest = _read_json(candidate_root / "model_manifest.json")
+        candidate_dataset = _read_json(candidate_root / "dataset_manifest.json")
+        frame = pd.read_csv(candidate_root / "training_evidence.csv").drop(
+            columns=["Expected_Prediction"]
+        )
+        bundle = {
+            "root": candidate_root,
+            "feature_names": list(model_manifest["feature_names"]),
+            "model_manifest": {
+                **model_manifest,
+                "task": "daily_wind_production_historical_hindcast",
+            },
+            "dataset_manifest": {
+                **candidate_dataset,
+                "splits": {
+                    "train": {"start": str(frame[DATE_COLUMN].iloc[0])},
+                    "validation": {
+                        "end": candidate_dataset["splits"]["validation"]["end"]
+                    },
+                    "row_counts": {"refit_train_validation": len(frame)},
+                },
+            },
+        }
     else:
+        if config.model_bundle is None:
+            raise MonitoringReportingError("A model bundle is required for incumbent calibration.")
         bundle = validate_monitoring_model_bundle(config.model_bundle)
         if sha256_file(config.dataset_path) != bundle["dataset_manifest"]["sha256"]:
             raise MonitoringReportingError("Reference dataset checksum differs from the model bundle.")
@@ -246,15 +294,19 @@ def calibrate_monitoring_reference(config: CalibrationConfig) -> CalibrationResu
     splits = bundle["dataset_manifest"]["splits"]
     expected_start = str(splits["train"]["start"])
     expected_end = str(splits["validation"]["end"])
-    if candidate is None and (
+    if candidate is None and challenger is None and (
         policy.reference_start != expected_start
         or policy.reference_end != expected_end
     ):
         raise MonitoringReportingError(
             "Monitoring reference boundaries must exactly match train.start and validation.end."
         )
-    reference_start = expected_start if candidate is not None else policy.reference_start
-    reference_end = expected_end if candidate is not None else policy.reference_end
+    reference_start = (
+        expected_start if candidate is not None or challenger is not None else policy.reference_start
+    )
+    reference_end = (
+        expected_end if candidate is not None or challenger is not None else policy.reference_end
+    )
     mask = dates.between(reference_start, reference_end)
     reference = frame.loc[mask].copy().reset_index(drop=True)
     expected_fit_rows = int(bundle["dataset_manifest"]["splits"]["row_counts"]["refit_train_validation"])
@@ -263,8 +315,19 @@ def calibrate_monitoring_reference(config: CalibrationConfig) -> CalibrationResu
     numeric = reference[[TARGET_COLUMN, *feature_names]].apply(pd.to_numeric, errors="coerce")
     if numeric.isna().any().any() or not np.isfinite(numeric.to_numpy(float)).all():
         raise MonitoringReportingError("Reference monitoring values are not finite numeric values.")
-    model = joblib.load(config.model_bundle / "model.joblib")
-    predictions = np.asarray(model.predict(reference[feature_names]), dtype=float).reshape(-1)
+    if challenger is not None:
+        from wind_forecast.v2_ann import load_v2_ann_bundle
+
+        try:
+            predictor = load_v2_ann_bundle(challenger["root"])
+            predictions = predictor.predict(reference[feature_names])
+        except Exception as exc:
+            raise MonitoringReportingError(
+                "ANN challenger reference prediction failed validation."
+            ) from exc
+    else:
+        model = joblib.load(config.model_bundle / "model.joblib")
+        predictions = np.asarray(model.predict(reference[feature_names]), dtype=float).reshape(-1)
     if not np.isfinite(predictions).all() or len(predictions) != len(reference):
         raise MonitoringReportingError("Reference prediction generation failed validation.")
     reference[PREDICTION_COLUMN] = predictions
@@ -291,7 +354,14 @@ def calibrate_monitoring_reference(config: CalibrationConfig) -> CalibrationResu
                 "backtest_id": candidate["backtest_id"],
             }
             if candidate is not None
-            else {"kind": "accepted_v2_reference"}
+            else (
+                {
+                    "kind": "accepted_v2_ann_challenger",
+                    "backtest_id": challenger["backtest"]["backtest_id"],
+                }
+                if challenger is not None
+                else {"kind": "accepted_v2_reference"}
+            )
         ),
     }
     reference_record = _with_id("monitoring_reference", "reference_id", reference_body)
@@ -310,7 +380,7 @@ def calibrate_monitoring_reference(config: CalibrationConfig) -> CalibrationResu
         policy,
         stride=config.backtest_stride_days,
     )
-    if candidate is None:
+    if candidate is None and challenger is None:
         performance_path = config.model_bundle / "test_predictions.csv"
         _verify_bundle_artifact(config.model_bundle, performance_path.name)
         performance_thresholds, performance_summary = _calibrate_performance_thresholds(
