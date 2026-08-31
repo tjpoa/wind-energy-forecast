@@ -1,5 +1,5 @@
-# LEGACY BICEP PATH: retain only until docs/AZURE_TERRAFORM_MIGRATION.md is
-# approved with live inventory, Terraform parity, promotion, and rollback evidence.
+# LEGACY BICEP PATH: retain until the migration, parity, promotion, and
+# rollback gates in infra/azure/README.md are satisfied.
 name: Deploy Azure portfolio demo (legacy Bicep)
 
 on:

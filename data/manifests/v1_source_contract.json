@@ -1,0 +1,99 @@
+{
+  "attribution": null,
+  "column_count": null,
+  "coordinates": [],
+  "coverage_end": "2025-04-28",
+  "coverage_start": "2010-01-01",
+  "dataset_role": "legacy_v1_source_contract",
+  "dataset_version": "v1",
+  "extra_metadata": {
+    "production": {
+      "coverage_end": "2025-04-28",
+      "coverage_start": "2010-01-01",
+      "file": "data/raw/ReparticaoProducao.csv",
+      "header_encoding": "Portuguese source headers",
+      "row_count": 537310,
+      "temporal_granularity": "15-minute",
+      "target_column_source": "Eólica",
+      "target_column_canonical": "Wind_Production",
+      "target_unit": "MW"
+    },
+    "weather": {
+      "coverage_end": "2023-12-31",
+      "coverage_start": "2013-01-01",
+      "file_row_count": 4017,
+      "station_ids": [
+        "1200551",
+        "1210622",
+        "1200567",
+        "1200575",
+        "1200545",
+        "1210702",
+        "1200560",
+        "1210683",
+        "1200548",
+        "1200570",
+        "1210718",
+        "1210734",
+        "1200571",
+        "1200579",
+        "1210770",
+        "1200558",
+        "1200562",
+        "1200554"
+      ],
+      "temporal_granularity": "daily",
+      "source_headers": [
+        "ANO",
+        "MES",
+        "DIA"
+      ],
+      "units": {
+        "DirecaoMediaVento10m.csv": "degrees from",
+        "IntensidadeMediaVento10m.csv": "m/s",
+        "TemperaturaMedia.csv": "deg C"
+      }
+    }
+  },
+  "geographic_coverage": {
+    "description": "Portugal production target and 18 weather station columns",
+    "provider_confirmed": false
+  },
+  "known_warnings": [
+    "The exact historical provider for the weather matrices is unconfirmed.",
+    "Production source identity is not sufficient to prove every historical value.",
+    "License, attribution, and redistribution permission are unresolved.",
+    "Weather files contain source sentinel values that require the existing validation contract.",
+    "The original daily aggregation and timezone procedure are not fully recorded."
+  ],
+  "license": null,
+  "preprocessing_version": null,
+  "provider": null,
+  "raw_file_paths": [
+    "data/raw/DirecaoMediaVento10m.csv",
+    "data/raw/IntensidadeMediaVento10m.csv",
+    "data/raw/ReparticaoProducao.csv",
+    "data/raw/TemperaturaMedia.csv"
+  ],
+  "retrieval_timestamp": null,
+  "row_count": null,
+  "schema_version": "wind_forecast.dataset_manifest.v1",
+  "sha256_checksums": {
+    "data/raw/DirecaoMediaVento10m.csv": "289aa375b4c6a371ab4ca649b999ee4ac1cb16e29a5efea01ede86bca8ba08bd",
+    "data/raw/IntensidadeMediaVento10m.csv": "e09e94f07618ddb4d52d0b53f46a69e1d6b64814a142e69ee57161f4199e842c",
+    "data/raw/ReparticaoProducao.csv": "f161d8401ba5c5af69786392b72b3730ac77d4ffb2df21d2cdedc110815737b6",
+    "data/raw/TemperaturaMedia.csv": "ce2829f328e46a99f942343ff0a5a27f18319b5a1dc5728c5c110692596fcef4"
+  },
+  "source_endpoint": null,
+  "source_identifier": null,
+  "station_ids": [],
+  "status": "provenance_incomplete",
+  "temporal_granularity": "mixed",
+  "timezone": "Europe/Lisbon",
+  "units": {
+    "Eolica": "MW",
+    "wind_direction": "degrees from",
+    "wind_speed": "m/s",
+    "temperature": "deg C"
+  }
+}

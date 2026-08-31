@@ -16,6 +16,7 @@ param(
     [string]$EnvironmentId,
     [string]$ActivationDate,
     [string]$EnvFile,
+    [string]$ReadinessPath = "config\local_automation_readiness_v1.json",
     [string]$TaskName = "WindForecastHistoricalBatch"
 )
 
@@ -41,6 +42,25 @@ $deployment = Resolve-RepositoryPath $DeploymentRoot
 $schedulerState = Resolve-RepositoryPath $SchedulerStateRoot
 $environmentFile = if ($EnvFile) { Resolve-RepositoryPath $EnvFile } else { $null }
 $schedulerManager = Join-Path $repository "scripts\manage_scheduler_owner.py"
+$readinessScript = Join-Path $repository "scripts\verify_local_automation_readiness.py"
+$readinessPath = if ([System.IO.Path]::IsPathRooted($ReadinessPath)) {
+    $ReadinessPath
+} else {
+    Join-Path $repository $ReadinessPath
+}
+if (-not $WhatIfPreference) {
+    if (-not (Test-Path -LiteralPath $readinessScript -PathType Leaf)) {
+        throw "Automation readiness verifier was not found: $readinessScript"
+    }
+    $readinessPath = (Resolve-Path -LiteralPath $readinessPath).Path
+    & $python $readinessScript `
+        --path $readinessPath `
+        --environment-id $EnvironmentId `
+        --workflow historical_daily_batch | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Automation readiness does not permit historical_daily_batch."
+    }
+}
 & $python $schedulerManager verify `
     --scheduler-root $schedulerState `
     --environment-id $EnvironmentId `
@@ -72,7 +92,8 @@ $actionArguments = @(
     "-CalibrationDirectory", (Quote-TaskArgument $calibration),
     "-DeploymentRoot", (Quote-TaskArgument $deployment),
     "-SchedulerStateRoot", (Quote-TaskArgument $schedulerState),
-    "-EnvironmentId", (Quote-TaskArgument $EnvironmentId)
+    "-EnvironmentId", (Quote-TaskArgument $EnvironmentId),
+    "-ReadinessPath", (Quote-TaskArgument $readinessPath)
 )
 if ($ActivationDate) {
     $actionArguments += @("-ActivationDate", (Quote-TaskArgument $ActivationDate))
@@ -96,6 +117,7 @@ if ($WhatIfPreference) {
         RestartInterval = "00:30:00"
         MultipleInstances = "IgnoreNew"
         LogonType = "S4U"
+        ReadinessPath = $readinessPath
         SchedulerStateRoot = $schedulerState
         EnvironmentId = $EnvironmentId
         StartsTask = $false
