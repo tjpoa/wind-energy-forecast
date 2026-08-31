@@ -16,6 +16,7 @@ param(
     [string]$EnvironmentId,
     [string]$ActivationDate,
     [string]$EnvFile,
+    [Parameter(Mandatory = $true)]
     [string]$ReadinessPath
 )
 
@@ -126,32 +127,30 @@ try {
         }
     }
 
-    if ($ReadinessPath) {
-        $readinessScript = Join-Path $repository "scripts\verify_local_automation_readiness.py"
-        if (-not (Test-Path -LiteralPath $readinessScript -PathType Leaf)) {
-            throw "Automation readiness verifier was not found."
+    $readinessScript = Join-Path $repository "scripts\verify_local_automation_readiness.py"
+    if (-not (Test-Path -LiteralPath $readinessScript -PathType Leaf)) {
+        throw "Automation readiness verifier was not found."
+    }
+    $readiness = if ([System.IO.Path]::IsPathRooted($ReadinessPath)) {
+        $ReadinessPath
+    } else {
+        Join-Path $repository $ReadinessPath
+    }
+    if (-not (Test-Path -LiteralPath $readiness -PathType Leaf)) {
+        throw "Automation readiness receipt was not found."
+    }
+    $readinessOutput = @(
+        & $python $readinessScript `
+            --path $readiness `
+            --environment-id $EnvironmentId `
+            --workflow historical_daily_batch 2>&1
+    )
+    $readinessExitCode = $LASTEXITCODE
+    if ($readinessExitCode -ne 0) {
+        foreach ($record in $readinessOutput) {
+            [Console]::Error.WriteLine([string]$record)
         }
-        $readiness = if ([System.IO.Path]::IsPathRooted($ReadinessPath)) {
-            $ReadinessPath
-        } else {
-            Join-Path $repository $ReadinessPath
-        }
-        if (-not (Test-Path -LiteralPath $readiness -PathType Leaf)) {
-            throw "Automation readiness receipt was not found."
-        }
-        $readinessOutput = @(
-            & $python $readinessScript `
-                --path $readiness `
-                --environment-id $EnvironmentId `
-                --workflow historical_daily_batch 2>&1
-        )
-        $readinessExitCode = $LASTEXITCODE
-        if ($readinessExitCode -ne 0) {
-            foreach ($record in $readinessOutput) {
-                [Console]::Error.WriteLine([string]$record)
-            }
-            throw "Automation readiness does not permit historical_daily_batch."
-        }
+        throw "Automation readiness does not permit historical_daily_batch."
     }
 
     $arguments = @(
