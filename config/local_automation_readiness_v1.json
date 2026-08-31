@@ -1,0 +1,11 @@
+{
+  "allowed_workflows": [],
+  "environment_id": "local",
+  "evidence_refs": [],
+  "reason_codes": [
+    "automatic_operation_not_accepted"
+  ],
+  "schema_version": "wind_forecast.automation_readiness.v1",
+  "status": "NO-GO",
+  "updated_at_utc": "2026-08-31T00:00:00Z"
+}

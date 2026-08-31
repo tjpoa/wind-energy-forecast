@@ -15,7 +15,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$EnvironmentId,
     [string]$ActivationDate,
-    [string]$EnvFile
+    [string]$EnvFile,
+    [string]$ReadinessPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -122,6 +123,34 @@ try {
     foreach ($requiredScript in @($batchScript, $schedulerScript)) {
         if (-not (Test-Path -LiteralPath $requiredScript -PathType Leaf)) {
             throw "Scheduled CLI wrapper was not found."
+        }
+    }
+
+    if ($ReadinessPath) {
+        $readinessScript = Join-Path $repository "scripts\verify_local_automation_readiness.py"
+        if (-not (Test-Path -LiteralPath $readinessScript -PathType Leaf)) {
+            throw "Automation readiness verifier was not found."
+        }
+        $readiness = if ([System.IO.Path]::IsPathRooted($ReadinessPath)) {
+            $ReadinessPath
+        } else {
+            Join-Path $repository $ReadinessPath
+        }
+        if (-not (Test-Path -LiteralPath $readiness -PathType Leaf)) {
+            throw "Automation readiness receipt was not found."
+        }
+        $readinessOutput = @(
+            & $python $readinessScript `
+                --path $readiness `
+                --environment-id $EnvironmentId `
+                --workflow historical_daily_batch 2>&1
+        )
+        $readinessExitCode = $LASTEXITCODE
+        if ($readinessExitCode -ne 0) {
+            foreach ($record in $readinessOutput) {
+                [Console]::Error.WriteLine([string]$record)
+            }
+            throw "Automation readiness does not permit historical_daily_batch."
         }
     }
 

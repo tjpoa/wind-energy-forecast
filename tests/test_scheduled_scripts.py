@@ -147,6 +147,8 @@ def test_windows_daily_registration_uses_s4u_without_changing_schedule() -> None
     assert '-StartWhenAvailable' in source
     assert '"-File", (Quote-TaskArgument $runner)' in source
     assert '"-EnvironmentId", (Quote-TaskArgument $EnvironmentId)' in source
+    assert '"-ReadinessPath", (Quote-TaskArgument $readinessPath)' in source
+    assert 'verify_local_automation_readiness.py' in source
     assert 'StartsTask = $false' in source
     assert 'Register-ScheduledTask' in source
     assert 'Start-ScheduledTask' not in source
@@ -454,6 +456,13 @@ def test_batch_preserves_child_json_and_successful_lease_lifecycle(
     assert ("child", "succeeded") in stages
     assert ("lease_release", "succeeded") in stages
     assert stages[-1] == ("runner_exit", "succeeded")
+
+
+def test_batch_runner_has_optional_fail_closed_readiness_gate() -> None:
+    source = _script("run_scheduled_batch.ps1")
+    assert '[string]$ReadinessPath' in source
+    assert 'verify_local_automation_readiness.py' in source
+    assert 'historical_daily_batch' in source
 
 
 @pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1")
