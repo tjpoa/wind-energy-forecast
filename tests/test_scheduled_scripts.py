@@ -2,9 +2,12 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import time
 
 import pytest
+
+from wind_forecast.readiness import READINESS_SCHEMA
 
 
 SCRIPTS = Path(__file__).parents[1] / "scripts"
@@ -71,6 +74,15 @@ def _run_powershell(
     arguments: list[str],
     **kwargs: object,
 ) -> subprocess.CompletedProcess[str]:
+    provided_env = kwargs.pop("env", None)
+    environment = dict(os.environ if provided_env is None else provided_env)
+    source_path = str(SCRIPTS.parent / "src")
+    existing_pythonpath = environment.get("PYTHONPATH")
+    environment["PYTHONPATH"] = (
+        source_path
+        if not existing_pythonpath
+        else os.pathsep.join((source_path, existing_pythonpath))
+    )
     return subprocess.run(
         [
             "powershell.exe",
@@ -86,12 +98,19 @@ def _run_powershell(
         capture_output=True,
         text=True,
         timeout=30,
+        env=environment,
         **kwargs,
     )
 
 
-def _batch_arguments(repository: Path, fake_python: Path) -> list[str]:
-    return [
+def _batch_arguments(
+    repository: Path,
+    fake_python: Path,
+    *,
+    readiness_path: Path | None = None,
+    include_readiness: bool = True,
+) -> list[str]:
+    arguments = [
         "-PythonExecutable",
         str(fake_python),
         "-RepositoryRoot",
@@ -109,6 +128,72 @@ def _batch_arguments(repository: Path, fake_python: Path) -> list[str]:
         "-ActivationDate",
         "2026-06-28",
     ]
+    if include_readiness:
+        arguments.extend(
+            [
+                "-ReadinessPath",
+                str(readiness_path or repository / "readiness.json"),
+            ]
+        )
+    return arguments
+
+
+def _write_readiness_receipt(
+    repository: Path,
+    *,
+    status: str = "GO",
+    allowed_workflows: list[str] | None = None,
+    evidence_refs: list[str] | None = None,
+    reason_codes: list[str] | None = None,
+    content: str | None = None,
+) -> Path:
+    path = repository / "readiness.json"
+    if content is None:
+        payload = {
+            "allowed_workflows": (
+                ["historical_daily_batch"]
+                if allowed_workflows is None and status == "GO"
+                else (allowed_workflows or [])
+            ),
+            "environment_id": "local",
+            "evidence_refs": (
+                ["test-receipt"]
+                if evidence_refs is None and status == "GO"
+                else (evidence_refs or [])
+            ),
+            "reason_codes": (
+                []
+                if reason_codes is None and status == "GO"
+                else (reason_codes or [])
+            ),
+            "schema_version": READINESS_SCHEMA,
+            "status": status,
+            "updated_at_utc": "2026-08-31T00:00:00Z",
+        }
+        content = json.dumps(payload)
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def _fake_python_source(repository: Path, body: str) -> str:
+    invocation_log = repository / "python-invocations.log"
+    return (
+        "@echo off\n"
+        f'echo %~nx1 %~2>>"{invocation_log}"\n'
+        'if /I "%~nx1"=="verify_local_automation_readiness.py" (\n'
+        f'  "{sys.executable}" %*\n'
+        "  if errorlevel 1 exit /b 1\n"
+        "  exit /b 0\n"
+        ")\n"
+        + body
+    )
+
+
+def _python_invocations(repository: Path) -> list[str]:
+    path = repository / "python-invocations.log"
+    if not path.exists():
+        return []
+    return path.read_text(encoding="utf-8").splitlines()
 
 
 def _prepare_batch_repository(repository: Path) -> None:
@@ -116,6 +201,11 @@ def _prepare_batch_repository(repository: Path) -> None:
     scripts.mkdir(parents=True)
     (scripts / "run_batch_pipeline.py").touch()
     (scripts / "manage_scheduler_owner.py").touch()
+    (scripts / "verify_local_automation_readiness.py").write_text(
+        _script("verify_local_automation_readiness.py"),
+        encoding="utf-8",
+    )
+    _write_readiness_receipt(repository)
 
 
 def test_windows_daily_runner_is_owner_guarded() -> None:
@@ -434,11 +524,13 @@ def test_batch_preserves_child_json_and_successful_lease_lifecycle(
     fake_python = tmp_path / "fake-python.cmd"
     child_json = '{"schema_version":"child.v1","status":"succeeded"}'
     fake_python.write_text(
-        "@echo off\n"
-        "if \"%~2\"==\"acquire\" (echo {\"lease_id\":\"lease-1\"}& exit /b 0)\n"
-        f'if "%~2"=="run" (echo {child_json}& exit /b 0)\n'
-        "if \"%~2\"==\"release\" (echo {\"status\":\"released\"}& exit /b 0)\n"
-        "exit /b 99\n",
+        _fake_python_source(
+            repository,
+            "if \"%~2\"==\"acquire\" (echo {\"lease_id\":\"lease-1\"}& exit /b 0)\n"
+            f'if "%~2"=="run" (echo {child_json}& exit /b 0)\n'
+            "if \"%~2\"==\"release\" (echo {\"status\":\"released\"}& exit /b 0)\n"
+            "exit /b 99\n",
+        ),
         encoding="utf-8",
     )
 
@@ -456,13 +548,135 @@ def test_batch_preserves_child_json_and_successful_lease_lifecycle(
     assert ("child", "succeeded") in stages
     assert ("lease_release", "succeeded") in stages
     assert stages[-1] == ("runner_exit", "succeeded")
+    assert _python_invocations(repository) == [
+        "verify_local_automation_readiness.py --path",
+        "manage_scheduler_owner.py acquire",
+        "run_batch_pipeline.py run",
+        "manage_scheduler_owner.py release",
+    ]
 
 
-def test_batch_runner_has_optional_fail_closed_readiness_gate() -> None:
+def test_batch_runner_requires_fail_closed_readiness_gate() -> None:
     source = _script("run_scheduled_batch.ps1")
-    assert '[string]$ReadinessPath' in source
+    assert '[Parameter(Mandatory = $true)]\n    [string]$ReadinessPath' in source
     assert 'verify_local_automation_readiness.py' in source
     assert 'historical_daily_batch' in source
+    assert 'if ($ReadinessPath)' not in source
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1")
+def test_batch_direct_invocation_without_readiness_fails_before_setup(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    _prepare_batch_repository(repository)
+    fake_python = tmp_path / "fake-python.cmd"
+    fake_python.touch()
+
+    completed = _run_powershell(
+        "run_scheduled_batch.ps1",
+        _batch_arguments(repository, fake_python, include_readiness=False),
+    )
+
+    assert completed.returncode != 0
+    assert not (repository / "var").exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1")
+def test_batch_missing_readiness_receipt_stops_before_interpreter(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    _prepare_batch_repository(repository)
+    fake_python = tmp_path / "fake-python.cmd"
+    fake_python.write_text(
+        _fake_python_source(repository, "exit /b 99\n"),
+        encoding="utf-8",
+    )
+
+    completed = _run_powershell(
+        "run_scheduled_batch.ps1",
+        _batch_arguments(
+            repository,
+            fake_python,
+            readiness_path=repository / "missing-readiness.json",
+        ),
+    )
+
+    assert completed.returncode == 1
+    assert _python_invocations(repository) == []
+    events = _events(repository, "scheduled-batch")
+    assert any(
+        event["stage"] == "setup" and event["status"] == "failed"
+        for event in events
+    )
+    assert not any(
+        event["stage"] in {"lease_acquire", "child", "lease_release"}
+        for event in events
+    )
+
+
+def _assert_readiness_stops_batch(repository: Path) -> None:
+    assert _python_invocations(repository) == [
+        "verify_local_automation_readiness.py --path"
+    ]
+    events = _events(repository, "scheduled-batch")
+    assert any(
+        event["stage"] == "setup" and event["status"] == "failed"
+        for event in events
+    )
+    assert not any(
+        event["stage"] in {"lease_acquire", "child", "lease_release"}
+        for event in events
+    )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1")
+def test_batch_invalid_readiness_receipt_stops_before_lease(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    _prepare_batch_repository(repository)
+    _write_readiness_receipt(repository, content="not-json")
+    fake_python = tmp_path / "fake-python.cmd"
+    fake_python.write_text(
+        _fake_python_source(repository, "exit /b 99\n"),
+        encoding="utf-8",
+    )
+
+    completed = _run_powershell(
+        "run_scheduled_batch.ps1",
+        _batch_arguments(repository, fake_python),
+    )
+
+    assert completed.returncode == 1
+    _assert_readiness_stops_batch(repository)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1")
+def test_batch_no_go_readiness_receipt_stops_before_lease(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    _prepare_batch_repository(repository)
+    _write_readiness_receipt(
+        repository,
+        status="NO-GO",
+        reason_codes=["automatic_operation_not_accepted"],
+    )
+    fake_python = tmp_path / "fake-python.cmd"
+    fake_python.write_text(
+        _fake_python_source(repository, "exit /b 99\n"),
+        encoding="utf-8",
+    )
+
+    completed = _run_powershell(
+        "run_scheduled_batch.ps1",
+        _batch_arguments(repository, fake_python),
+    )
+
+    assert completed.returncode == 1
+    _assert_readiness_stops_batch(repository)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1")
@@ -474,11 +688,13 @@ def test_batch_preflight_failure_preserves_stderr_without_manifest(
     fake_python = tmp_path / "fake-python.cmd"
     error_json = '{"schema_version":"batch_cli_error.v1","status":"failed"}'
     fake_python.write_text(
-        "@echo off\n"
-        "if \"%~2\"==\"acquire\" (echo {\"lease_id\":\"lease-1\"}& exit /b 0)\n"
-        f'if "%~2"=="run" (echo {error_json} 1>&2& exit /b 7)\n'
-        "if \"%~2\"==\"release\" (echo {\"status\":\"released\"}& exit /b 0)\n"
-        "exit /b 99\n",
+        _fake_python_source(
+            repository,
+            "if \"%~2\"==\"acquire\" (echo {\"lease_id\":\"lease-1\"}& exit /b 0)\n"
+            f'if "%~2"=="run" (echo {error_json} 1>&2& exit /b 7)\n'
+            "if \"%~2\"==\"release\" (echo {\"status\":\"released\"}& exit /b 0)\n"
+            "exit /b 99\n",
+        ),
         encoding="utf-8",
     )
 
@@ -519,11 +735,13 @@ def test_batch_release_failure_is_fail_closed(tmp_path: Path) -> None:
     fake_python = tmp_path / "fake-python.cmd"
     child_json = '{"schema_version":"child.v1","status":"succeeded"}'
     fake_python.write_text(
-        "@echo off\n"
-        "if \"%~2\"==\"acquire\" (echo {\"lease_id\":\"lease-1\"}& exit /b 0)\n"
-        f'if "%~2"=="run" (echo {child_json}& exit /b 0)\n'
-        "if \"%~2\"==\"release\" (echo release-failed 1>&2& exit /b 9)\n"
-        "exit /b 99\n",
+        _fake_python_source(
+            repository,
+            "if \"%~2\"==\"acquire\" (echo {\"lease_id\":\"lease-1\"}& exit /b 0)\n"
+            f'if "%~2"=="run" (echo {child_json}& exit /b 0)\n'
+            "if \"%~2\"==\"release\" (echo release-failed 1>&2& exit /b 9)\n"
+            "exit /b 99\n",
+        ),
         encoding="utf-8",
     )
 
@@ -550,9 +768,11 @@ def test_batch_acquire_failure_stops_before_child_or_release(tmp_path: Path) -> 
     _prepare_batch_repository(repository)
     fake_python = tmp_path / "fake-python.cmd"
     fake_python.write_text(
-        "@echo off\n"
-        "if \"%~2\"==\"acquire\" (echo acquire-failed 1>&2& exit /b 8)\n"
-        "exit /b 99\n",
+        _fake_python_source(
+            repository,
+            "if \"%~2\"==\"acquire\" (echo acquire-failed 1>&2& exit /b 8)\n"
+            "exit /b 99\n",
+        ),
         encoding="utf-8",
     )
 
@@ -581,14 +801,16 @@ def test_batch_mirrors_native_output_before_child_exits(tmp_path: Path) -> None:
     fake_python = tmp_path / "fake-python.cmd"
     child_json = '{"schema_version":"child.v1","status":"succeeded"}'
     fake_python.write_text(
-        "@echo off\n"
-        "if \"%~2\"==\"acquire\" (echo {\"lease_id\":\"lease-1\"}& exit /b 0)\n"
-        "if \"%~2\"==\"run\" ("
-        "echo early-native-evidence 1>&2& "
-        "ping 127.0.0.1 -n 4 >nul& "
-        f"echo {child_json}& exit /b 0)\n"
-        "if \"%~2\"==\"release\" (echo {\"status\":\"released\"}& exit /b 0)\n"
-        "exit /b 99\n",
+        _fake_python_source(
+            repository,
+            "if \"%~2\"==\"acquire\" (echo {\"lease_id\":\"lease-1\"}& exit /b 0)\n"
+            "if \"%~2\"==\"run\" ("
+            "echo early-native-evidence 1>&2& "
+            "ping 127.0.0.1 -n 4 >nul& "
+            f"echo {child_json}& exit /b 0)\n"
+            "if \"%~2\"==\"release\" (echo {\"status\":\"released\"}& exit /b 0)\n"
+            "exit /b 99\n",
+        ),
         encoding="utf-8",
     )
     command = [
@@ -638,17 +860,19 @@ def test_batch_logger_failure_after_acquire_still_releases_lease(
     events_glob = repository / "var" / "local_services" / "*.events.jsonl"
     fake_python = tmp_path / "fake-python.cmd"
     fake_python.write_text(
-        "@echo off\n"
-        "if \"%~2\"==\"acquire\" goto acquire\n"
-        "if \"%~2\"==\"release\" goto release\n"
-        "exit /b 99\n"
-        ":acquire\n"
-        "echo {\"lease_id\":\"lease-1\"}\n"
-        f'for %%F in ("{events_glob}") do (del "%%~fF" & mkdir "%%~fF")\n'
-        "exit /b 0\n"
-        ":release\n"
-        f'echo attempted>"{release_marker}"\n'
-        "exit /b 0\n",
+        _fake_python_source(
+            repository,
+            "if \"%~2\"==\"acquire\" goto acquire\n"
+            "if \"%~2\"==\"release\" goto release\n"
+            "exit /b 99\n"
+            ":acquire\n"
+            "echo {\"lease_id\":\"lease-1\"}\n"
+            f'for %%F in ("{events_glob}") do (del "%%~fF" & mkdir "%%~fF")\n'
+            "exit /b 0\n"
+            ":release\n"
+            f'echo attempted>"{release_marker}"\n'
+            "exit /b 0\n",
+        ),
         encoding="utf-8",
     )
 
