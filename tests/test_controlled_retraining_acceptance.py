@@ -23,6 +23,7 @@ import wind_forecast.retraining_lifecycle as lifecycle
 import wind_forecast.retraining_registry as registry
 from wind_forecast.manifest_validation import validate_v1_source_contract
 from wind_forecast.manifests import sha256_file
+from wind_forecast.v1_contracts import load_serving_contract
 from wind_forecast.monitoring import MonitoringConfig, run_historical_monitoring
 from wind_forecast.orchestration import (
     BatchConfig,
@@ -60,31 +61,6 @@ PROBATION_DAY = "2026-06-01"
 BOOTSTRAP_NOW = datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc)
 PROMOTION_NOW = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
 GIT_SHA = "b" * 40
-
-V1_NON_DATA_SHA256 = {
-    "models/best_model_log_target_ANN_Tuned.keras": (
-        "928b9b084d2cc996eb3f51c207f1a1d49fed03595fe269285b7005e5699f9964"
-    ),
-    "models/best_model_original_target_ANN_Tuned.keras": (
-        "89fab64f576c517d267b83e426653ff3eb85e1445a42ad95d4c200ed5c89eacf"
-    ),
-    "models/scaler_X_log_ann.joblib": (
-        "14065af6d824fce7a3c92f9eddb514f59f25329750360242525002e84e95ee54"
-    ),
-    "models/scaler_X_original_ann.joblib": (
-        "14065af6d824fce7a3c92f9eddb514f59f25329750360242525002e84e95ee54"
-    ),
-    "models/scaler_y_log_ann.joblib": (
-        "0d510b2c97e41c51d80b3e3918859fb15b32b44c62557e4c6a4fcc8d92badc2d"
-    ),
-    "models/scaler_y_original_ann.joblib": (
-        "6ab59c8e4198111f95b14008f213d81997925c5a953e5e23f60157bd12b906dc"
-    ),
-    "notebooks/Modeling.ipynb": (
-        "7609c5599880462965bc5c13d746d0d590a8ad98bed1fb7204226308fed7baeb"
-    ),
-}
-
 
 def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1402,11 +1378,11 @@ def test_failure_before_pointer_commit_restores_aliases_and_records_evidence(
     assert reconciliation["automatic_rollback_attempted"] is False
 
 
-def test_v1_artifacts_keep_the_accepted_sha256() -> None:
+def test_v1_artifacts_keep_the_serving_contract_sha256() -> None:
     project_root = Path(__file__).resolve().parents[1]
     validate_v1_source_contract(mode="metadata")
-    observed = {
-        relative: sha256_file(project_root / relative)
-        for relative in V1_NON_DATA_SHA256
-    }
-    assert observed == V1_NON_DATA_SHA256
+    contract = load_serving_contract(verify_files=True)
+    for record in contract["targets"].values():
+        for artifact in (record["model"], record["scaler_x"], record["scaler_y"]):
+            path = project_root / artifact["path"]
+            assert sha256_file(path) == artifact["sha256"]

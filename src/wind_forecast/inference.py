@@ -7,12 +7,17 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .paths import processed_data_dir
+from .paths import models_dir as repository_models_dir, processed_data_dir, project_root
 from .schemas import DATE_COLUMN, TARGET_COLUMN, english_column_to_legacy, rename_legacy_columns_to_english
+from .v1_contracts import (
+    V1ContractError,
+    load_processed_contract,
+    load_serving_contract,
+    serving_artifacts,
+)
 
 
-BEST_MODEL_ORIG_NAME_FROM_NOTEBOOK = "ANN_Tuned"
-BEST_MODEL_LOG_NAME_FROM_NOTEBOOK = "ANN_Tuned"
+V1_MODEL_NAME = "ANN_Tuned"
 
 
 def load_new_data(filepath: Path) -> pd.DataFrame:
@@ -27,7 +32,18 @@ def load_new_data(filepath: Path) -> pd.DataFrame:
 
 
 def model_and_scaler_paths(model_name: str, target_type: str, models_dir: Path):
-    """Return model and scaler paths using the saved artifact naming convention."""
+    """Return model and scaler paths from the serving contract when applicable."""
+    if (
+        model_name == V1_MODEL_NAME
+        and target_type in {"original", "log"}
+        and models_dir.resolve() == repository_models_dir().resolve()
+    ):
+        record = serving_artifacts(target_type)
+        return (
+            (project_root() / record["model"]["path"]).resolve(),
+            (project_root() / record["scaler_x"]["path"]).resolve(),
+            (project_root() / record["scaler_y"]["path"]).resolve(),
+        )
     if "ANN" in model_name:
         return (
             models_dir / f"best_model_{target_type}_target_{model_name}.keras",
@@ -41,6 +57,16 @@ def model_and_scaler_paths(model_name: str, target_type: str, models_dir: Path):
 def load_trained_model_and_scalers(model_name: str, target_type: str, models_dir: Path):
     """Load a trained model and its associated scalers when required."""
     import joblib
+
+    if (
+        model_name == V1_MODEL_NAME
+        and target_type in {"original", "log"}
+        and models_dir.resolve() == repository_models_dir().resolve()
+    ):
+        try:
+            load_serving_contract(verify_files=True)
+        except V1ContractError as exc:
+            raise RuntimeError(f"v1 serving contract validation failed: {exc}") from exc
 
     print(f"Loading best {target_type} target model: {model_name}")
     model_instance = None
@@ -76,6 +102,9 @@ def load_trained_model_and_scalers(model_name: str, target_type: str, models_dir
 
 def load_training_feature_columns(historical_file: Path | None = None) -> list[str]:
     """Load the feature order used by the saved models."""
+    if historical_file is None:
+        contract = load_processed_contract(verify_dataset=True)
+        return list(contract["columns"][2:])
     historical_file = historical_file or (processed_data_dir() / "agg_data_ml.csv")
     df_historical_for_cols = pd.read_csv(historical_file, nrows=1)
     df_historical_for_cols = rename_legacy_columns_to_english(df_historical_for_cols)

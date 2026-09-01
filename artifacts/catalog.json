@@ -1,8 +1,16 @@
 {
-  "schema_version": "wind_forecast.release_catalog.v2",
+  "schema_version": "wind_forecast.release_catalog.v3",
   "releases": {
     "artifacts-v1.0.0": {
       "bundle_sha256": null,
+      "source_contract": {
+        "path": "data/manifests/v1_source_contract.json",
+        "sha256": "b3c31893e45fdb19d06eac53cc1368f452e8037c016e3855c79396a151421d4b"
+      },
+      "processed_contract": {
+        "path": "data/manifests/v1_processed_contract.json",
+        "sha256": "0c663fde346bb432e81a46dc21c80f9a5cba774a649ea3934468d603003a1e3a"
+      },
       "redistribution": {
         "approved": false,
         "authorization_evidence": [],

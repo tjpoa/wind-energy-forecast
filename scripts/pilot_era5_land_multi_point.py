@@ -858,7 +858,7 @@ def metadata_payload(
         "notes": [
             "Generated for Checkpoint 2 limited multi-point seasonal ERA5-Land pilot.",
             "The pilot does not select a final v2 weather source or validate current model/scaler compatibility.",
-            "Current v1 raw, processed, model, scaler, notebook, and validator assets are not modified.",
+            "Current v1 raw, processed, model, scaler, and validator assets are not modified.",
         ],
     }
 

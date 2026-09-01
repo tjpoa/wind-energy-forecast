@@ -171,7 +171,7 @@ def temporal_train_test_split(
     *,
     test_fraction: float = 0.2,
 ) -> TemporalSplit:
-    """Split rows chronologically, preserving the notebook's final holdout intent."""
+    """Split rows chronologically, preserving the accepted v1 holdout intent."""
     if not 0 < test_fraction < 1:
         raise ValueError("test_fraction must be between 0 and 1.")
     if len(features) != len(target) or len(features) != len(dates):
