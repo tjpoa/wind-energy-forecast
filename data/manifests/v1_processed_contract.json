@@ -2,7 +2,7 @@
   "schema_version": "wind_forecast.v1_processed_contract.v1",
   "transformation_version": "v1_preprocessing.v1",
   "source_contract_path": "data/manifests/v1_source_contract.json",
-  "source_contract_sha256": "b66b1c8957d900e42bff4bd210a14f7ba88a50f82e39979991dcf3fbba0274fa",
+  "source_contract_sha256": "b3c31893e45fdb19d06eac53cc1368f452e8037c016e3855c79396a151421d4b",
   "dataset_path": "data/processed/agg_data_ml.csv",
   "dataset_sha256": "888d9629f89ea18d3f704a0e5298b041a4aedb9b56cc3255b4dcd749798fafc5",
   "row_count": 4017,

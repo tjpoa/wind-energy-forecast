@@ -16,9 +16,8 @@ import re
 from typing import Any
 
 from .manifest_validation import validate_v1_source_contract
-from .manifests import sha256_file
 from .paths import project_root
-from .v1_contracts import V1ContractError, load_processed_contract
+from .v1_contracts import V1ContractError, contract_sha256, load_processed_contract
 
 CATALOG_SCHEMA_V1 = "wind_forecast.release_catalog.v1"
 CATALOG_SCHEMA_V2 = "wind_forecast.release_catalog.v2"
@@ -377,7 +376,11 @@ def _resolve_contract_file(
         raise ReleaseCatalogError(f"Release {field} path escapes repository root.") from exc
     if not candidate.is_file():
         raise ReleaseCatalogError(f"Release {field} file is missing: {candidate}.")
-    if sha256_file(candidate) != digest:
+    try:
+        actual = contract_sha256(candidate)
+    except OSError as exc:
+        raise ReleaseCatalogError(f"Could not hash release {field} file: {exc}.") from exc
+    if actual != digest:
         raise ReleaseCatalogError(f"Release {field} hash does not match catalog.")
     return candidate, digest
 

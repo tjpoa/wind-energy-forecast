@@ -3,7 +3,7 @@
   "status": "legacy_inference_only",
   "processed_contract": {
     "path": "data/manifests/v1_processed_contract.json",
-    "sha256": "f55d8ffd1ea2dbacf551fc92b01a4062ea44714e54bd80d6b6ca87d8b0720b07"
+    "sha256": "0c663fde346bb432e81a46dc21c80f9a5cba774a649ea3934468d603003a1e3a"
   },
   "dataset_sha256": "888d9629f89ea18d3f704a0e5298b041a4aedb9b56cc3255b4dcd749798fafc5",
   "feature_contract": {

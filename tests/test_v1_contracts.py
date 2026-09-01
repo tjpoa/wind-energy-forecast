@@ -26,6 +26,8 @@ def test_v1_processed_and_serving_contracts_are_consistent() -> None:
 
 
 def test_serving_contract_rejects_tampered_artifact(tmp_path: Path) -> None:
+    if not Path("data/processed/agg_data_ml.csv").is_file():
+        pytest.skip("authorized local processed snapshot is not present")
     (tmp_path / "models").mkdir()
     (tmp_path / "data" / "manifests").mkdir(parents=True)
     (tmp_path / "data" / "processed").mkdir(parents=True)

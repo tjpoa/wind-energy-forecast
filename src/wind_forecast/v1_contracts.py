@@ -33,6 +33,18 @@ def canonical_sha256(value: object) -> str:
     return sha256(encoded).hexdigest()
 
 
+def contract_sha256(path: str | Path) -> str:
+    """Hash a JSON contract independently of checkout line endings.
+
+    Git may materialize tracked JSON as CRLF on Windows. Contract references
+    describe the logical JSON snapshot, so normalize line endings before
+    hashing while keeping byte-exact hashes for datasets and model artifacts.
+    """
+    raw = Path(path).read_bytes()
+    normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return sha256(normalized).hexdigest()
+
+
 def load_processed_contract(
     path: str | Path | None = None,
     *,
@@ -176,7 +188,7 @@ def _validate_processed_contract(
     source_path = _relative_artifact_path(
         payload.get("source_contract_path"), root, "source_contract_path"
     )
-    if sha256_file(source_path) != source_hash:
+    if contract_sha256(source_path) != source_hash:
         raise V1ContractError("Processed contract source contract hash does not match its file.")
     if verify_dataset:
         if not dataset_path.is_file():
@@ -195,7 +207,7 @@ def _validate_serving_contract(
         raise V1ContractError("Serving contract must declare processed_contract.")
     processed_path = _relative_artifact_path(dataset_contract.get("path"), root, "processed_contract.path")
     processed_hash = _require_sha(dataset_contract.get("sha256"), "processed_contract.sha256")
-    if sha256_file(processed_path) != processed_hash:
+    if contract_sha256(processed_path) != processed_hash:
         raise V1ContractError("Serving contract processed contract hash does not match its file.")
     processed = load_processed_contract(processed_path, repository_root=root, verify_dataset=False)
     if processed["dataset_sha256"] != payload.get("dataset_sha256"):
@@ -245,6 +257,7 @@ __all__ = [
     "V1_PROCESSED_CONTRACT_PATH",
     "V1_SERVING_CONTRACT_PATH",
     "canonical_sha256",
+    "contract_sha256",
     "load_processed_contract",
     "load_serving_contract",
     "serving_artifacts",
