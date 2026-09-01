@@ -49,6 +49,8 @@ except ModuleNotFoundError:
         write_json,
     )
 
+from wind_forecast.manifest_validation import validate_v1_source_contract
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = PROJECT_ROOT / "data" / "pilot" / "era5_land"
@@ -863,6 +865,7 @@ def metadata_payload(
 
 def run_download(requests: list[PlannedRequest], *, reuse_raw: bool = False) -> dict[str, Any]:
     """Run the fixed live pilot or rebuild from existing raw files."""
+    validate_v1_source_contract(required_paths=list(RAW_WEATHER_MATRICES.values()))
     combined_paths = combined_output_paths()
     retrievals = existing_raw_files(requests) if reuse_raw else retrieve_raw_files(requests)
     hourly, daily_points, extraction_metadata = build_hourly_and_daily_frames(requests)

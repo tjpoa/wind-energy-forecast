@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from wind_forecast.integration import build_integrated_v2_dataset
+from wind_forecast.manifest_validation import validate_v1_source_contract
 
 
 def parse_args() -> argparse.Namespace:
@@ -58,6 +59,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     """CLI entry point."""
     args = parse_args()
+    validate_v1_source_contract(required_paths=[args.v1_production])
     result = build_integrated_v2_dataset(
         start_date=args.start_date,
         end_date=args.end_date,

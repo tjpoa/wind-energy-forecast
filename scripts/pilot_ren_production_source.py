@@ -13,6 +13,8 @@ from typing import Any
 import pandas as pd
 import requests
 
+from wind_forecast.manifest_validation import validate_v1_source_contract
+
 
 REN_PRODUCTION_ENDPOINT = (
     "https://servicebus.ren.pt/datahubapi/electricity/"
@@ -312,6 +314,8 @@ def compare_with_local(date_str: str, payload: Any, local_csv: Path) -> tuple[pd
 def run_probe(date_str: str, output_dir: Path, timeout: float, local_csv: Path | None = None) -> dict[str, Any]:
     """Run one REN probe and write deterministic outputs."""
     requested_date = validate_date(date_str)
+    if local_csv is not None:
+        validate_v1_source_contract(required_paths=[local_csv])
     retrieved_at = utc_timestamp()
     response = request_ren_production(requested_date, timeout)
     payload = safe_json(response)

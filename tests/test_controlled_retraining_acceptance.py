@@ -21,6 +21,7 @@ import wind_forecast.retraining_backtesting as backtesting
 import wind_forecast.retraining_deployment as deployment
 import wind_forecast.retraining_lifecycle as lifecycle
 import wind_forecast.retraining_registry as registry
+from wind_forecast.manifest_validation import validate_v1_source_contract
 from wind_forecast.manifests import sha256_file
 from wind_forecast.monitoring import MonitoringConfig, run_historical_monitoring
 from wind_forecast.orchestration import (
@@ -60,19 +61,7 @@ BOOTSTRAP_NOW = datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc)
 PROMOTION_NOW = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
 GIT_SHA = "b" * 40
 
-V1_SHA256 = {
-    "data/raw/DirecaoMediaVento10m.csv": (
-        "289aa375b4c6a371ab4ca649b999ee4ac1cb16e29a5efea01ede86bca8ba08bd"
-    ),
-    "data/raw/IntensidadeMediaVento10m.csv": (
-        "e09e94f07618ddb4d52d0b53f46a69e1d6b64814a142e69ee57161f4199e842c"
-    ),
-    "data/raw/ReparticaoProducao.csv": (
-        "f161d8401ba5c5af69786392b72b3730ac77d4ffb2df21d2cdedc110815737b6"
-    ),
-    "data/raw/TemperaturaMedia.csv": (
-        "ce2829f328e46a99f942343ff0a5a27f18319b5a1dc5728c5c110692596fcef4"
-    ),
+V1_NON_DATA_SHA256 = {
     "models/best_model_log_target_ANN_Tuned.keras": (
         "928b9b084d2cc996eb3f51c207f1a1d49fed03595fe269285b7005e5699f9964"
     ),
@@ -1415,8 +1404,9 @@ def test_failure_before_pointer_commit_restores_aliases_and_records_evidence(
 
 def test_v1_tracked_artifacts_keep_the_accepted_sha256() -> None:
     project_root = Path(__file__).resolve().parents[1]
+    validate_v1_source_contract()
     observed = {
         relative: sha256_file(project_root / relative)
-        for relative in V1_SHA256
+        for relative in V1_NON_DATA_SHA256
     }
-    assert observed == V1_SHA256
+    assert observed == V1_NON_DATA_SHA256

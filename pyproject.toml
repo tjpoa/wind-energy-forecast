@@ -10,6 +10,7 @@ requires-python = ">=3.10"
 
 [project.scripts]
 wind-forecast-batch = "wind_forecast.batch_cli:main"
+wind-forecast-validate-manifest = "wind_forecast.manifest_validation:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -83,6 +83,7 @@ new version or an explicit immutable evidence record.
 | `POST /predict` | Saved-model inference | Legacy v1 artifacts |
 | `POST /api/v1/operational-query` | Typed operational questions | Numeric loopback only |
 | `scripts/run_batch_pipeline.py` | Plan/run historical batch | Explicit artifacts and leases |
+| `wind-forecast-validate-manifest` | Validate manifest paths and hashes | Local integrity or release provenance |
 
 The operational copilot and PostgreSQL projection are implemented as
 default-disabled, read-only extensions. Candidate adapters are not activated.
@@ -94,6 +95,13 @@ REN/ERA5-Land path uses separate versioned directories and does not silently
 replace v1 data, scalers, or serving behaviour. ERA5-Land is reanalysis data,
 so the accepted v2 result is a retrospective hindcast, not a day-ahead
 forecast.
+
+The four v1 raw CSV hashes are owned exclusively by
+`data/manifests/v1_source_contract.json`. Supported Python readers validate the
+complete v1 snapshot before reading it. Local `integrity` validation checks
+paths and bytes; `release` validation additionally requires complete source
+provenance and is intentionally blocked while the v1 contract remains
+`provenance_incomplete`.
 
 The real-data release catalog remains blocked until source, licence,
 attribution, and redistribution approval are complete. The tracked `demo/v1`

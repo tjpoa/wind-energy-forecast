@@ -34,6 +34,7 @@ from wind_forecast.data_sources.ren import (
     write_unavailable_status,
 )
 from wind_forecast.paths import v2_raw_production_dir
+from wind_forecast.manifest_validation import validate_v1_source_contract
 
 
 def parse_args() -> argparse.Namespace:
@@ -101,6 +102,9 @@ def run_ingestion(
         raise ValueError("timeout must be greater than zero.")
     if request_delay < 0:
         raise ValueError("request_delay must be zero or greater.")
+
+    if compare_v1_csv is not None and not dry_run:
+        validate_v1_source_contract(required_paths=[compare_v1_csv])
 
     dates = iter_inclusive_dates(start_date, end_date)
     output_root = Path(output_root)
