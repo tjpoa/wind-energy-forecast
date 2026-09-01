@@ -9,6 +9,7 @@ from wind_forecast.features import (
     handle_final_nans,
 )
 from wind_forecast.ingestion import fetch_weather_api_data
+from wind_forecast.manifest_validation import validate_v1_source_contract
 from wind_forecast.schemas import (
     DATE_COLUMN,
     RAW_DATE_TIME_COLUMN,
@@ -60,6 +61,7 @@ def load_and_process_production_data(filepath: Path) -> pd.DataFrame:
 
 
 def main() -> None:
+    validate_v1_source_contract(required_paths=[PRODUCTION_RAW_FILE])
     api_config = load_weather_api_config(load_dotenv_file=True)
     df_api_weather = fetch_weather_api_data(
         api_config.api_key,

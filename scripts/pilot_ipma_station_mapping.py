@@ -13,6 +13,8 @@ from typing import Any
 import pandas as pd
 import requests
 
+from wind_forecast.manifest_validation import validate_v1_source_contract
+
 
 IPMA_STATIONS_URL = "https://api.ipma.pt/open-data/observation/meteorology/stations/stations.json"
 IPMA_SURFACE_URL = "https://api.ipma.pt/open-data/observation/meteorology/stations/obs-surface.geojson"
@@ -431,6 +433,9 @@ def run_mapping_probe(
 ) -> dict[str, Any]:
     """Run the IPMA station-mapping probe."""
     optional_matrices = optional_matrices or []
+    validate_v1_source_contract(
+        required_paths=[weather_matrix, *optional_matrices]
+    )
     retrieved_at = utc_timestamp()
     v1_ids = extract_station_ids(weather_matrix)
     warnings = validate_optional_matrices(v1_ids, optional_matrices)
