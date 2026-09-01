@@ -8,11 +8,25 @@ inputs:
   release-enabled:
     description: Explicit PRODUCTION_RELEASE_ENABLED feature flag.
     required: true
+  identity:
+    description: Readiness identity (publisher, planner, or deployer). Empty keeps legacy validation-only behaviour.
+    required: false
+  azure-client-id:
+    description: Client ID used only for the short-lived readiness login.
+    required: false
+  github-token:
+    description: Token used for the read-only GitHub environment probe.
+    required: false
+  output-path:
+    description: Sanitized readiness component receipt path.
+    required: false
+    default: azure-readiness-component.json
 
 runs:
   using: composite
-  steps:
-    - name: Validate protected Azure configuration
+steps:
+    - name: Validate protected Azure configuration (legacy path)
+      if: ${{ inputs.identity == '' }}
       shell: bash
       env:
         RELEASE_ENABLED: ${{ inputs.release-enabled }}
@@ -22,3 +36,77 @@ runs:
           preflight \
           --mode "${{ inputs.mode }}" \
           --release-enabled "$RELEASE_ENABLED"
+
+    - name: Authenticate Azure for read-only readiness probes
+      if: ${{ inputs.identity != '' }}
+      id: azure_login
+      continue-on-error: true
+      uses: azure/login@v2
+      with:
+        client-id: ${{ inputs.azure-client-id }}
+        tenant-id: ${{ env.AZURE_TENANT_ID }}
+        subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Collect sanitized Azure/GitHub readiness evidence
+      if: ${{ inputs.identity != '' }}
+      shell: bash
+      env:
+        AZURE_LOGIN_OUTCOME: ${{ steps.azure_login.outcome }}
+        PREFLIGHT_GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+        python "$GITHUB_WORKSPACE/scripts/collect_azure_readiness.py" \
+          --mode "${{ inputs.mode }}" \
+          --output "${{ inputs.output-path }}"
+
+    - name: Seal readiness component receipt
+      if: ${{ inputs.identity != '' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python "$GITHUB_WORKSPACE/scripts/validate_azure_workflow.py" \
+          readiness-component \
+          --mode "${{ inputs.mode }}" \
+          --evidence "${{ inputs.output-path }}" \
+          --repository "$GITHUB_REPOSITORY" \
+          --workflow "$GITHUB_WORKFLOW" \
+          --source-sha "${READINESS_SOURCE_SHA:-$GITHUB_SHA}" \
+          --ref "$GITHUB_REF" \
+          --workflow-run-id "$GITHUB_RUN_ID" \
+          --run-attempt "$GITHUB_RUN_ATTEMPT" \
+          --output "${{ inputs.output-path }}"
+
+    - name: Upload immutable readiness component receipt
+      if: ${{ always() && inputs.identity != '' }}
+      id: upload_component
+      uses: actions/upload-artifact@v4
+      with:
+        name: azure-readiness-${{ inputs.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ inputs.output-path }}
+        if-no-files-found: error
+        retention-days: 90
+
+    - name: Record readiness component evidence in job summary
+      if: ${{ always() && inputs.identity != '' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        receipt_id="unavailable"
+        if [[ -f "${{ inputs.output-path }}" ]]; then
+          receipt_id="$(jq -r '.receipt_id' "${{ inputs.output-path }}")"
+        fi
+        {
+          echo "### Azure readiness component"
+          echo "- Receipt ID / SHA-256: \`$receipt_id\`"
+          echo "- Artifact digest: \`${{ steps.upload_component.outputs.artifact-digest }}\`"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Fail closed on readiness decision
+      if: ${{ always() && inputs.identity != '' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python "$GITHUB_WORKSPACE/scripts/validate_azure_workflow.py" \
+          readiness-component-assert \
+          --path "${{ inputs.output-path }}" \
+          --mode "${{ inputs.mode }}"

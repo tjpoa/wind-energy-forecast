@@ -133,9 +133,23 @@ resource "azurerm_role_assignment" "planner_state_reader" {
   principal_type     = "ServicePrincipal"
 }
 
+resource "azurerm_role_assignment" "planner_state_control_reader" {
+  scope              = azurerm_storage_account.state.id
+  role_definition_id = local.reader_role_id
+  principal_id       = azurerm_user_assigned_identity.planner.principal_id
+  principal_type     = "ServicePrincipal"
+}
+
 resource "azurerm_role_assignment" "deployer_state_contributor" {
   scope              = azurerm_storage_account.state.id
   role_definition_id = local.storage_blob_data_contributor_role_id
+  principal_id       = azurerm_user_assigned_identity.deployer.principal_id
+  principal_type     = "ServicePrincipal"
+}
+
+resource "azurerm_role_assignment" "deployer_state_control_reader" {
+  scope              = azurerm_storage_account.state.id
+  role_definition_id = local.reader_role_id
   principal_id       = azurerm_user_assigned_identity.deployer.principal_id
   principal_type     = "ServicePrincipal"
 }

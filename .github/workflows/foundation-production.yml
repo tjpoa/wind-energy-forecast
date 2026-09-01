@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   id-token: write
 
 concurrency:
@@ -27,11 +28,132 @@ env:
   TF_VAR_acr_name: ${{ vars.AZURE_ACR_NAME }}
   TF_VAR_environment_name: ${{ vars.AZURE_ENVIRONMENT_NAME || 'wind-forecast-demo-env' }}
   TF_VAR_runtime_identity_name: ${{ vars.AZURE_RUNTIME_IDENTITY_NAME || 'wind-forecast-demo-runtime' }}
+  READINESS_SOURCE_SHA: ${{ github.sha }}
 
 jobs:
+  readiness-planner:
+    name: Readiness foundation planner and remote state
+    if: ${{ github.ref == 'refs/heads/master' }}
+    runs-on: ubuntu-latest
+    env:
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'wind-energy-forecast-demo' }}
+      AZURE_PLANNER_CLIENT_ID: ${{ secrets.AZURE_PLANNER_CLIENT_ID }}
+      AZURE_BUDGET_ALERT_EMAIL: ${{ secrets.AZURE_BUDGET_ALERT_EMAIL }}
+      AZURE_BUDGET_START_DATE: ${{ vars.AZURE_BUDGET_START_DATE }}
+      AZURE_BUDGET_END_DATE: ${{ vars.AZURE_BUDGET_END_DATE }}
+    steps:
+      - name: Check out the protected master commit
+        uses: actions/checkout@v4
+      - name: Run foundation planner readiness preflight
+        uses: ./.github/actions/azure-preflight
+        with:
+          mode: foundation-plan
+          identity: planner
+          azure-client-id: ${{ secrets.AZURE_PLANNER_CLIENT_ID }}
+          github-token: ${{ github.token }}
+          release-enabled: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
+          output-path: azure-readiness-foundation-plan.json
+
+  readiness-deployer:
+    name: Readiness protected foundation deployer
+    if: ${{ github.ref == 'refs/heads/master' }}
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'wind-energy-forecast-demo' }}
+      AZURE_DEPLOYER_CLIENT_ID: ${{ secrets.AZURE_DEPLOYER_CLIENT_ID }}
+      AZURE_BUDGET_ALERT_EMAIL: ${{ secrets.AZURE_BUDGET_ALERT_EMAIL }}
+      AZURE_BUDGET_START_DATE: ${{ vars.AZURE_BUDGET_START_DATE }}
+      AZURE_BUDGET_END_DATE: ${{ vars.AZURE_BUDGET_END_DATE }}
+    steps:
+      - name: Check out the protected master commit
+        uses: actions/checkout@v4
+      - name: Run foundation deployer readiness preflight
+        uses: ./.github/actions/azure-preflight
+        with:
+          mode: foundation-apply
+          identity: deployer
+          azure-client-id: ${{ secrets.AZURE_DEPLOYER_CLIENT_ID }}
+          github-token: ${{ github.token }}
+          release-enabled: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
+          output-path: azure-readiness-foundation-apply.json
+
+  readiness-gate:
+    name: Aggregate protected foundation readiness
+    needs:
+      - readiness-planner
+      - readiness-deployer
+    if: ${{ always() && github.ref == 'refs/heads/master' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the protected master commit
+        if: ${{ always() }}
+        uses: actions/checkout@v4
+      - name: Download component readiness receipts
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: azure-readiness-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: readiness-components
+          merge-multiple: true
+      - name: Build aggregate readiness receipt
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_azure_workflow.py readiness-aggregate \
+            --directory readiness-components \
+            --modes foundation-plan,foundation-apply \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow "$GITHUB_WORKFLOW" \
+            --source-sha "$READINESS_SOURCE_SHA" \
+            --ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --output azure-readiness.json
+      - name: Upload immutable aggregate readiness receipt
+        if: ${{ always() }}
+        id: upload_readiness
+        uses: actions/upload-artifact@v4
+        with:
+          name: azure-readiness-${{ github.run_id }}-${{ github.run_attempt }}
+          path: azure-readiness.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record readiness evidence in job summary
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt_id="unavailable"
+          if [[ -f azure-readiness.json ]]; then
+            receipt_id="$(jq -r '.receipt_id' azure-readiness.json)"
+          fi
+          {
+            echo "### Azure readiness"
+            echo "- Receipt ID / SHA-256: \`$receipt_id\`"
+            echo "- Artifact digest: \`${{ steps.upload_readiness.outputs.artifact-digest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Fail closed on aggregate readiness
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_azure_workflow.py readiness-receipt \
+            --path azure-readiness.json \
+            --assert-go \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow "$GITHUB_WORKFLOW" \
+            --source-sha "$READINESS_SOURCE_SHA" \
+            --ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
+
   plan-foundation:
     name: Plan Terraform foundation
-    if: ${{ github.ref == 'refs/heads/master' }}
+    needs: readiness-gate
+    if: ${{ needs.readiness-gate.result == 'success' && github.ref == 'refs/heads/master' }}
     runs-on: ubuntu-latest
     env:
       ARM_USE_OIDC: "true"
@@ -43,11 +165,25 @@ jobs:
       - name: Check out the protected master commit
         uses: actions/checkout@v4
 
-      - name: Run protected Azure preflight
-        uses: ./.github/actions/azure-preflight
+      - name: Download aggregate readiness receipt
+        uses: actions/download-artifact@v4
         with:
-          mode: foundation-plan
-          release-enabled: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
+          name: azure-readiness-${{ github.run_id }}-${{ github.run_attempt }}
+          path: readiness
+
+      - name: Validate readiness before Terraform initialization
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_azure_workflow.py readiness-receipt \
+            --path readiness/azure-readiness.json \
+            --mode foundation-plan \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow "$GITHUB_WORKFLOW" \
+            --source-sha "$READINESS_SOURCE_SHA" \
+            --ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
@@ -97,8 +233,10 @@ jobs:
 
   apply-foundation:
     name: Apply approved Terraform foundation
-    needs: plan-foundation
-    if: ${{ needs.plan-foundation.result == 'success' }}
+    needs:
+      - plan-foundation
+      - readiness-gate
+    if: ${{ needs.plan-foundation.result == 'success' && needs.readiness-gate.result == 'success' }}
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -111,11 +249,25 @@ jobs:
       - name: Check out the protected master commit
         uses: actions/checkout@v4
 
-      - name: Run protected Azure preflight
-        uses: ./.github/actions/azure-preflight
+      - name: Download aggregate readiness receipt
+        uses: actions/download-artifact@v4
         with:
-          mode: foundation-apply
-          release-enabled: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
+          name: azure-readiness-${{ github.run_id }}-${{ github.run_attempt }}
+          path: readiness
+
+      - name: Validate readiness before Terraform initialization
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_azure_workflow.py readiness-receipt \
+            --path readiness/azure-readiness.json \
+            --mode foundation-apply \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow "$GITHUB_WORKFLOW" \
+            --source-sha "$READINESS_SOURCE_SHA" \
+            --ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3

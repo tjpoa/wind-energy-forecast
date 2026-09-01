@@ -6,12 +6,16 @@ from pathlib import Path
 import pytest
 
 from scripts.azure_workflow_policy import (
+    READINESS_SCHEMA,
     WorkflowPolicyError,
     build_receipt,
+    build_readiness_component_receipt,
+    build_readiness_receipt,
     forbidden_plan_changes,
     forbidden_tracked_paths,
     require_configuration,
     require_release_enabled,
+    validate_readiness_receipt,
     validate_active_images,
     validate_image_pair,
     validate_release_manifest,
@@ -276,3 +280,257 @@ def test_foundation_uses_subscription_qualified_acr_role_ids() -> None:
     assert "data.azurerm_client_config.current.subscription_id" in foundation
     assert "basename(data.azurerm_role_definition.acr_pull.role_definition_id)" in foundation
     assert "basename(data.azurerm_role_definition.acr_push.role_definition_id)" in foundation
+
+
+def _readiness_component(name: str, mode: str, binding: dict[str, str]) -> dict:
+    return build_readiness_component_receipt(
+        mode=mode,
+        evidence=_fixture(name),
+        repository=binding["repository"],
+        workflow=binding["workflow"],
+        source_sha=binding["source_sha"],
+        ref=binding["ref"],
+        workflow_run_id=binding["workflow_run_id"],
+        run_attempt=binding["run_attempt"],
+        observed_at_utc="2026-09-01T12:00:00Z",
+    )
+
+
+def test_readiness_receipt_is_content_addressed_and_binds_all_components() -> None:
+    binding = {
+        "repository": "tjpoa/wind-energy-forecast",
+        "workflow": "Release production",
+        "source_sha": "a" * 40,
+        "ref": "refs/heads/master",
+        "workflow_run_id": "900",
+        "run_attempt": "1",
+    }
+    components = {
+        "release-publish": _readiness_component("readiness-publisher.json", "release-publish", binding),
+        "release-plan": _readiness_component("readiness-planner.json", "release-plan", binding),
+        "release-deploy": _readiness_component("readiness-deployer.json", "release-deploy", binding),
+    }
+    receipt = build_readiness_receipt(
+        components=components,
+        required_modes=tuple(components),
+        observed_at_utc="2026-09-01T12:01:00Z",
+        **binding,
+    )
+    assert receipt["schema_version"] == READINESS_SCHEMA
+    assert receipt["decision"] == "GO"
+    assert receipt["allowed_modes"] == list(components)
+    assert validate_readiness_receipt(receipt, expected_mode="release-deploy", expected_binding=binding)["receipt_id"] == receipt["receipt_id"]
+
+    tampered = dict(receipt)
+    tampered["decision"] = "NO_GO"
+    with pytest.raises(WorkflowPolicyError, match="identity"):
+        validate_readiness_receipt(tampered)
+
+
+def test_readiness_blocks_unprotected_environment_and_insecure_state() -> None:
+    binding = {
+        "repository": "tjpoa/wind-energy-forecast",
+        "workflow": "Release production",
+        "source_sha": "a" * 40,
+        "ref": "refs/heads/master",
+        "workflow_run_id": "901",
+        "run_attempt": "1",
+    }
+    deployer = _fixture("readiness-deployer.json")
+    deployer["github"]["environment"]["required_reviewer_count"] = 0
+    component = build_readiness_component_receipt(
+        mode="release-deploy",
+        evidence=deployer,
+        observed_at_utc="2026-09-01T12:00:00Z",
+        **binding,
+    )
+    assert component["decision"] == "NO_GO"
+    assert "GITHUB_ENVIRONMENT_UNPROTECTED" in component["reason_codes"]
+
+    planner = _fixture("readiness-planner.json")
+    planner["state"]["storage_account"]["shared_key_enabled"] = True
+    component = build_readiness_component_receipt(
+        mode="release-plan",
+        evidence=planner,
+        observed_at_utc="2026-09-01T12:00:00Z",
+        **binding,
+    )
+    assert component["decision"] == "NO_GO"
+    assert "STATE_STORAGE_NOT_READY" in component["reason_codes"]
+
+    planner = _fixture("readiness-planner.json")
+    planner["state"]["blobs"]["production.tfstate"] = {
+        "exists": True,
+        "lease_state": "leased",
+        "probe_ok": True,
+    }
+    component = build_readiness_component_receipt(
+        mode="release-plan",
+        evidence=planner,
+        observed_at_utc="2026-09-01T12:00:00Z",
+        **binding,
+    )
+    assert component["decision"] == "NO_GO"
+    assert "STATE_TARGET_LOCKED" in component["reason_codes"]
+
+
+def test_readiness_accepts_custom_environment_policy_that_allows_master() -> None:
+    evidence = _fixture("readiness-deployer.json")
+    environment = evidence["github"]["environment"]
+    environment["deployment_branch_policy"] = {
+        "protected_branches": False,
+        "custom_branch_policies": True,
+        "custom_branches": ["release", "master"],
+    }
+    component = build_readiness_component_receipt(
+        mode="release-deploy",
+        evidence=evidence,
+        repository="tjpoa/wind-energy-forecast",
+        workflow="Release production",
+        source_sha="a" * 40,
+        ref="refs/heads/master",
+        workflow_run_id="904",
+        run_attempt="1",
+    )
+    assert component["decision"] == "GO"
+
+
+def test_readiness_rejects_an_unexpected_broad_role() -> None:
+    evidence = _fixture("readiness-planner.json")
+    evidence["permissions"]["assignments"].append(
+        {"condition": None, "role": "Owner", "scope": "workload_resource_group"}
+    )
+    component = build_readiness_component_receipt(
+        mode="release-plan",
+        evidence=evidence,
+        repository="tjpoa/wind-energy-forecast",
+        workflow="Release production",
+        source_sha="a" * 40,
+        ref="refs/heads/master",
+        workflow_run_id="905",
+        run_attempt="1",
+    )
+    assert component["decision"] == "NO_GO"
+    assert "AZURE_PERMISSION_TOO_BROAD" in component["reason_codes"]
+
+
+def test_readiness_rejects_changed_deployer_rbac_condition() -> None:
+    evidence = _fixture("readiness-deployer.json")
+    evidence["permissions"]["assignments"][0]["condition"] = "changed"
+    component = build_readiness_component_receipt(
+        mode="release-deploy",
+        evidence=evidence,
+        repository="tjpoa/wind-energy-forecast",
+        workflow="Release production",
+        source_sha="a" * 40,
+        ref="refs/heads/master",
+        workflow_run_id="906",
+        run_attempt="1",
+    )
+    assert component["decision"] == "NO_GO"
+    assert "AZURE_PERMISSION_MISSING" in component["reason_codes"]
+
+
+def test_readiness_requires_the_expected_oidc_claims_and_foundation_upstream() -> None:
+    publisher = _fixture("readiness-publisher.json")
+    publisher["oidc"]["claims"]["subject"] = "repo:tjpoa/wind-energy-forecast:ref:refs/heads/feature"
+    component = build_readiness_component_receipt(
+        mode="release-publish",
+        evidence=publisher,
+        repository="tjpoa/wind-energy-forecast",
+        workflow="Release production",
+        source_sha="a" * 40,
+        ref="refs/heads/master",
+        workflow_run_id="907",
+        run_attempt="1",
+    )
+    assert component["decision"] == "NO_GO"
+    assert "OIDC_CLAIMS_MISMATCH" in component["reason_codes"]
+
+    planner = _fixture("readiness-planner.json")
+    planner["mode"] = "foundation-plan"
+    planner["state"]["blobs"].pop("foundation.tfstate")
+    planner["state"]["blobs"]["bootstrap.tfstate"] = {
+        "exists": True,
+        "lease_state": "available",
+        "probe_ok": True,
+    }
+    planner["state"]["blobs"]["foundation.tfstate"] = {
+        "exists": False,
+        "probe_ok": True,
+    }
+    component = build_readiness_component_receipt(
+        mode="foundation-plan",
+        evidence=planner,
+        repository="tjpoa/wind-energy-forecast",
+        workflow="Apply Azure foundation",
+        source_sha="a" * 40,
+        ref="refs/heads/master",
+        workflow_run_id="908",
+        run_attempt="1",
+    )
+    assert component["decision"] == "GO"
+
+
+def test_readiness_rejects_sensitive_evidence_and_missing_components() -> None:
+    evidence = _fixture("readiness-publisher.json")
+    evidence["probe_note"] = "password=not-permitted"
+    with pytest.raises(WorkflowPolicyError, match="permitted"):
+        build_readiness_component_receipt(
+            mode="release-publish",
+            evidence=evidence,
+            repository="tjpoa/wind-energy-forecast",
+            workflow="Release production",
+            source_sha="a" * 40,
+            ref="refs/heads/master",
+            workflow_run_id="902",
+            run_attempt="1",
+        )
+
+    receipt = build_readiness_receipt(
+        components={},
+        required_modes=("release-publish",),
+        repository="tjpoa/wind-energy-forecast",
+        workflow="Release production",
+        source_sha="a" * 40,
+        ref="refs/heads/master",
+        workflow_run_id="903",
+        run_attempt="1",
+        observed_at_utc="2026-09-01T12:00:00Z",
+    )
+    assert receipt["decision"] == "NO_GO"
+    assert receipt["allowed_modes"] == []
+    assert receipt["reason_codes"] == ["EVIDENCE_MISSING"]
+
+
+def test_bootstrap_grants_only_read_control_plane_state_visibility() -> None:
+    bootstrap = _repository_text("infra/azure/terraform/bootstrap/main.tf")
+    for identity in ("planner", "deployer"):
+        marker = f'resource "azurerm_role_assignment" "{identity}_state_control_reader"'
+        start = bootstrap.index(marker)
+        block = bootstrap[start : bootstrap.index("\n}", start) + 2]
+        assert "scope              = azurerm_storage_account.state.id" in block
+        assert "role_definition_id = local.reader_role_id" in block
+        assert f"azurerm_user_assigned_identity.{identity}.principal_id" in block
+
+
+def test_terraform_workflows_gate_mutations_on_aggregate_readiness() -> None:
+    release = _repository_text(".github/workflows/release-production.yml")
+    assert "actions: read" in release
+    assert release.index("readiness-gate:") < release.index("docker push")
+    assert "needs: readiness-gate" in release
+    assert "readiness-receipt" in release
+
+    foundation = _repository_text(".github/workflows/foundation-production.yml")
+    assert "actions: read" in foundation
+    assert foundation.index("readiness-gate:") < foundation.index("Apply the exact approved foundation plan")
+    assert "environment: production" in foundation[foundation.index("readiness-deployer:") : foundation.index("plan-foundation:")]
+
+    rollback = _repository_text(".github/workflows/rollback-production.yml")
+    assert rollback.index("readiness-gate:") < rollback.index("Create rollback manifest")
+    assert "readiness-receipt" in rollback
+
+    for workflow in (release, foundation, rollback):
+        assert workflow.count("contents: read") == 1
+        assert workflow.count("actions: read") == 1
+        assert workflow.count("id-token: write") == 1
