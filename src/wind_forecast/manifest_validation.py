@@ -22,7 +22,7 @@ from .manifests import DatasetManifest, manifest_from_json, sha256_file
 from .paths import manifests_dir, project_root
 
 
-ManifestValidationMode = Literal["integrity", "release"]
+ManifestValidationMode = Literal["metadata", "integrity", "release"]
 V1_DATASET_VERSION = "v1"
 V1_DATASET_ROLE = "legacy_v1_source_contract"
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -69,12 +69,13 @@ def validate_dataset_manifest(
 ) -> ManifestValidationResult:
     """Validate a manifest, its complete snapshot, and requested input paths.
 
-    Every path declared by the manifest is checked in both modes.  The
-    ``required_paths`` argument additionally prevents a caller from reading a
+    ``metadata`` validates the manifest declaration without requiring local
+    copies.  ``integrity`` and ``release`` additionally verify every declared
+    file.  The ``required_paths`` argument prevents a caller from reading a
     file that is not declared by the manifest; it does not narrow the full
-    snapshot check.
+    snapshot check in the file-verifying modes.
     """
-    if mode not in {"integrity", "release"}:
+    if mode not in {"metadata", "integrity", "release"}:
         raise ManifestValidationError(
             f"Unsupported manifest validation mode: {mode!r}."
         )
@@ -106,7 +107,8 @@ def validate_dataset_manifest(
     _validate_manifest_shape(manifest)
     declared_paths = _resolve_declared_paths(manifest, root)
     _validate_required_paths(required_paths, root, declared_paths)
-    _validate_declared_files(manifest, declared_paths)
+    if mode != "metadata":
+        _validate_declared_files(manifest, declared_paths)
 
     if mode == "release":
         _validate_release_provenance(manifest)
@@ -300,7 +302,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--mode",
-        choices=("integrity", "release"),
+        choices=("metadata", "integrity", "release"),
         default="integrity",
         help="Validation policy to apply.",
     )

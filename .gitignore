@@ -35,6 +35,13 @@ secrets.*
 
 data/processed/*.csv
 !data/processed/.gitkeep
+
+# v1 source data is internal and must be supplied from an authorized local copy.
+data/raw/DirecaoMediaVento10m.csv
+data/raw/IntensidadeMediaVento10m.csv
+data/raw/ReparticaoProducao.csv
+data/raw/TemperaturaMedia.csv
+
 data/raw/v2/**
 !data/raw/v2/
 !data/raw/v2/production/

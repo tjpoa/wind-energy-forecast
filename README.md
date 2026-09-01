@@ -83,30 +83,39 @@ new version or an explicit immutable evidence record.
 | `POST /predict` | Saved-model inference | Legacy v1 artifacts |
 | `POST /api/v1/operational-query` | Typed operational questions | Numeric loopback only |
 | `scripts/run_batch_pipeline.py` | Plan/run historical batch | Explicit artifacts and leases |
-| `wind-forecast-validate-manifest` | Validate manifest paths and hashes | Local integrity or release provenance |
+| `wind-forecast-validate-manifest` | Validate manifest paths, hashes, or release provenance | Metadata, local integrity, or release provenance |
 
 The operational copilot and PostgreSQL projection are implemented as
 default-disabled, read-only extensions. Candidate adapters are not activated.
 
 ## Data and model boundaries
 
-The v1 raw CSVs and saved models are preserved for compatibility. The v2
-REN/ERA5-Land path uses separate versioned directories and does not silently
-replace v1 data, scalers, or serving behaviour. ERA5-Land is reanalysis data,
-so the accepted v2 result is a retrospective hindcast, not a day-ahead
-forecast.
+The v1 source contract and saved models are preserved for compatibility, but
+the four v1 raw CSVs are not tracked in the public repository. An authorized
+local copy must be placed at the paths declared by the contract before any v1
+reader is used. The v2 REN/ERA5-Land path uses separate versioned directories
+and does not silently replace v1 data, scalers, or serving behaviour.
+ERA5-Land is reanalysis data, so the accepted v2 result is a retrospective
+hindcast, not a day-ahead forecast.
 
 The four v1 raw CSV hashes are owned exclusively by
-`data/manifests/v1_source_contract.json`. Supported Python readers validate the
-complete v1 snapshot before reading it. Local `integrity` validation checks
-paths and bytes; `release` validation additionally requires complete source
+`data/manifests/v1_source_contract.json`. The immutable review record at
+`data/manifests/v1_provenance_review_2026-09-01.json` records the evidence
+decision and unresolved fields without inventing a provider or licence.
+The unsent REN permission request is templated at
+`data/manifests/ren_redistribution_authorization_request_template.md`.
+Supported Python readers validate the complete v1 snapshot before reading it.
+`metadata` validation checks declarations without local files; `integrity`
+checks paths and bytes; `release` additionally requires complete source
 provenance and is intentionally blocked while the v1 contract remains
 `provenance_incomplete`.
 
-The real-data release catalog remains blocked until source, licence,
-attribution, and redistribution approval are complete. The tracked `demo/v1`
-bundle is synthetic-original evidence and makes no historical-production,
-live-monitoring, production-model, or cloud-deployment claim.
+The real-data release catalog marks v1 as `classification: internal` and
+remains blocked until every component has explicit, snapshot-scoped
+redistribution authorization. No historical v1 data or real-data bundle is a
+public artefact. The tracked `demo/v1` bundle is synthetic-original evidence
+and makes no historical-production, live-monitoring, production-model, or
+cloud-deployment claim.
 
 ## Local operations
 

@@ -112,6 +112,10 @@ disabled.
 ## Provider and artifact safety
 
 - Do not overwrite v1 raw data, models, scalers, manifests, or reports.
+- The v1 CSVs are internal material. Keep authorized local copies only at the
+  paths in `data/manifests/v1_source_contract.json`; they are intentionally not
+  tracked in the public repository. A clean clone must use metadata validation
+  and must fail closed when a reader needs the missing files.
 - Use `--dry-run` for ingestion, monitoring, deployment, and recovery tools
   before any write or provider call.
 - Keep provider credentials in `.env` or the approved user credential store;
@@ -119,7 +123,12 @@ disabled.
 - A source, feature, spatial, or distribution change requires a new manifest,
   refitted scalers, retraining, and a new baseline.
 - The real-data release remains blocked while provenance/licence/
-  redistribution approval is unresolved.
+  redistribution approval is unresolved. `approved: true` requires explicit
+  evidence for both production and weather; absence of a prohibition is not
+  permission.
+- Earlier Git commits still contain the v1 CSV blobs. History purging or
+  provider takedown is a separate owner-authorized remediation and is not
+  performed by the provenance gate.
 
 ## Static validation
 

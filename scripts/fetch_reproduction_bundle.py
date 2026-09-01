@@ -9,6 +9,11 @@ from wind_forecast.artifacts import (
     verify_bundle,
 )
 from wind_forecast.paths import processed_data_dir, project_root
+from wind_forecast.release_catalog import (
+    ReleaseCatalogError,
+    load_release_catalog,
+    require_release_approved,
+)
 
 
 CATALOG_PATH = project_root() / "artifacts" / "catalog.json"
@@ -26,17 +31,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
-    import json
-
-    catalog = json.loads(args.catalog.read_text(encoding="utf-8"))
-    release_entry = catalog.get("releases", {}).get(args.release)
-    expected_sha256 = None if release_entry is None else release_entry.get("bundle_sha256")
+    try:
+        catalog = load_release_catalog(args.catalog)
+        release_entry = require_release_approved(catalog, args.release)
+    except ReleaseCatalogError as exc:
+        raise SystemExit(f"ERROR: {exc}") from exc
+    expected_sha256 = release_entry.get("bundle_sha256")
     if not expected_sha256:
         raise SystemExit(
-            "ERROR: release is absent from the tracked catalog or has no approved bundle_sha256."
+            "ERROR: approved release has no bundle_sha256 in the tracked catalog."
         )
-    if release_entry["redistribution"].get("approved") is not True:
-        raise SystemExit("ERROR: release redistribution is not approved in the catalog.")
     release_root = args.output_root / args.release
     archive, checksum = fetch_release_bundle(
         release=args.release,

@@ -1,14 +1,17 @@
 {
-  "schema_version": "wind_forecast.release_catalog.v1",
+  "schema_version": "wind_forecast.release_catalog.v2",
   "releases": {
     "artifacts-v1.0.0": {
       "bundle_sha256": null,
       "redistribution": {
         "approved": false,
-        "attribution": null,
-        "license": null,
-        "source": null,
-        "status": "blocked_pending_provenance_and_license_review"
+        "authorization_evidence": [],
+        "classification": "internal",
+        "required_components": [
+          "production",
+          "weather"
+        ],
+        "status": "blocked_provenance_incomplete"
       }
     }
   }

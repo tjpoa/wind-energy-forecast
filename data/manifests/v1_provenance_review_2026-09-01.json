@@ -1,0 +1,142 @@
+{
+  "components": {
+    "production": {
+      "aggregation": {
+        "evidence": "observed_in_csv",
+        "value": "15-minute records"
+      },
+      "attribution": null,
+      "coverage": {
+        "end": "2025-04-28",
+        "evidence": "observed_in_csv",
+        "start": "2010-01-01"
+      },
+      "license": null,
+      "provider": null,
+      "provider_candidate": {
+        "identifier": "ElectricityProductionBreakdownDaily",
+        "name": "REN",
+        "relationship": "compatible_endpoint; historical snapshot not proven"
+      },
+      "redistribution_authorized": false,
+      "source_identifier": null,
+      "timezone": null,
+      "unit": "MW",
+      "unresolved": [
+        "provider and complete source identifier for the historical snapshot",
+        "source timezone and DST semantics",
+        "revision and aggregation procedure",
+        "license, attribution, and redistribution permission"
+      ]
+    },
+    "weather": {
+      "aggregation": {
+        "evidence": "observed_in_csv; original aggregation procedure unrecorded",
+        "value": "daily records"
+      },
+      "attribution": null,
+      "coverage": {
+        "end": "2023-12-31",
+        "evidence": "observed_in_csv",
+        "start": "2013-01-01"
+      },
+      "license": null,
+      "provider": null,
+      "provider_candidate": {
+        "name": "IPMA",
+        "relationship": "station metadata and variable names are compatible; source receipt absent"
+      },
+      "redistribution_authorized": false,
+      "source_identifier": null,
+      "station_count": 18,
+      "timezone": null,
+      "units": {
+        "direction": "degrees from",
+        "temperature": "deg C",
+        "wind_speed": "m/s"
+      },
+      "unresolved": [
+        "historical provider and exact dataset identifier",
+        "source timezone",
+        "daily aggregation procedure",
+        "license, attribution, and redistribution permission",
+        "official mapping for station 1200579"
+      ]
+    }
+  },
+  "decision": {
+    "approved": false,
+    "classification": "internal",
+    "status": "provenance_incomplete",
+    "reason": "No component has explicit, snapshot-scoped redistribution authorization."
+  },
+  "evidence_scope": {
+    "historical_contract": "data/manifests/v1_source_contract.json",
+    "reviewed_on": "2026-09-01",
+    "repository": "https://github.com/tjpoa/wind-energy-forecast",
+    "raw_paths": [
+      "data/raw/DirecaoMediaVento10m.csv",
+      "data/raw/IntensidadeMediaVento10m.csv",
+      "data/raw/ReparticaoProducao.csv",
+      "data/raw/TemperaturaMedia.csv"
+    ]
+  },
+  "git_evidence": [
+    {
+      "commit": "ec2923bd69c12392c1760ec45583b94a21cc74cc",
+      "finding": "Original production and wind-station files were added without provider or license receipt."
+    },
+    {
+      "commit": "6c05ec5ec47bdd08370c2a8d5b2d499381fdfdf1",
+      "finding": "Weather information file documents variables and station metadata but not a redistribution grant."
+    },
+    {
+      "commit": "5900c38d717495f41e9c8bb1f485c4f25302f837",
+      "finding": "Current v1 names were created by rename/reorganization; the provenance gap remains."
+    }
+  ],
+  "official_references": [
+    {
+      "accessed_on": "2026-09-01",
+      "finding": "REN terms retain database rights and do not grant general reproduction or distribution permission.",
+      "url": "https://datahub.ren.pt/pt/termos-legais-e-condicoes-gerais/"
+    },
+    {
+      "accessed_on": "2026-09-01",
+      "finding": "IPMA describes open API reuse with attribution, but no exact v1 file receipt or identifier links these matrices to that API.",
+      "url": "https://www.ipma.pt/pt/media/noticias/news.detail.jsp?f=api-2020.html&y=2020"
+    },
+    {
+      "accessed_on": "2026-09-01",
+      "finding": "ERA5-Land is a candidate replacement with CC BY 4.0, DOI, and documented UTC data contract.",
+      "url": "https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land?tab=documentation"
+    },
+    {
+      "accessed_on": "2026-09-01",
+      "finding": "The inspected CC BY reuse list does not include actual generation per production type.",
+      "url": "https://transparencyplatform.zendesk.com/hc/en-us/article_attachments/40921869379729"
+    },
+    {
+      "accessed_on": "2026-09-01",
+      "finding": "The official DGEG production page does not state dataset-specific redistribution permission.",
+      "url": "https://www.dgeg.gov.pt/pt/estatistica/energia/eletricidade/producao-mensal-de-eletricidade/"
+    }
+  ],
+  "replacement": {
+    "production": {
+      "authorization_request": "REN written permission for raw and derived redistribution, exact historical snapshot, timezone/DST, revisions, attribution, and public bundles",
+      "candidate_identifier": "ElectricityProductionBreakdownDaily",
+      "status": "pending_written_permission",
+      "template": "data/manifests/ren_redistribution_authorization_request_template.md"
+    },
+    "weather": {
+      "attribution": "Copernicus Climate Change Service / ECMWF, ERA5-Land",
+      "dataset_identifier": "reanalysis-era5-land",
+      "doi": "10.24381/cds.e2161bac",
+      "license": "CC BY 4.0",
+      "status": "license_ready_candidate",
+      "timezone": "UTC"
+    }
+  },
+  "schema_version": "wind_forecast.provenance_review.v1"
+}
