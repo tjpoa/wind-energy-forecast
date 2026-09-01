@@ -70,10 +70,38 @@ within scope before completion.
 
 ## Git workflow
 
-For an implementation task, update clean `master`, create a task branch with
-the `codex/` prefix, implement the approved scope, validate, review, commit,
-push, and create a draft Pull Request. Do not merge, delete branches, rewrite
-history, or start another task without explicit authorization.
+For an implementation task, use the two phases below. Keep the phases
+separate: phase 1 ends at user review; phase 2 requires a new, explicit user
+authorization.
+
+### Phase 1 — Implementation and user review
+
+1. Update clean `master` from `origin/master` without discarding user work.
+2. Create a short task branch with the `codex/` prefix.
+3. Implement only the approved scope.
+4. Run the relevant tests, linting, builds, and safety checks.
+5. Review the complete diff and working-tree state.
+6. Stage files explicitly and create one cohesive commit.
+7. Push the task branch and create a draft Pull Request.
+8. Stop for user review. Do not merge, delete branches, or start another task.
+
+### Phase 2 — Authorized merge and cleanup
+
+Only after the user explicitly authorizes phase 2:
+
+1. Confirm that every required check and CI job passed.
+2. Confirm that the PR is mergeable, has no conflicts, and contains no
+   unreviewed changes.
+3. Prefer squash merge into `master`.
+4. Delete the merged remote branch.
+5. Fetch and fast-forward local `master` from `origin/master`.
+6. Delete the merged local task branch.
+7. Prune stale remote-tracking references.
+8. Confirm that `master` is current and the working tree is clean.
+
+Never merge while checks are pending or failing, conflicts exist, or changes
+remain unreviewed. Do not rewrite history or use destructive reset/checkout
+commands without explicit authorization.
 
 Stage files explicitly; never use `git add .`. Preserve unrelated work and
-never use destructive reset/checkout commands without authorization.
+never stage or overwrite another task's uncommitted changes.
