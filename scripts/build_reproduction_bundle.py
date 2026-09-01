@@ -12,7 +12,9 @@ from wind_forecast.release_catalog import (
     ReleaseCatalogError,
     load_release_catalog,
     require_release_approved,
+    validate_release_contract_binding,
 )
+from wind_forecast.v1_contracts import V1ContractError, load_processed_contract
 from wind_forecast.tracking import (
     DEFAULT_REGISTERED_MODEL_NAME,
     DEFAULT_TRACKING_URI,
@@ -43,8 +45,22 @@ def main(argv: Sequence[str] | None = None) -> None:
     try:
         catalog = load_release_catalog(args.catalog)
         release_entry = require_release_approved(catalog, args.release)
+        validate_release_contract_binding(
+            release_entry, repository_root=project_root(), require_release_provenance=True
+        )
+        processed_contract = load_processed_contract(
+            release_entry["processed_contract"]["path"], verify_dataset=False
+        )
     except ReleaseCatalogError as exc:
         raise SystemExit(f"ERROR: {exc}") from exc
+    except V1ContractError as exc:
+        raise SystemExit(f"ERROR: {exc}") from exc
+    try:
+        selected_dataset_sha256 = sha256_file(args.dataset)
+    except OSError as exc:
+        raise SystemExit(f"ERROR: selected dataset cannot be read: {exc}") from exc
+    if selected_dataset_sha256 != processed_contract["dataset_sha256"]:
+        raise SystemExit("ERROR: selected dataset does not match v1_processed_contract.")
     config = TrackingConfig(
         tracking_uri=args.tracking_uri,
         registered_model_name=args.registered_model,
@@ -82,6 +98,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         raise SystemExit("ERROR: candidate git_sha tag is invalid.")
     if sha256_file(args.dataset) != candidate_tags["dataset_sha256"]:
         raise SystemExit("ERROR: selected dataset does not match the candidate checksum.")
+    if candidate_tags["dataset_sha256"] != processed_contract["dataset_sha256"]:
+        raise SystemExit("ERROR: candidate dataset does not match v1_processed_contract.")
     source_run = client.get_run(run_id)
     run_params = dict(source_run.data.params)
     run_tag_checks = {
@@ -185,7 +203,11 @@ def main(argv: Sequence[str] | None = None) -> None:
             git_sha=candidate_tags["git_sha"],
             files=files,
             output_dir=args.output_dir,
-            redistribution=release_entry["redistribution"],
+            redistribution={
+                **release_entry["redistribution"],
+                "source_contract_sha256": release_entry["source_contract"]["sha256"],
+                "processed_contract_sha256": release_entry["processed_contract"]["sha256"],
+            },
         )
     print(f"Bundle: {result.archive_path}")
     print(f"SHA-256: {result.sha256}")

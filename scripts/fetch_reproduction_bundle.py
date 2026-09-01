@@ -13,6 +13,7 @@ from wind_forecast.release_catalog import (
     ReleaseCatalogError,
     load_release_catalog,
     require_release_approved,
+    validate_release_contract_binding,
 )
 
 
@@ -34,6 +35,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     try:
         catalog = load_release_catalog(args.catalog)
         release_entry = require_release_approved(catalog, args.release)
+        validate_release_contract_binding(
+            release_entry, repository_root=project_root(), require_release_provenance=False
+        )
     except ReleaseCatalogError as exc:
         raise SystemExit(f"ERROR: {exc}") from exc
     expected_sha256 = release_entry.get("bundle_sha256")
@@ -49,6 +53,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         expected_sha256=expected_sha256,
     )
     manifest = verify_bundle(archive, checksum)
+    redistribution = manifest.get("redistribution")
+    if not isinstance(redistribution, dict):
+        raise SystemExit("ERROR: bundle is missing redistribution contract linkage.")
+    if redistribution.get("source_contract_sha256") != release_entry["source_contract"]["sha256"]:
+        raise SystemExit("ERROR: bundle source contract hash is not catalog-bound.")
+    if redistribution.get("processed_contract_sha256") != release_entry["processed_contract"]["sha256"]:
+        raise SystemExit("ERROR: bundle processed contract hash is not catalog-bound.")
     extracted = extract_bundle(archive, release_root / "extracted")
     if args.materialize:
         materialize_training_data(

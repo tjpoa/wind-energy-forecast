@@ -107,11 +107,6 @@ def models_dir() -> Path:
     return project_root() / "models"
 
 
-def notebooks_dir() -> Path:
-    """Return the notebooks directory."""
-    return project_root() / "notebooks"
-
-
 def scripts_dir() -> Path:
     """Return the scripts directory."""
     return project_root() / "scripts"

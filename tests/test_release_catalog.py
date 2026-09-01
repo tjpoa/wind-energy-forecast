@@ -7,6 +7,7 @@ import pytest
 
 from scripts import build_reproduction_bundle, fetch_reproduction_bundle
 from wind_forecast.release_catalog import (
+    CATALOG_SCHEMA_V3,
     ReleaseCatalogError,
     load_release_catalog,
     require_release_approved,
@@ -19,10 +20,18 @@ RELEASE = "artifacts-v1.0.0"
 
 def _blocked_catalog() -> dict:
     return {
-        "schema_version": "wind_forecast.release_catalog.v2",
+        "schema_version": CATALOG_SCHEMA_V3,
         "releases": {
             RELEASE: {
                 "bundle_sha256": None,
+                "source_contract": {
+                    "path": "data/manifests/v1_source_contract.json",
+                    "sha256": "b" * 64,
+                },
+                "processed_contract": {
+                    "path": "data/manifests/v1_processed_contract.json",
+                    "sha256": "c" * 64,
+                },
                 "redistribution": {
                     "approved": False,
                     "authorization_evidence": [],
@@ -37,10 +46,18 @@ def _blocked_catalog() -> dict:
 
 def _approved_catalog() -> dict:
     return {
-        "schema_version": "wind_forecast.release_catalog.v2",
+        "schema_version": CATALOG_SCHEMA_V3,
         "releases": {
             RELEASE: {
                 "bundle_sha256": "a" * 64,
+                "source_contract": {
+                    "path": "data/manifests/v1_source_contract.json",
+                    "sha256": "b" * 64,
+                },
+                "processed_contract": {
+                    "path": "data/manifests/v1_processed_contract.json",
+                    "sha256": "c" * 64,
+                },
                 "redistribution": {
                     "approved": True,
                     "authorization_evidence": [
@@ -50,6 +67,7 @@ def _approved_catalog() -> dict:
                             "authorization_reference": "https://example.test/production-license",
                             "authorization_scope": ["redistribution"],
                             "component": "production",
+                            "source_contract_sha256": "b" * 64,
                             "license": "CC BY 4.0",
                             "provider": "Production Provider",
                             "redistribution_permitted": True,
@@ -62,6 +80,7 @@ def _approved_catalog() -> dict:
                             "authorization_reference": "https://example.test/weather-license",
                             "authorization_scope": ["redistribution"],
                             "component": "weather",
+                            "source_contract_sha256": "b" * 64,
                             "license": "CC BY 4.0",
                             "provider": "Weather Provider",
                             "redistribution_permitted": True,
@@ -83,7 +102,7 @@ def test_repository_catalog_is_blocked_and_internal() -> None:
     catalog = load_release_catalog(catalog_path)
     entry = catalog["releases"][RELEASE]
 
-    assert catalog["schema_version"] == "wind_forecast.release_catalog.v2"
+    assert catalog["schema_version"] == CATALOG_SCHEMA_V3
     assert entry["redistribution"]["approved"] is False
     assert entry["redistribution"]["classification"] == "internal"
     assert entry["redistribution"]["authorization_evidence"] == []
@@ -138,6 +157,22 @@ def test_complete_explicit_authorization_is_accepted() -> None:
     catalog = _approved_catalog()
     validate_release_catalog(catalog)
     assert require_release_approved(catalog, RELEASE)["redistribution"]["approved"]
+
+
+def test_authorization_must_cover_exact_source_snapshot() -> None:
+    invalid = _approved_catalog()
+    invalid["releases"][RELEASE]["redistribution"]["authorization_evidence"][0][
+        "source_contract_sha256"
+    ] = "d" * 64
+    with pytest.raises(ReleaseCatalogError, match="exact source contract hash"):
+        validate_release_catalog(invalid)
+
+
+def test_legacy_v2_approved_release_is_rejected() -> None:
+    legacy = _approved_catalog()
+    legacy["schema_version"] = "wind_forecast.release_catalog.v2"
+    with pytest.raises(ReleaseCatalogError, match="Legacy catalog"):
+        validate_release_catalog(legacy)
 
 
 def test_build_script_blocks_before_mlflow_or_output(tmp_path: Path, monkeypatch) -> None:

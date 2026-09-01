@@ -15,8 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .config import load_cors_config
 from .inference import (
-    BEST_MODEL_LOG_NAME_FROM_NOTEBOOK,
-    BEST_MODEL_ORIG_NAME_FROM_NOTEBOOK,
+    V1_MODEL_NAME,
     historical_positive_cap,
     load_training_feature_columns,
     load_trained_model_and_scalers,
@@ -40,13 +39,14 @@ from .performance import (
     PerformanceService,
 )
 from .schemas import DATE_COLUMN, TARGET_COLUMN
+from .v1_contracts import V1ContractError, load_processed_contract, load_serving_contract
 
 
 ModelTarget = Literal["original", "log"]
 
 MODEL_NAMES: dict[ModelTarget, str] = {
-    "original": BEST_MODEL_ORIG_NAME_FROM_NOTEBOOK,
-    "log": BEST_MODEL_LOG_NAME_FROM_NOTEBOOK,
+    "original": V1_MODEL_NAME,
+    "log": V1_MODEL_NAME,
 }
 
 
@@ -429,11 +429,18 @@ class PredictionService:
         )
 
     def _artifact_info(self, target_type: ModelTarget) -> ModelArtifactInfo:
-        model_path, scaler_x_path, scaler_y_path = model_and_scaler_paths(
-            MODEL_NAMES[target_type],
-            target_type,
-            self.models_path,
-        )
+        try:
+            model_path, scaler_x_path, scaler_y_path = model_and_scaler_paths(
+                MODEL_NAMES[target_type], target_type, self.models_path
+            )
+        except V1ContractError:
+            # Keep the status endpoint useful when the serving contract itself
+            # is invalid; prediction remains fail-closed in _ensure_*.
+            model_path = self.models_path / (
+                f"best_model_{target_type}_target_{MODEL_NAMES[target_type]}.keras"
+            )
+            scaler_x_path = self.models_path / f"scaler_X_{target_type}_ann.joblib"
+            scaler_y_path = self.models_path / f"scaler_y_{target_type}_ann.joblib"
         return ModelArtifactInfo(
             target_type=target_type,
             model_name=MODEL_NAMES[target_type],
@@ -450,8 +457,27 @@ class PredictionService:
             raise ArtifactNotReadyError(
                 f"Feature reference file is missing: {self._display_path(self.historical_file)}"
             )
+        if self.models_path.resolve() == models_dir().resolve():
+            try:
+                contract = load_processed_contract(verify_dataset=True)
+                expected = (project_root() / contract["dataset_path"]).resolve()
+                if self.historical_file.resolve() != expected:
+                    raise V1ContractError(
+                        "historical_file is not the dataset declared by v1_processed_contract."
+                    )
+            except V1ContractError as exc:
+                raise ArtifactNotReadyError(
+                    f"v1 processed contract validation failed: {exc}"
+                ) from exc
 
     def _ensure_model_artifacts_ready(self, target_type: ModelTarget) -> None:
+        if self.models_path.resolve() == models_dir().resolve():
+            try:
+                load_serving_contract(verify_files=True)
+            except V1ContractError as exc:
+                raise ArtifactNotReadyError(
+                    f"v1 serving contract validation failed: {exc}"
+                ) from exc
         artifact = self._artifact_info(target_type)
         missing = []
         if not artifact.model_exists:

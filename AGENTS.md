@@ -27,8 +27,9 @@ units, paths, model fields, or API contracts.
   define scope, non-goals, preserved behaviour, acceptance criteria, and
   validation.
 - Modify only the approved files. Use `apply_patch` for edits.
-- Keep notebooks exploratory/training interfaces; put reusable logic in
-  `src/wind_forecast/`.
+- v1 inference is supported from the tracked serving contract; v1 retraining is
+  deprecated. Put reusable preprocessing and future training workflows in
+  tested code under `src/wind_forecast/` or `scripts/`.
 - Preserve filenames, schemas, feature order, model/scaler compatibility, and
   deterministic outputs unless the request explicitly changes them.
 - Prefer small, typed, reversible, testable changes. Avoid hidden cleaning,
@@ -44,7 +45,7 @@ units, paths, model fields, or API contracts.
   transformation version, and unresolved assumptions in manifests.
 - Never print, log, commit, or document secrets, credentials, `.env` files, or
   connection strings. Use approved environment variables or credential stores.
-- Do not install dependencies, run notebooks/training, download data, call
+- Do not install dependencies, run training, download data, call
   live providers, or mutate external systems without explicit authorization.
 - Use bounded, non-destructive probes before approved provider operations.
 

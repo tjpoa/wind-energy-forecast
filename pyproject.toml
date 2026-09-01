@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 [project.scripts]
 wind-forecast-batch = "wind_forecast.batch_cli:main"
 wind-forecast-validate-manifest = "wind_forecast.manifest_validation:main"
+wind-forecast-build-v1 = "wind_forecast.v1_preprocessing:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -39,7 +40,5 @@ output = "coverage.xml"
 [tool.ruff]
 target-version = "py310"
 line-length = 88
-extend-exclude = ["notebooks"]
-
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]

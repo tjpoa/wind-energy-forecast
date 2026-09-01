@@ -81,6 +81,7 @@ new version or an explicit immutable evidence record.
 | `GET /api/v1/performance` | Historical evaluation | Selected local artifacts |
 | `GET /api/v1/monitoring/*` | Verified monitoring projection | Delayed historical evidence |
 | `POST /predict` | Saved-model inference | Legacy v1 artifacts |
+| `wind-forecast-build-v1` | Rebuild the accepted v1 raw-to-features table | Authorized raw snapshot and immutable contracts |
 | `POST /api/v1/operational-query` | Typed operational questions | Numeric loopback only |
 | `scripts/run_batch_pipeline.py` | Plan/run historical batch | Explicit artifacts and leases |
 | `wind-forecast-validate-manifest` | Validate manifest paths, hashes, or release provenance | Metadata, local integrity, or release provenance |
@@ -135,6 +136,6 @@ contracts.
 - Registry-based API serving.
 - Remote or authenticated exposure of the local operational-query route.
 
-The full tuned ANN/Optuna workflow remains notebook-based. The tested CLIs
-provide the reproducible baseline, v2 reference, monitoring, deployment, and
-evaluation paths.
+The tuned v1 models are supported for inference only; v1 retraining is
+deprecated. Interactive artefacts are not part of the supported workflow.
+Future training must use tested code paths with versioned contracts.

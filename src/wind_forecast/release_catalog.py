@@ -15,9 +15,14 @@ from pathlib import Path
 import re
 from typing import Any
 
+from .manifest_validation import validate_v1_source_contract
+from .manifests import sha256_file
+from .paths import project_root
+from .v1_contracts import V1ContractError, load_processed_contract
 
 CATALOG_SCHEMA_V1 = "wind_forecast.release_catalog.v1"
 CATALOG_SCHEMA_V2 = "wind_forecast.release_catalog.v2"
+CATALOG_SCHEMA_V3 = "wind_forecast.release_catalog.v3"
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _RELEASE_PATTERN = re.compile(r"^artifacts-v\d+\.\d+\.\d+$")
 _AUTHORIZATION_KINDS = {"public_license", "written_permission"}
@@ -48,6 +53,7 @@ def validate_release_catalog(catalog: Mapping[str, Any]) -> None:
     if not isinstance(schema_version, str) or schema_version not in {
         CATALOG_SCHEMA_V1,
         CATALOG_SCHEMA_V2,
+        CATALOG_SCHEMA_V3,
     }:
         raise ReleaseCatalogError(
             "Unsupported release catalog schema version: "
@@ -70,7 +76,7 @@ def validate_release_entry(
     release: str,
     entry: Mapping[str, Any],
     *,
-    schema_version: str = CATALOG_SCHEMA_V2,
+    schema_version: str = CATALOG_SCHEMA_V3,
 ) -> None:
     """Validate one release entry independently of the surrounding file."""
     _validate_release_entry(release, entry, schema_version=schema_version)
@@ -126,6 +132,16 @@ def _validate_release_entry(
             )
         return
 
+    if schema_version == CATALOG_SCHEMA_V2:
+        if approved:
+            raise ReleaseCatalogError(
+                f"Legacy catalog entry {release} cannot approve redistribution."
+            )
+        return
+
+    source_contract = _validate_contract_reference(release, entry, "source_contract")
+    _validate_contract_reference(release, entry, "processed_contract")
+
     classification = redistribution.get("classification")
     status = redistribution.get("status")
     required_components = redistribution.get("required_components")
@@ -172,7 +188,9 @@ def _validate_release_entry(
         )
     seen: set[str] = set()
     for item in evidence:
-        _validate_authorization_record(release, item, components, seen)
+        _validate_authorization_record(
+            release, item, components, seen, source_contract["sha256"]
+        )
     if seen != set(components):
         missing = sorted(set(components) - seen)
         raise ReleaseCatalogError(
@@ -200,6 +218,7 @@ def _validate_authorization_record(
     item: Any,
     components: Sequence[str],
     seen: set[str],
+    source_contract_sha256: str,
 ) -> None:
     if not isinstance(item, Mapping):
         raise ReleaseCatalogError(
@@ -216,6 +235,11 @@ def _validate_authorization_record(
             f"{component!r}."
         )
     seen.add(str(component))
+    if item.get("source_contract_sha256") != source_contract_sha256:
+        raise ReleaseCatalogError(
+            f"Release {release} authorization for {component} must cover the "
+            "exact source contract hash."
+        )
     for field in ("provider", "source_identifier", "license", "attribution"):
         value = item.get(field)
         if not isinstance(value, str) or not value.strip():
@@ -283,12 +307,89 @@ def _validate_authorization_record(
         )
 
 
+def _validate_contract_reference(
+    release: str, entry: Mapping[str, Any], field: str
+) -> Mapping[str, str]:
+    reference = entry.get(field)
+    if not isinstance(reference, Mapping):
+        raise ReleaseCatalogError(f"Release {release} must declare {field}.")
+    path = reference.get("path")
+    digest = reference.get("sha256")
+    if (
+        not isinstance(path, str)
+        or not path.strip()
+        or Path(path).is_absolute()
+        or ".." in Path(path).parts
+    ):
+        raise ReleaseCatalogError(f"Release {release} has an unsafe {field}.path.")
+    if not isinstance(digest, str) or not _SHA256_PATTERN.fullmatch(digest):
+        raise ReleaseCatalogError(f"Release {release} has an invalid {field}.sha256.")
+    return {"path": path, "sha256": digest}
+
+
+def validate_release_contract_binding(
+    entry: Mapping[str, Any],
+    *,
+    repository_root: str | Path | None = None,
+    require_release_provenance: bool = True,
+) -> None:
+    """Verify catalog contract files and their source/processed linkage.
+
+    Release builds use full source integrity/provenance. Fetches use metadata
+    only because the raw snapshot is intentionally not distributed locally.
+    """
+    root = Path(repository_root or project_root()).resolve()
+    source = _resolve_contract_file(entry, "source_contract", root)
+    processed = _resolve_contract_file(entry, "processed_contract", root)
+    try:
+        source_result = validate_v1_source_contract(
+            mode="release" if require_release_provenance else "metadata",
+            manifest_path=source[0],
+            repository_root=root,
+        )
+        processed_payload = load_processed_contract(
+            processed[0], repository_root=root, verify_dataset=False
+        )
+    except (OSError, ValueError, V1ContractError) as exc:
+        raise ReleaseCatalogError(f"Release contract validation failed: {exc}") from exc
+    if source_result.manifest_path.relative_to(root).as_posix() != processed_payload[
+        "source_contract_path"
+    ]:
+        raise ReleaseCatalogError("Processed contract is linked to another source contract.")
+    if processed_payload["source_contract_sha256"] != source[1]:
+        raise ReleaseCatalogError("Processed contract source hash differs from catalog.")
+
+
+def _resolve_contract_file(
+    entry: Mapping[str, Any], field: str, root: Path
+) -> tuple[Path, str]:
+    reference = entry.get(field)
+    if not isinstance(reference, Mapping):
+        raise ReleaseCatalogError(f"Release must declare {field}.")
+    path = reference.get("path")
+    digest = reference.get("sha256")
+    if not isinstance(path, str) or not isinstance(digest, str):
+        raise ReleaseCatalogError(f"Release {field} reference is incomplete.")
+    candidate = (root / path).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise ReleaseCatalogError(f"Release {field} path escapes repository root.") from exc
+    if not candidate.is_file():
+        raise ReleaseCatalogError(f"Release {field} file is missing: {candidate}.")
+    if sha256_file(candidate) != digest:
+        raise ReleaseCatalogError(f"Release {field} hash does not match catalog.")
+    return candidate, digest
+
+
 __all__ = [
     "CATALOG_SCHEMA_V1",
     "CATALOG_SCHEMA_V2",
+    "CATALOG_SCHEMA_V3",
     "ReleaseCatalogError",
     "load_release_catalog",
     "require_release_approved",
     "validate_release_catalog",
+    "validate_release_contract_binding",
     "validate_release_entry",
 ]

@@ -10,8 +10,7 @@ import numpy as np
 import pandas as pd
 from wind_forecast.evaluation import evaluate_predictions
 from wind_forecast.inference import (
-    BEST_MODEL_LOG_NAME_FROM_NOTEBOOK,
-    BEST_MODEL_ORIG_NAME_FROM_NOTEBOOK,
+    V1_MODEL_NAME,
     build_prediction_comparison,
     historical_positive_cap,
     load_new_data,
@@ -120,12 +119,12 @@ def _run_workflow(args: argparse.Namespace) -> None:
 
     print("\n--- Processing best original-target model ---")
     model_orig, scaler_x_orig, scaler_y_orig = load_trained_model_and_scalers(
-        BEST_MODEL_ORIG_NAME_FROM_NOTEBOOK, "original", MODELS_PATH
+        V1_MODEL_NAME, "original", MODELS_PATH
     )
     if not model_orig:
-        print(f"Could not load original-target model {BEST_MODEL_ORIG_NAME_FROM_NOTEBOOK}.")
+        print(f"Could not load original-target model {V1_MODEL_NAME}.")
         preds_orig_final = np.full_like(y_true_new, np.nan)
-    elif "ANN" in BEST_MODEL_ORIG_NAME_FROM_NOTEBOOK and (not scaler_x_orig or not scaler_y_orig):
+    elif "ANN" in V1_MODEL_NAME and (not scaler_x_orig or not scaler_y_orig):
         print("X or Y scaler missing for the original ANN model. Predictions cannot be generated correctly.")
         preds_orig_final = np.full_like(y_true_new, np.nan)
     else:
@@ -136,15 +135,15 @@ def _run_workflow(args: argparse.Namespace) -> None:
 
     print("\n--- Processing best log-transformed-target model ---")
     model_log, scaler_x_log, scaler_y_log = load_trained_model_and_scalers(
-        BEST_MODEL_LOG_NAME_FROM_NOTEBOOK, "log", MODELS_PATH
+        V1_MODEL_NAME, "log", MODELS_PATH
     )
     if not model_log:
-        print(f"Could not load log-target model {BEST_MODEL_LOG_NAME_FROM_NOTEBOOK}.")
+        print(f"Could not load log-target model {V1_MODEL_NAME}.")
         preds_log_final = np.full_like(y_true_new, np.nan)
     else:
         actual_scaler_x_for_log = select_log_x_scaler(scaler_x_log, scaler_x_orig)
 
-        if "ANN" in BEST_MODEL_LOG_NAME_FROM_NOTEBOOK and (not actual_scaler_x_for_log or not scaler_y_log):
+        if "ANN" in V1_MODEL_NAME and (not actual_scaler_x_for_log or not scaler_y_log):
             print("X or Y scaler missing for the log ANN model. Predictions cannot be generated correctly.")
             preds_log_final = np.full_like(y_true_new, np.nan)
         else:
@@ -161,12 +160,12 @@ def _run_workflow(args: argparse.Namespace) -> None:
 
     metrics_results = {}
     if not np.isnan(preds_orig_final).all():
-        metrics_results[f"Best_Original_{BEST_MODEL_ORIG_NAME_FROM_NOTEBOOK}"] = evaluate_predictions(
-            y_true_new, preds_orig_final, f"Best model (original target - {BEST_MODEL_ORIG_NAME_FROM_NOTEBOOK})"
+        metrics_results[f"Best_Original_{V1_MODEL_NAME}"] = evaluate_predictions(
+            y_true_new, preds_orig_final, f"Best model (original target - {V1_MODEL_NAME})"
         )
     if not np.isnan(preds_log_final).all():
-        metrics_results[f"Best_Log_{BEST_MODEL_LOG_NAME_FROM_NOTEBOOK}"] = evaluate_predictions(
-            y_true_new, preds_log_final, f"Best model (log target - {BEST_MODEL_LOG_NAME_FROM_NOTEBOOK})"
+        metrics_results[f"Best_Log_{V1_MODEL_NAME}"] = evaluate_predictions(
+            y_true_new, preds_log_final, f"Best model (log target - {V1_MODEL_NAME})"
         )
 
     df_metrics_summary = pd.DataFrame(metrics_results).T
@@ -177,8 +176,8 @@ def _run_workflow(args: argparse.Namespace) -> None:
         df_new,
         preds_orig_final,
         preds_log_final,
-        BEST_MODEL_ORIG_NAME_FROM_NOTEBOOK,
-        BEST_MODEL_LOG_NAME_FROM_NOTEBOOK,
+        V1_MODEL_NAME,
+        V1_MODEL_NAME,
     )
 
     print("\n--- Final comparison DataFrame: first and last rows ---")
@@ -195,20 +194,20 @@ def _run_workflow(args: argparse.Namespace) -> None:
         linestyle="-",
         alpha=0.7,
     )
-    if f"Pred_Best_Original_{BEST_MODEL_ORIG_NAME_FROM_NOTEBOOK}" in comparison_df_new.columns:
+    if f"Pred_Best_Original_{V1_MODEL_NAME}" in comparison_df_new.columns:
         plt.plot(
             comparison_df_new[DATE_COLUMN][:plot_limit],
-            comparison_df_new[f"Pred_Best_Original_{BEST_MODEL_ORIG_NAME_FROM_NOTEBOOK}"][:plot_limit],
-            label=f"Best original-target prediction ({BEST_MODEL_ORIG_NAME_FROM_NOTEBOOK})",
+            comparison_df_new[f"Pred_Best_Original_{V1_MODEL_NAME}"][:plot_limit],
+            label=f"Best original-target prediction ({V1_MODEL_NAME})",
             marker="x",
             linestyle="--",
             alpha=0.7,
         )
-    if f"Pred_Best_Log_{BEST_MODEL_LOG_NAME_FROM_NOTEBOOK}" in comparison_df_new.columns:
+    if f"Pred_Best_Log_{V1_MODEL_NAME}" in comparison_df_new.columns:
         plt.plot(
             comparison_df_new[DATE_COLUMN][:plot_limit],
-            comparison_df_new[f"Pred_Best_Log_{BEST_MODEL_LOG_NAME_FROM_NOTEBOOK}"][:plot_limit],
-            label=f"Best log-target prediction ({BEST_MODEL_LOG_NAME_FROM_NOTEBOOK})",
+            comparison_df_new[f"Pred_Best_Log_{V1_MODEL_NAME}"][:plot_limit],
+            label=f"Best log-target prediction ({V1_MODEL_NAME})",
             marker="s",
             linestyle=":",
             alpha=0.7,
@@ -246,12 +245,12 @@ def _log_mlflow_evaluation_run(
     metrics_results: dict,
 ) -> None:
     original_model_path, original_scaler_x_path, original_scaler_y_path = model_and_scaler_paths(
-        BEST_MODEL_ORIG_NAME_FROM_NOTEBOOK,
+        V1_MODEL_NAME,
         "original",
         MODELS_PATH,
     )
     log_model_path, log_scaler_x_path, log_scaler_y_path = model_and_scaler_paths(
-        BEST_MODEL_LOG_NAME_FROM_NOTEBOOK,
+        V1_MODEL_NAME,
         "log",
         MODELS_PATH,
     )
@@ -263,11 +262,11 @@ def _log_mlflow_evaluation_run(
         "prediction_output_path": _display_path(output_comparison_filename),
         "row_count": row_count,
         "positive_inf_cap": positive_inf_cap,
-        "original_model_name": BEST_MODEL_ORIG_NAME_FROM_NOTEBOOK,
+        "original_model_name": V1_MODEL_NAME,
         "original_model_path": _display_path(original_model_path),
         "original_scaler_x_path": _display_optional_path(original_scaler_x_path),
         "original_scaler_y_path": _display_optional_path(original_scaler_y_path),
-        "log_model_name": BEST_MODEL_LOG_NAME_FROM_NOTEBOOK,
+        "log_model_name": V1_MODEL_NAME,
         "log_model_path": _display_path(log_model_path),
         "log_scaler_x_path": _display_optional_path(log_scaler_x_path),
         "log_scaler_y_path": _display_optional_path(log_scaler_y_path),
