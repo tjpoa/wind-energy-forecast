@@ -25,6 +25,16 @@ declared by the Terraform roots. Store identifiers in protected GitHub
 variables/secrets, never in the repository. No client secret or registry admin
 password is expected.
 
+The Terraform workflows run read-only readiness probes before publishing an
+image, initializing a backend, or creating a rollback manifest. The probes
+check the environment reviewer/branch policy, the exact OIDC subject, the
+Entra-authenticated state container and upstream state key, and the least
+privilege RBAC assignments. Planner and deployer identities also require a
+control-plane `Reader` assignment on the state storage account so the probe can
+inspect RBAC without acquiring a Terraform lock. A failed probe publishes a
+sanitized immutable `azure_external_readiness.v1` receipt and blocks the
+workflow.
+
 The release gate requires `PRODUCTION_RELEASE_ENABLED=true`, successful CI on
 protected `master`, and the protected maintainer confirmation. Workflows use
 one `azure-production-mutation` concurrency group and immutable image digests.

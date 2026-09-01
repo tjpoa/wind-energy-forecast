@@ -1,0 +1,22 @@
+{
+  "configuration": {"release_enabled": true, "missing": []},
+  "identity": "publisher",
+  "mode": "release-publish",
+  "oidc": {
+    "account_match": true,
+    "claims": {
+      "audience": "api://AzureADTokenExchange",
+      "issuer": "https://token.actions.githubusercontent.com",
+      "subject": "repo:tjpoa/wind-energy-forecast:ref:refs/heads/master"
+    },
+    "login_succeeded": true
+  },
+  "permissions": {
+    "assignments": [
+      {"condition": null, "role": "AcrPush", "scope": "container_registry"},
+      {"condition": null, "role": "Reader", "scope": "workload_resource_group"}
+    ],
+    "probe_ok": true
+  },
+  "observed_at_utc": "2026-09-01T12:00:00Z"
+}

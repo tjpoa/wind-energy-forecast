@@ -25,11 +25,136 @@ env:
   AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
   RELEASE_RUN_ID: ${{ inputs.release_run_id }}
   REQUEST_SHA: ${{ github.sha }}
+  READINESS_SOURCE_SHA: ${{ github.sha }}
 
 jobs:
+  readiness-planner:
+    name: Readiness rollback planner and remote state
+    if: ${{ github.ref == 'refs/heads/master' }}
+    runs-on: ubuntu-latest
+    env:
+      TFSTATE_RESOURCE_GROUP_NAME: ${{ vars.TFSTATE_RESOURCE_GROUP_NAME }}
+      TFSTATE_STORAGE_ACCOUNT_NAME: ${{ vars.TFSTATE_STORAGE_ACCOUNT_NAME }}
+      TFSTATE_CONTAINER_NAME: ${{ vars.TFSTATE_CONTAINER_NAME || 'tfstate' }}
+      AZURE_PLANNER_CLIENT_ID: ${{ secrets.AZURE_PLANNER_CLIENT_ID }}
+      AZURE_BUDGET_ALERT_EMAIL: ${{ secrets.AZURE_BUDGET_ALERT_EMAIL }}
+      AZURE_BUDGET_START_DATE: ${{ vars.AZURE_BUDGET_START_DATE }}
+      AZURE_BUDGET_END_DATE: ${{ vars.AZURE_BUDGET_END_DATE }}
+    steps:
+      - name: Check out the selected protected commit
+        uses: actions/checkout@v4
+      - name: Run rollback planner readiness preflight
+        uses: ./.github/actions/azure-preflight
+        with:
+          mode: rollback-plan
+          identity: planner
+          azure-client-id: ${{ secrets.AZURE_PLANNER_CLIENT_ID }}
+          github-token: ${{ github.token }}
+          release-enabled: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
+          output-path: azure-readiness-rollback-plan.json
+
+  readiness-deployer:
+    name: Readiness protected rollback deployer
+    if: ${{ github.ref == 'refs/heads/master' }}
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      TFSTATE_RESOURCE_GROUP_NAME: ${{ vars.TFSTATE_RESOURCE_GROUP_NAME }}
+      TFSTATE_STORAGE_ACCOUNT_NAME: ${{ vars.TFSTATE_STORAGE_ACCOUNT_NAME }}
+      TFSTATE_CONTAINER_NAME: ${{ vars.TFSTATE_CONTAINER_NAME || 'tfstate' }}
+      AZURE_DEPLOYER_CLIENT_ID: ${{ secrets.AZURE_DEPLOYER_CLIENT_ID }}
+      AZURE_BUDGET_ALERT_EMAIL: ${{ secrets.AZURE_BUDGET_ALERT_EMAIL }}
+      AZURE_BUDGET_START_DATE: ${{ vars.AZURE_BUDGET_START_DATE }}
+      AZURE_BUDGET_END_DATE: ${{ vars.AZURE_BUDGET_END_DATE }}
+    steps:
+      - name: Check out the selected protected commit
+        uses: actions/checkout@v4
+      - name: Run rollback deployer readiness preflight
+        uses: ./.github/actions/azure-preflight
+        with:
+          mode: rollback-deploy
+          identity: deployer
+          azure-client-id: ${{ secrets.AZURE_DEPLOYER_CLIENT_ID }}
+          github-token: ${{ github.token }}
+          release-enabled: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
+          output-path: azure-readiness-rollback-deploy.json
+
+  readiness-gate:
+    name: Aggregate protected rollback readiness
+    needs:
+      - readiness-planner
+      - readiness-deployer
+    if: ${{ always() && github.ref == 'refs/heads/master' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the selected protected commit
+        if: ${{ always() }}
+        uses: actions/checkout@v4
+      - name: Download component readiness receipts
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: azure-readiness-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: readiness-components
+          merge-multiple: true
+      - name: Build aggregate readiness receipt
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_azure_workflow.py readiness-aggregate \
+            --directory readiness-components \
+            --modes rollback-plan,rollback-deploy \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow "$GITHUB_WORKFLOW" \
+            --source-sha "$READINESS_SOURCE_SHA" \
+            --ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --output azure-readiness.json
+      - name: Upload immutable aggregate readiness receipt
+        if: ${{ always() }}
+        id: upload_readiness
+        uses: actions/upload-artifact@v4
+        with:
+          name: azure-readiness-${{ github.run_id }}-${{ github.run_attempt }}
+          path: azure-readiness.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record readiness evidence in job summary
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt_id="unavailable"
+          if [[ -f azure-readiness.json ]]; then
+            receipt_id="$(jq -r '.receipt_id' azure-readiness.json)"
+          fi
+          {
+            echo "### Azure readiness"
+            echo "- Receipt ID / SHA-256: \`$receipt_id\`"
+            echo "- Artifact digest: \`${{ steps.upload_readiness.outputs.artifact-digest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Fail closed on aggregate readiness
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_azure_workflow.py readiness-receipt \
+            --path azure-readiness.json \
+            --assert-go \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow "$GITHUB_WORKFLOW" \
+            --source-sha "$READINESS_SOURCE_SHA" \
+            --ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
+
   validate-request:
     name: Validate rollback request
-    if: ${{ github.ref == 'refs/heads/master' }}
+    needs: readiness-gate
+    if: ${{ needs.readiness-gate.result == 'success' && github.ref == 'refs/heads/master' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -38,11 +163,25 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      - name: Run protected Azure preflight
-        uses: ./.github/actions/azure-preflight
+      - name: Download aggregate readiness receipt
+        uses: actions/download-artifact@v4
         with:
-          mode: rollback-request
-          release-enabled: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
+          name: azure-readiness-${{ github.run_id }}-${{ github.run_attempt }}
+          path: readiness
+
+      - name: Validate readiness before creating rollback manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_azure_workflow.py readiness-receipt \
+            --path readiness/azure-readiness.json \
+            --mode rollback-plan \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow "$GITHUB_WORKFLOW" \
+            --source-sha "$READINESS_SOURCE_SHA" \
+            --ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
 
       - name: Validate release run id
         shell: bash
@@ -142,11 +281,25 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      - name: Run protected Azure preflight
-        uses: ./.github/actions/azure-preflight
+      - name: Download aggregate readiness receipt
+        uses: actions/download-artifact@v4
         with:
-          mode: rollback-plan
-          release-enabled: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
+          name: azure-readiness-${{ github.run_id }}-${{ github.run_attempt }}
+          path: readiness
+
+      - name: Validate readiness before Terraform initialization
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_azure_workflow.py readiness-receipt \
+            --path readiness/azure-readiness.json \
+            --mode rollback-plan \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow "$GITHUB_WORKFLOW" \
+            --source-sha "$READINESS_SOURCE_SHA" \
+            --ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
 
       - name: Download rollback manifest
         uses: actions/download-artifact@v4
@@ -237,11 +390,25 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      - name: Run protected Azure preflight
-        uses: ./.github/actions/azure-preflight
+      - name: Download aggregate readiness receipt
+        uses: actions/download-artifact@v4
         with:
-          mode: rollback-deploy
-          release-enabled: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
+          name: azure-readiness-${{ github.run_id }}-${{ github.run_attempt }}
+          path: readiness
+
+      - name: Validate readiness before Terraform initialization
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_azure_workflow.py readiness-receipt \
+            --path readiness/azure-readiness.json \
+            --mode rollback-deploy \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow "$GITHUB_WORKFLOW" \
+            --source-sha "$READINESS_SOURCE_SHA" \
+            --ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
 
       - name: Download rollback manifest
         uses: actions/download-artifact@v4
@@ -453,6 +620,7 @@ jobs:
           path: |
             rollback-manifest.json
             rollback-receipt.json
+            readiness/azure-readiness.json
             active-images.json
             smoke-tests.json
           if-no-files-found: error
@@ -471,5 +639,6 @@ jobs:
             echo "- Frontend image: \`$(jq -r '.frontend_image' rollback-manifest.json)\`"
             echo "- API revision: \`${API_REVISION_NAME}\`"
             echo "- Frontend revision: \`${FRONTEND_REVISION_NAME}\`"
+            echo "- Readiness receipt: \`$(jq -r '.receipt_id' readiness/azure-readiness.json)\`"
             echo "- Terraform rollback plan: applied after the protected \`production\` maintainer confirmation"
           } >> "$GITHUB_STEP_SUMMARY"

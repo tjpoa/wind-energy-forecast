@@ -21,11 +21,167 @@ env:
   AZURE_ACR_NAME: ${{ vars.AZURE_ACR_NAME }}
   AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
   AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  READINESS_SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
 
 jobs:
+  readiness-publisher:
+    name: Readiness publisher OIDC and ACR permissions
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'master' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    env:
+      AZURE_PUBLISHER_CLIENT_ID: ${{ secrets.AZURE_PUBLISHER_CLIENT_ID }}
+    steps:
+      - name: Check out the exact CI commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - name: Run publisher readiness preflight
+        uses: ./.github/actions/azure-preflight
+        with:
+          mode: release-publish
+          identity: publisher
+          azure-client-id: ${{ secrets.AZURE_PUBLISHER_CLIENT_ID }}
+          github-token: ${{ github.token }}
+          release-enabled: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
+          output-path: azure-readiness-release-publish.json
+
+  readiness-planner:
+    name: Readiness planner OIDC, state, and permissions
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'master' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    env:
+      TFSTATE_RESOURCE_GROUP_NAME: ${{ vars.TFSTATE_RESOURCE_GROUP_NAME }}
+      TFSTATE_STORAGE_ACCOUNT_NAME: ${{ vars.TFSTATE_STORAGE_ACCOUNT_NAME }}
+      TFSTATE_CONTAINER_NAME: ${{ vars.TFSTATE_CONTAINER_NAME || 'tfstate' }}
+      AZURE_PUBLISHER_CLIENT_ID: ${{ secrets.AZURE_PUBLISHER_CLIENT_ID }}
+      AZURE_PLANNER_CLIENT_ID: ${{ secrets.AZURE_PLANNER_CLIENT_ID }}
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'wind-energy-forecast-demo' }}
+      AZURE_BUDGET_ALERT_EMAIL: ${{ secrets.AZURE_BUDGET_ALERT_EMAIL }}
+      AZURE_BUDGET_START_DATE: ${{ vars.AZURE_BUDGET_START_DATE }}
+      AZURE_BUDGET_END_DATE: ${{ vars.AZURE_BUDGET_END_DATE }}
+    steps:
+      - name: Check out the exact CI commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - name: Run planner readiness preflight
+        uses: ./.github/actions/azure-preflight
+        with:
+          mode: release-plan
+          identity: planner
+          azure-client-id: ${{ secrets.AZURE_PLANNER_CLIENT_ID }}
+          github-token: ${{ github.token }}
+          release-enabled: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
+          output-path: azure-readiness-release-plan.json
+
+  readiness-deployer:
+    name: Readiness protected deployer and production environment
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'master' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      TFSTATE_RESOURCE_GROUP_NAME: ${{ vars.TFSTATE_RESOURCE_GROUP_NAME }}
+      TFSTATE_STORAGE_ACCOUNT_NAME: ${{ vars.TFSTATE_STORAGE_ACCOUNT_NAME }}
+      TFSTATE_CONTAINER_NAME: ${{ vars.TFSTATE_CONTAINER_NAME || 'tfstate' }}
+      AZURE_DEPLOYER_CLIENT_ID: ${{ secrets.AZURE_DEPLOYER_CLIENT_ID }}
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'wind-energy-forecast-demo' }}
+      AZURE_BUDGET_ALERT_EMAIL: ${{ secrets.AZURE_BUDGET_ALERT_EMAIL }}
+      AZURE_BUDGET_START_DATE: ${{ vars.AZURE_BUDGET_START_DATE }}
+      AZURE_BUDGET_END_DATE: ${{ vars.AZURE_BUDGET_END_DATE }}
+    steps:
+      - name: Check out the exact CI commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - name: Run deployer readiness preflight
+        uses: ./.github/actions/azure-preflight
+        with:
+          mode: release-deploy
+          identity: deployer
+          azure-client-id: ${{ secrets.AZURE_DEPLOYER_CLIENT_ID }}
+          github-token: ${{ github.token }}
+          release-enabled: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
+          output-path: azure-readiness-release-deploy.json
+
+  readiness-gate:
+    name: Aggregate protected Azure readiness
+    needs:
+      - readiness-publisher
+      - readiness-planner
+      - readiness-deployer
+    if: ${{ always() && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'master' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the exact CI commit
+        if: ${{ always() }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - name: Download component readiness receipts
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: azure-readiness-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: readiness-components
+          merge-multiple: true
+      - name: Build aggregate readiness receipt
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_azure_workflow.py readiness-aggregate \
+            --directory readiness-components \
+            --modes release-publish,release-plan,release-deploy \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow "$GITHUB_WORKFLOW" \
+            --source-sha "$READINESS_SOURCE_SHA" \
+            --ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --output azure-readiness.json
+      - name: Upload immutable aggregate readiness receipt
+        if: ${{ always() }}
+        id: upload_readiness
+        uses: actions/upload-artifact@v4
+        with:
+          name: azure-readiness-${{ github.run_id }}-${{ github.run_attempt }}
+          path: azure-readiness.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record readiness evidence in job summary
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt_id="unavailable"
+          if [[ -f azure-readiness.json ]]; then
+            receipt_id="$(jq -r '.receipt_id' azure-readiness.json)"
+          fi
+          {
+            echo "### Azure readiness"
+            echo "- Receipt ID / SHA-256: \`$receipt_id\`"
+            echo "- Artifact digest: \`${{ steps.upload_readiness.outputs.artifact-digest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Fail closed on aggregate readiness
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_azure_workflow.py readiness-receipt \
+            --path azure-readiness.json \
+            --assert-go \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow "$GITHUB_WORKFLOW" \
+            --source-sha "$READINESS_SOURCE_SHA" \
+            --ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
+
   publish-images:
     name: Build and publish immutable images
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'master' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    needs: readiness-gate
+    if: ${{ needs.readiness-gate.result == 'success' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'master' && github.event.workflow_run.head_repository.full_name == github.repository }}
     runs-on: ubuntu-latest
     env:
       AZURE_PUBLISHER_CLIENT_ID: ${{ secrets.AZURE_PUBLISHER_CLIENT_ID }}
@@ -40,11 +196,25 @@ jobs:
         with:
           ref: ${{ env.SOURCE_SHA }}
 
-      - name: Run protected Azure preflight
-        uses: ./.github/actions/azure-preflight
+      - name: Download aggregate readiness receipt
+        uses: actions/download-artifact@v4
         with:
-          mode: release-publish
-          release-enabled: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
+          name: azure-readiness-${{ github.run_id }}-${{ github.run_attempt }}
+          path: readiness
+
+      - name: Validate readiness before any registry mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_azure_workflow.py readiness-receipt \
+            --path readiness/azure-readiness.json \
+            --mode release-publish \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow "$GITHUB_WORKFLOW" \
+            --source-sha "$READINESS_SOURCE_SHA" \
+            --ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
 
       - name: Sign in to Azure with publisher OIDC
         uses: azure/login@v2
@@ -284,11 +454,25 @@ jobs:
         with:
           ref: ${{ env.SOURCE_SHA }}
 
-      - name: Run protected Azure preflight
-        uses: ./.github/actions/azure-preflight
+      - name: Download aggregate readiness receipt
+        uses: actions/download-artifact@v4
         with:
-          mode: release-plan
-          release-enabled: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
+          name: azure-readiness-${{ github.run_id }}-${{ github.run_attempt }}
+          path: readiness
+
+      - name: Validate readiness before Terraform initialization
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_azure_workflow.py readiness-receipt \
+            --path readiness/azure-readiness.json \
+            --mode release-plan \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow "$GITHUB_WORKFLOW" \
+            --source-sha "$READINESS_SOURCE_SHA" \
+            --ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
 
       - name: Download release manifest
         uses: actions/download-artifact@v4
@@ -389,11 +573,25 @@ jobs:
         with:
           ref: ${{ env.SOURCE_SHA }}
 
-      - name: Run protected Azure preflight
-        uses: ./.github/actions/azure-preflight
+      - name: Download aggregate readiness receipt
+        uses: actions/download-artifact@v4
         with:
-          mode: release-deploy
-          release-enabled: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
+          name: azure-readiness-${{ github.run_id }}-${{ github.run_attempt }}
+          path: readiness
+
+      - name: Validate readiness before Terraform initialization
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_azure_workflow.py readiness-receipt \
+            --path readiness/azure-readiness.json \
+            --mode release-deploy \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow "$GITHUB_WORKFLOW" \
+            --source-sha "$READINESS_SOURCE_SHA" \
+            --ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
 
       - name: Download release manifest
         uses: actions/download-artifact@v4
@@ -611,6 +809,7 @@ jobs:
           path: |
             release-manifest.json
             release-receipt.json
+            readiness/azure-readiness.json
             active-images.json
             smoke-tests.json
           if-no-files-found: error
@@ -628,5 +827,6 @@ jobs:
             echo "- Frontend image: \`$(jq -r '.frontend_image' release-manifest.json)\`"
             echo "- API revision: \`${API_REVISION_NAME}\`"
             echo "- Frontend revision: \`${FRONTEND_REVISION_NAME}\`"
+            echo "- Readiness receipt: \`$(jq -r '.receipt_id' readiness/azure-readiness.json)\`"
             echo "- Terraform plan: applied after the protected \`production\` maintainer confirmation"
           } >> "$GITHUB_STEP_SUMMARY"
