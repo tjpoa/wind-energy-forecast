@@ -71,6 +71,21 @@ def test_validate_dataset_manifest_checks_the_complete_snapshot(tmp_path: Path) 
     assert set(result.verified_paths) == set(files.values())
 
 
+def test_metadata_validation_does_not_require_declared_files(tmp_path: Path) -> None:
+    root, manifest_path, files = _write_fixture_manifest(tmp_path)
+    for path in files.values():
+        path.unlink()
+
+    result = validate_dataset_manifest(
+        manifest_path,
+        repository_root=root,
+        mode="metadata",
+    )
+
+    assert result.mode == "metadata"
+    assert set(result.verified_paths) == set(files.values())
+
+
 @pytest.mark.parametrize("failure", ["changed", "missing"])
 def test_validate_dataset_manifest_rejects_changed_or_missing_files(
     tmp_path: Path, failure: str

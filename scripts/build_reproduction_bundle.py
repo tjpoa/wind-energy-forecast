@@ -8,6 +8,11 @@ from pathlib import Path
 from wind_forecast.artifacts import build_reproduction_bundle, validate_release
 from wind_forecast.manifests import sha256_file
 from wind_forecast.paths import processed_data_dir, project_root
+from wind_forecast.release_catalog import (
+    ReleaseCatalogError,
+    load_release_catalog,
+    require_release_approved,
+)
 from wind_forecast.tracking import (
     DEFAULT_REGISTERED_MODEL_NAME,
     DEFAULT_TRACKING_URI,
@@ -35,10 +40,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     validate_release(args.release)
-    catalog = json.loads(args.catalog.read_text(encoding="utf-8"))
-    release_entry = catalog.get("releases", {}).get(args.release)
-    if not release_entry:
-        raise SystemExit(f"ERROR: release is not declared in {args.catalog}: {args.release}")
+    try:
+        catalog = load_release_catalog(args.catalog)
+        release_entry = require_release_approved(catalog, args.release)
+    except ReleaseCatalogError as exc:
+        raise SystemExit(f"ERROR: {exc}") from exc
     config = TrackingConfig(
         tracking_uri=args.tracking_uri,
         registered_model_name=args.registered_model,

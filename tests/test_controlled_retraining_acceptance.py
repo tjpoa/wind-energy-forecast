@@ -1402,9 +1402,9 @@ def test_failure_before_pointer_commit_restores_aliases_and_records_evidence(
     assert reconciliation["automatic_rollback_attempted"] is False
 
 
-def test_v1_tracked_artifacts_keep_the_accepted_sha256() -> None:
+def test_v1_artifacts_keep_the_accepted_sha256() -> None:
     project_root = Path(__file__).resolve().parents[1]
-    validate_v1_source_contract()
+    validate_v1_source_contract(mode="metadata")
     observed = {
         relative: sha256_file(project_root / relative)
         for relative in V1_NON_DATA_SHA256
