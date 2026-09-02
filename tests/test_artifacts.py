@@ -90,7 +90,8 @@ def test_verify_rejects_duplicate_members(tmp_path: Path):
     archive = tmp_path / "duplicate.zip"
     with zipfile.ZipFile(archive, "w") as output:
         output.writestr("manifest.json", "{}")
-        output.writestr("manifest.json", "{}")
+        with pytest.warns(UserWarning, match="Duplicate name: 'manifest.json'"):
+            output.writestr("manifest.json", "{}")
     with pytest.raises(ValueError, match="duplicate"):
         verify_bundle(archive)
 
