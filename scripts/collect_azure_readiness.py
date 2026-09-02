@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import base64
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -20,9 +21,16 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from azure_workflow_policy import READINESS_IDENTITIES, READINESS_REQUIRED_UPSTREAM
-from azure_workflow_policy import assert_no_sensitive_evidence, missing_configuration
-from validate_azure_workflow import MODE_CONFIGURATION
+try:
+    from azure_workflow_policy import READINESS_IDENTITIES, READINESS_REQUIRED_UPSTREAM
+    from azure_workflow_policy import assert_no_sensitive_evidence, missing_configuration
+    from validate_azure_workflow import MODE_CONFIGURATION
+except ModuleNotFoundError as exc:
+    if exc.name not in {"azure_workflow_policy", "validate_azure_workflow"}:
+        raise
+    from scripts.azure_workflow_policy import READINESS_IDENTITIES, READINESS_REQUIRED_UPSTREAM
+    from scripts.azure_workflow_policy import assert_no_sensitive_evidence, missing_configuration
+    from scripts.validate_azure_workflow import MODE_CONFIGURATION
 
 
 OIDC_AUDIENCE = "api://AzureADTokenExchange"
@@ -33,10 +41,29 @@ ROLE_ID_TO_NAME = {
     "8311e382-0749-4cb8-b61a-304f252e45ec": "AcrPush",
     "ba92f5b4-2d11-453d-a403-e96b0029c9fe": "Storage Blob Data Contributor",
     "f58310d9-a9f6-439a-9e8d-f62e7b41a168": "RBAC Administrator",
+    "8e3af657-a8ff-443c-a75c-2fe8c4bcb635": "Owner",
 }
 ROLE_NAME_ALIASES = {
     "Role Based Access Control Administrator": "RBAC Administrator",
 }
+KNOWN_ROLE_NAMES = frozenset(ROLE_ID_TO_NAME.values())
+EXPECTED_RBAC_ADMINISTRATOR_CONDITION_SHA256 = (
+    "7fa6d91ed6cc2b7342a0da693abaa57f019f9f46ce757b5afa243b0c7f0cc13d"
+)
+_RBAC_ADMINISTRATOR_CONDITION_VERSION = "2.0"
+_AZURE_SCOPE = re.compile(
+    r"^/(?:subscriptions/[^/\s]+(?:/.*)?|providers/microsoft\.management/"
+    r"managementgroups/[^/\s]+(?:/.*)?)$",
+    re.IGNORECASE,
+)
+_SUBSCRIPTION_SCOPE = re.compile(r"^/subscriptions/[^/\s]+$", re.IGNORECASE)
+_RESOURCE_GROUP_SCOPE = re.compile(
+    r"^/subscriptions/[^/\s]+/resourcegroups/[^/\s]+$", re.IGNORECASE
+)
+_MANAGEMENT_GROUP_SCOPE = re.compile(
+    r"^/providers/microsoft\.management/managementgroups/[^/\s]+$",
+    re.IGNORECASE,
+)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -288,23 +315,34 @@ def _permission_evidence(mode: str, identity: str) -> dict[str, Any]:
     state_group = env.get("TFSTATE_RESOURCE_GROUP_NAME", "")
     state_account = env.get("TFSTATE_STORAGE_ACCOUNT_NAME", "")
     scopes: dict[str, str] = {}
+    scope_probe_ok = True
     workload = _az_tsv(["group", "show", "--name", resource_group, "--query", "id"])
-    if workload:
-        scopes["workload_resource_group"] = workload
-    if state_group and state_account:
+    if workload and _is_azure_scope(workload):
+        scopes["workload_resource_group"] = workload.strip()
+    else:
+        scope_probe_ok = False
+    if identity in {"planner", "deployer"} and state_group and state_account:
         state_id = _az_tsv(["storage", "account", "show", "--resource-group", state_group, "--name", state_account, "--query", "id"])
-        if state_id:
-            scopes["state_storage_account"] = state_id
+        if state_id and _is_azure_scope(state_id):
+            scopes["state_storage_account"] = state_id.strip()
+        else:
+            scope_probe_ok = False
+    elif identity in {"planner", "deployer"}:
+        scope_probe_ok = False
     if identity == "publisher":
         acr_name = env.get("AZURE_ACR_NAME", "")
         if acr_name:
             acr_id = _az_tsv(["acr", "show", "--resource-group", resource_group, "--name", acr_name, "--query", "id"])
-            if acr_id:
-                scopes["container_registry"] = acr_id
+            if acr_id and _is_azure_scope(acr_id):
+                scopes["container_registry"] = acr_id.strip()
+            else:
+                scope_probe_ok = False
+        else:
+            scope_probe_ok = False
     principal_id = _principal_id()
-    if not principal_id or not scopes:
+    if not principal_id or not scopes or not scope_probe_ok:
         return {"probe_ok": False, "assignments": []}
-    assignments: list[dict[str, Any]] = []
+    assignments: set[tuple[str, str, str | None]] = set()
     probe_ok = True
     for symbolic_scope, scope_id in scopes.items():
         payload = _az_json([
@@ -319,33 +357,131 @@ def _permission_evidence(mode: str, identity: str) -> dict[str, Any]:
             continue
         for item in payload:
             if not isinstance(item, dict):
+                probe_ok = False
                 continue
-            role = item.get("roleDefinitionName")
+            role = _resolve_role(item)
             if not role:
-                role_id = str(item.get("roleDefinitionId", "")).rstrip("/").rsplit("/", 1)[-1].lower()
-                role = ROLE_ID_TO_NAME.get(role_id)
-            if not role:
+                probe_ok = False
                 continue
-            role = ROLE_NAME_ALIASES.get(str(role), str(role))
-            condition = _condition_label(item.get("condition"), str(role))
-            assignment_scope = str(item.get("scope", ""))
-            if assignment_scope.rstrip("/").lower() == scope_id.rstrip("/").lower():
-                assignments.append({"role": str(role), "scope": symbolic_scope, "condition": condition})
-    return {"probe_ok": probe_ok, "assignments": assignments}
-
-
-def _condition_label(raw: Any, role: str) -> str | None:
-    if role != "RBAC Administrator" or not isinstance(raw, str):
-        return None
-    text = re.sub(r"\s+", "", raw).lower()
-    required = (
-        "microsoft.authorization/roleassignments/write",
-        "microsoft.authorization/roleassignments/delete",
-        "7f951dda-4ed3-4680-a7ca-43fe172d538d",
-        "8311e382-0749-4cb8-b61a-304f252e45ec",
-        "serviceprincipal",
+            assignment_scope = item.get("scope")
+            observed_scope = _symbolic_scope(
+                assignment_scope, queried_scope=scope_id, direct_scopes=scopes
+            )
+            if observed_scope is None:
+                probe_ok = False
+                continue
+            condition = _condition_label(
+                item.get("condition"),
+                role,
+                item.get("conditionVersion"),
+            )
+            if _condition_is_malformed(
+                item.get("condition"), role, item.get("conditionVersion")
+            ):
+                probe_ok = False
+            assignments.add((role, observed_scope, condition))
+    ordered = sorted(
+        assignments,
+        key=lambda item: (item[0], item[1], "" if item[2] is None else item[2]),
     )
-    return "acr_roles_only" if all(token in text for token in required) else "invalid"
+    return {
+        "probe_ok": probe_ok,
+        "assignments": [
+            {"role": role, "scope": scope, "condition": condition}
+            for role, scope, condition in ordered
+        ],
+    }
+
+
+def _resolve_role(item: dict[str, Any]) -> str | None:
+    name = item.get("roleDefinitionName")
+    role_definition_id = item.get("roleDefinitionId")
+    if name is not None:
+        if not isinstance(name, str) or not name.strip():
+            return None
+        role = ROLE_NAME_ALIASES.get(name.strip(), name.strip())
+        if role not in KNOWN_ROLE_NAMES:
+            return None
+    else:
+        role = None
+    if role_definition_id is not None:
+        if not isinstance(role_definition_id, str) or not role_definition_id.strip():
+            return None
+        role_id = role_definition_id.rstrip("/").rsplit("/", 1)[-1].lower()
+        id_role = ROLE_ID_TO_NAME.get(role_id)
+        if id_role is None or (role is not None and id_role != role):
+            return None
+        role = id_role
+    return role
+
+
+def _condition_label(
+    raw: Any, role: str, condition_version: Any = None
+) -> str | None:
+    if role != "RBAC Administrator":
+        return None if raw is None else "invalid"
+    if not isinstance(raw, str) or not raw.strip():
+        return "invalid"
+    if condition_version != _RBAC_ADMINISTRATOR_CONDITION_VERSION:
+        return "invalid"
+    canonical = re.sub(r"\s+", "", raw).lower()
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return (
+        "acr_roles_only"
+        if digest == EXPECTED_RBAC_ADMINISTRATOR_CONDITION_SHA256
+        else "invalid"
+    )
+
+
+def _condition_is_malformed(raw: Any, role: str, condition_version: Any) -> bool:
+    if role == "RBAC Administrator":
+        return (
+            not isinstance(raw, str)
+            or not raw.strip()
+            or not isinstance(condition_version, str)
+            or not condition_version.strip()
+        )
+    if raw is None:
+        return condition_version is not None
+    if not isinstance(raw, str) or not raw.strip():
+        return True
+    return not isinstance(condition_version, str) or not condition_version.strip()
+
+
+def _is_azure_scope(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    normalized = value.strip().rstrip("/")
+    return bool(normalized and _AZURE_SCOPE.fullmatch(normalized))
+
+
+def _scope_is_at_or_below(scope: str, parent: str) -> bool:
+    return scope == parent or scope.startswith(parent + "/")
+
+
+def _symbolic_scope(
+    assignment_scope: Any,
+    *,
+    queried_scope: str,
+    direct_scopes: dict[str, str],
+) -> str | None:
+    if not _is_azure_scope(assignment_scope):
+        return None
+    assignment = assignment_scope.strip().rstrip("/").lower()
+    queried = queried_scope.strip().rstrip("/").lower()
+    for symbolic_scope, direct_scope in direct_scopes.items():
+        direct = direct_scope.strip().rstrip("/").lower()
+        if assignment == direct:
+            return symbolic_scope if _scope_is_at_or_below(queried, direct) else None
+    if _MANAGEMENT_GROUP_SCOPE.fullmatch(assignment):
+        return "inherited_management_group"
+    if not _scope_is_at_or_below(queried, assignment):
+        return None
+    if _SUBSCRIPTION_SCOPE.fullmatch(assignment):
+        return "inherited_subscription"
+    if _RESOURCE_GROUP_SCOPE.fullmatch(assignment):
+        return "inherited_resource_group"
+    return "inherited_parent_resource"
 
 
 def _principal_id() -> str | None:

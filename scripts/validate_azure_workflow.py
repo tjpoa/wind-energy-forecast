@@ -10,23 +10,44 @@ import subprocess
 import sys
 from typing import Any
 
-from azure_workflow_policy import (
-    READINESS_IDENTITIES,
-    WorkflowPolicyError,
-    build_receipt,
-    build_readiness_component_receipt,
-    build_readiness_receipt,
-    forbidden_plan_changes,
-    forbidden_tracked_paths,
-    require_configuration,
-    require_release_enabled,
-    require_run_id,
-    validate_readiness_component_receipt,
-    validate_readiness_receipt,
-    validate_active_images,
-    validate_release_manifest,
-    validate_rollback_manifest,
-)
+try:
+    from azure_workflow_policy import (
+        READINESS_IDENTITIES,
+        WorkflowPolicyError,
+        build_receipt,
+        build_readiness_component_receipt,
+        build_readiness_receipt,
+        forbidden_plan_changes,
+        forbidden_tracked_paths,
+        require_configuration,
+        require_release_enabled,
+        require_run_id,
+        validate_readiness_component_receipt,
+        validate_readiness_receipt,
+        validate_active_images,
+        validate_release_manifest,
+        validate_rollback_manifest,
+    )
+except ModuleNotFoundError as exc:
+    if exc.name != "azure_workflow_policy":
+        raise
+    from scripts.azure_workflow_policy import (
+        READINESS_IDENTITIES,
+        WorkflowPolicyError,
+        build_receipt,
+        build_readiness_component_receipt,
+        build_readiness_receipt,
+        forbidden_plan_changes,
+        forbidden_tracked_paths,
+        require_configuration,
+        require_release_enabled,
+        require_run_id,
+        validate_readiness_component_receipt,
+        validate_readiness_receipt,
+        validate_active_images,
+        validate_release_manifest,
+        validate_rollback_manifest,
+    )
 
 
 BASE_CONFIGURATION = (
