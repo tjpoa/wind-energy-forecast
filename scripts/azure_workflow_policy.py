@@ -59,6 +59,27 @@ READINESS_ROLE_REQUIREMENTS = {
     ),
 }
 
+READINESS_KNOWN_ROLES = frozenset(
+    role
+    for requirements in READINESS_ROLE_REQUIREMENTS.values()
+    for role, _, _ in requirements
+) | {"Owner"}
+
+_READINESS_ROLE_ALIASES = {
+    "Role Based Access Control Administrator": "RBAC Administrator",
+}
+_READINESS_DIRECT_SCOPES = frozenset(
+    {"workload_resource_group", "state_storage_account", "container_registry"}
+)
+_READINESS_INHERITED_SCOPES = frozenset(
+    {
+        "inherited_subscription",
+        "inherited_management_group",
+        "inherited_resource_group",
+        "inherited_parent_resource",
+    }
+)
+
 READINESS_REQUIRED_UPSTREAM = {
     "foundation-plan": "bootstrap.tfstate",
     "foundation-apply": "bootstrap.tfstate",
@@ -79,11 +100,22 @@ _SENSITIVE_MARKERS = (
     "authorization",
     "access_key",
     "sas",
+    "assignment_id",
+    "object_id",
+    "principal_id",
+    "resource_id",
+    "role_definition_id",
+    "scope_id",
 )
 _JWT = re.compile(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$")
 _SENSITIVE_VALUE = re.compile(
     r"(?:bearer\s+|(?:access[_-])?token\s*[:=]|(?:client[_-])?secret\s*[:=]|"
     r"password\s*[:=]|credential\s*[:=]|(?:shared[_-])?key\s*[:=]|sas\s*[:=])",
+    re.IGNORECASE,
+)
+_AZURE_RESOURCE_ID = re.compile(
+    r"^/(?:subscriptions/[^/]+(?:/|$)|providers/microsoft\.management/"
+    r"managementgroups/[^/]+(?:/|$))",
     re.IGNORECASE,
 )
 _READINESS_BINDING_FIELDS = {
@@ -439,6 +471,8 @@ def assert_no_sensitive_evidence(value: Any, *, path: str = "evidence") -> None:
         return
     if isinstance(value, str):
         stripped = value.strip()
+        if _AZURE_RESOURCE_ID.match(stripped):
+            raise WorkflowPolicyError(f"Azure resource identifier is not permitted in {path}.")
         if _SENSITIVE_VALUE.search(stripped) or stripped.startswith(("ghp_", "github_pat_")):
             raise WorkflowPolicyError(f"Credential-like value is not permitted in {path}.")
         if stripped.startswith("eyJ") and _JWT.fullmatch(stripped):
@@ -572,14 +606,36 @@ def evaluate_readiness(
     permissions = evidence.get("permissions")
     assignments = permissions.get("assignments") if isinstance(permissions, Mapping) else None
     normalized: set[tuple[str, str, str | None]] = set()
-    if isinstance(assignments, Sequence) and not isinstance(assignments, (str, bytes)):
+    permissions_probe_ok = (
+        isinstance(permissions, Mapping)
+        and permissions.get("probe_ok") is True
+        and isinstance(assignments, Sequence)
+        and not isinstance(assignments, (str, bytes))
+    )
+    if permissions_probe_ok:
         for item in assignments:
-            if not isinstance(item, Mapping):
+            if not isinstance(item, Mapping) or set(item) != {"condition", "role", "scope"}:
+                permissions_probe_ok = False
                 continue
-            role = str(item.get("role", ""))
-            scope = str(item.get("scope", ""))
+            role = item.get("role")
+            scope = item.get("scope")
             condition = item.get("condition")
-            normalized.add((role, scope, str(condition) if condition is not None else None))
+            if not isinstance(role, str) or not role.strip():
+                permissions_probe_ok = False
+                continue
+            if not isinstance(scope, str) or scope not in (
+                _READINESS_DIRECT_SCOPES | _READINESS_INHERITED_SCOPES
+            ):
+                permissions_probe_ok = False
+                continue
+            if condition is not None and not isinstance(condition, str):
+                permissions_probe_ok = False
+                continue
+            role = _READINESS_ROLE_ALIASES.get(role, role)
+            if role not in READINESS_KNOWN_ROLES:
+                permissions_probe_ok = False
+                continue
+            normalized.add((role, scope, condition))
     required = READINESS_ROLE_REQUIREMENTS[identity]
     missing_roles = [
         {"role": role, "scope": scope, "condition": condition}
@@ -587,24 +643,29 @@ def evaluate_readiness(
         if (role, scope, condition) not in normalized
     ]
     required_set = set(required)
+    required_slots = {(role, scope) for role, scope, _ in required}
     unexpected_roles = [
         {"role": role, "scope": scope, "condition": condition}
         for role, scope, condition in sorted(
-            normalized - required_set,
+            {
+                item
+                for item in normalized - required_set
+                if (
+                    (item[0], item[1]) not in required_slots
+                    or (item[0] == "RBAC Administrator" and item[2] == "invalid")
+                )
+            },
             key=lambda item: tuple("" if value is None else str(value) for value in item),
         )
     ]
-    permissions_ok = (
-        isinstance(permissions, Mapping)
-        and permissions.get("probe_ok") is True
-        and not missing_roles
-        and not unexpected_roles
-    )
+    permissions_ok = permissions_probe_ok and not missing_roles and not unexpected_roles
     permission_reason = None
-    if missing_roles:
-        permission_reason = "AZURE_PERMISSION_MISSING"
+    if not permissions_probe_ok:
+        permission_reason = "AZURE_PERMISSION_PROBE_FAILED"
     elif unexpected_roles:
         permission_reason = "AZURE_PERMISSION_TOO_BROAD"
+    elif missing_roles:
+        permission_reason = "AZURE_PERMISSION_MISSING"
     checks["permissions"] = _check(
         "permissions", permissions_ok, permission_reason,
         required=list(required), missing=missing_roles, unexpected=unexpected_roles,
@@ -894,6 +955,7 @@ def _require_readiness_binding(binding: Mapping[str, Any]) -> None:
 __all__ = [
     "READINESS_COMPONENT_SCHEMA",
     "READINESS_IDENTITIES",
+    "READINESS_KNOWN_ROLES",
     "READINESS_REQUIRED_UPSTREAM",
     "READINESS_ROLE_REQUIREMENTS",
     "READINESS_SCHEMA",
