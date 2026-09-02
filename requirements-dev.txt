@@ -2,4 +2,6 @@
 pytest>=8.0,<9
 pytest-cov>=7.0,<8
 ruff>=0.8,<1
+# Starlette currently emits a compatibility deprecation with httpx<1;
+# remove this note when the supported httpx2/TestClient stack is available.
 httpx>=0.27,<1

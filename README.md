@@ -118,6 +118,17 @@ public artefact. The tracked `demo/v1` bundle is synthetic-original evidence
 and makes no historical-production, live-monitoring, production-model, or
 cloud-deployment claim.
 
+## Local Copilot (planned)
+
+The next product increment is a local, single-user, read-only Copilot over
+verified `demo/v1` evidence. It will use the typed operational query service,
+return citations and freshness, and report unavailable data explicitly. The
+first implementation is deterministic and does not require an external LLM.
+The `/copilot` route, natural-language adapter, MCP, and documentary RAG are
+future milestones; ANN v2, Azure publication, and remote exposure remain
+paused. See [APP_COPILOT_ROADMAP.md](APP_COPILOT_ROADMAP.md) for the small,
+executable-scope roadmap.
+
 ## Local operations
 
 Human-only setup, scheduler recovery, readiness gates, monitoring, rollback,

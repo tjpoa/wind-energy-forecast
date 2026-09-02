@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -502,9 +503,12 @@ def _principal_id() -> str | None:
 
 
 def _az_json(arguments: list[str]) -> dict[str, Any] | list[Any] | None:
+    executable = shutil.which("az")
+    if not executable:
+        return None
     try:
         completed = subprocess.run(
-            ["az", *arguments, "--output", "json", "--only-show-errors"],
+            [executable, *arguments, "--output", "json", "--only-show-errors"],
             check=True,
             capture_output=True,
             text=True,
@@ -516,9 +520,12 @@ def _az_json(arguments: list[str]) -> dict[str, Any] | list[Any] | None:
 
 
 def _az_tsv(arguments: list[str]) -> str | None:
+    executable = shutil.which("az")
+    if not executable:
+        return None
     try:
         completed = subprocess.run(
-            ["az", *arguments, "--output", "tsv", "--only-show-errors"],
+            [executable, *arguments, "--output", "tsv", "--only-show-errors"],
             check=True,
             capture_output=True,
             text=True,
