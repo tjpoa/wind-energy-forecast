@@ -35,3 +35,12 @@ test("forecast replay deep-link filters packaged predictions and actuals", async
   await expect(filteredRow).toContainText("1,149");
   await expect(page.getByRole("row", { name: /2026-08-07/ })).toBeVisible();
 });
+
+test("keyless local Copilot answers a guided operational question", async ({ page }) => {
+  await page.goto("/copilot");
+
+  await expect(page.getByRole("heading", { name: "Copilot operacional" })).toBeVisible();
+  await page.getByRole("button", { name: "Que deployment está ativo?" }).click();
+  await expect(page.getByText("Modo: guided_local")).toBeVisible();
+  await expect(page.locator(".copilot-card")).toContainText("Evidência:");
+});

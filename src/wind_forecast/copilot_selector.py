@@ -11,6 +11,7 @@ from .operational_copilot_models import (
     OperationalToolDefinition,
     OperationalToolSelection,
 )
+from .operational_copilot import CopilotSelectionRefusal
 
 
 _SPACE = re.compile(r"\s+")
@@ -20,6 +21,7 @@ _REFUSALS = {
     "previsoes": "future_forecast_not_supported",
     "treino": "training_not_supported",
     "treinar": "training_not_supported",
+    "treina": "training_not_supported",
     "retraining": "training_not_supported",
     "promover": "write_operation_not_supported",
     "promocao": "write_operation_not_supported",
@@ -65,10 +67,10 @@ class DeterministicPortugueseSelector:
         text = _normalize(request.question)
         tokens = set(re.findall(r"[a-z0-9]+", text))
         if _has_any(text, ("previsoes historicas", "observacoes historicas", "historico de previs")):
-            raise ValueError("forecast_replay_required")
+            raise CopilotSelectionRefusal("forecast_replay_required")
         for term, code in _REFUSALS.items():
             if term in tokens or term in text:
-                raise ValueError(code)
+                raise CopilotSelectionRefusal(code)
 
         matches: list[str] = []
         if _has_any(text, ("estado operacional", "saude operacional", "situacao operacional", *_SYNONYMS["estado"])):
@@ -86,12 +88,14 @@ class DeterministicPortugueseSelector:
         if _has_any(text, ("modelo ativo", "model ativo", "metadados do modelo", "metadados que identificam", *_SYNONYMS["modelo"])):
             matches.append("active_model_metadata")
         if len(set(matches)) != 1:
-            raise ValueError("unsupported_question" if not matches else "ambiguous_question")
+            raise CopilotSelectionRefusal(
+                "unsupported_question" if not matches else "ambiguous_question"
+            )
         query_kind = matches[0]
         window = _WINDOW.search(text)
         window_days = int(window.group(1)) if window else None
         if query_kind in {"monitoring_performance", "monitoring_drift"} and window_days is None:
-            raise ValueError("window_required")
+            raise CopilotSelectionRefusal("window_required")
         arguments: dict[str, Any] = {
             "contract_version": "operational_read_only_copilot_v1",
             "query_kind": query_kind,

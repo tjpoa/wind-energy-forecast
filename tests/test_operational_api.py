@@ -162,10 +162,20 @@ class RecordingService:
         status = self.status
         if not authorization.trusted_local:
             status = AnswerStatus.UNAUTHORIZED
+        query_kind = (
+            query.query_kind
+            if hasattr(query, "query_kind")
+            else QueryKind(query["query_kind"])
+        )
+        correlation_id = (
+            query.correlation_id
+            if hasattr(query, "correlation_id")
+            else query["correlation_id"]
+        )
         return _answer(
             status,
-            query_kind=QueryKind(query["query_kind"]),
-            correlation_id=query["correlation_id"],
+            query_kind=query_kind,
+            correlation_id=correlation_id,
         )
 
 
@@ -175,6 +185,75 @@ def _client(service, *, host: str = "127.0.0.1") -> TestClient:
         lambda: lambda: service
     )
     return TestClient(app, client=(host, 50000))
+
+
+def test_copilot_executes_one_canonical_operational_query() -> None:
+    service = RecordingService(AnswerStatus.ANSWERED)
+
+    response = _client(service).post(
+        "/api/v1/copilot",
+        json={"question": "Como estão a qualidade e a freshness dos dados?"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["route"] == "operational"
+    assert response.json()["mode"] == "guided_local"
+    assert response.json()["answer"]["status"] == "answered"
+    assert len(service.calls) == 1
+    assert service.calls[0][0].query_kind == QueryKind.DATA_QUALITY
+
+
+def test_copilot_refuses_unsupported_question_without_operational_query() -> None:
+    service = RecordingService()
+
+    response = _client(service).post(
+        "/api/v1/copilot",
+        json={"question": "Conta uma anedota"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["route"] == "refused"
+    assert response.json()["failure"]["code"] == "unsupported_question"
+    assert service.calls == []
+
+
+def test_copilot_forecast_replay_refusal_is_visible_and_does_not_query() -> None:
+    service = RecordingService()
+
+    response = _client(service).post(
+        "/api/v1/copilot",
+        json={"question": "Mostra previsões históricas"},
+    )
+
+    assert response.json()["route"] == "refused"
+    assert response.json()["failure"]["code"] == "forecast_replay_required"
+    assert service.calls == []
+
+
+def test_copilot_rejects_non_loopback_before_operational_query() -> None:
+    service = RecordingService()
+
+    response = _client(service, host="192.0.2.1").post(
+        "/api/v1/copilot",
+        json={"question": "Que deployment está ativo?"},
+    )
+
+    assert response.json()["route"] == "operational"
+    assert response.json()["answer"]["status"] == "unauthorized"
+    assert service.calls == []
+
+
+@pytest.mark.parametrize("question", ("", " ", "x" * 1001))
+def test_copilot_http_question_is_bounded(question: str) -> None:
+    service = RecordingService()
+
+    response = _client(service).post(
+        "/api/v1/copilot",
+        json={"question": question},
+    )
+
+    assert response.status_code == 422
+    assert service.calls == []
 
 
 @pytest.mark.parametrize(
