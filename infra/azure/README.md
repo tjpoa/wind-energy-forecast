@@ -65,7 +65,9 @@ az bicep build --file infra/azure/workload.bicep
 The protected release workflow builds and smoke-tests each image once, records
 source SHA and immutable digests, rejects destructive Terraform changes,
 requires confirmation, applies the exact reviewed plan, verifies active image
-references, and performs a post-deployment drift check.
+references, and performs a post-deployment drift check through the shared
+`scripts/verify_terraform_drift.py` gate. Release and rollback receipts record
+the detailed Terraform plan exit code emitted by that gate.
 
 Rollback is a new protected deployment selected only from a prior registered
 release manifest. It never accepts arbitrary image digests and repeats the same

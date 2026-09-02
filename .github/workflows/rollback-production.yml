@@ -563,33 +563,14 @@ jobs:
           exit 1
 
       - name: Verify Terraform state is drift-free after rollback
+        id: post_rollback_drift
         shell: bash
         run: |
-          set -uo pipefail
-          set +e
-          terraform -chdir=infra/azure/terraform/production plan \
-            -detailed-exitcode \
-            -input=false \
-            -lock-timeout=5m \
-            -out=post-rollback.tfplan
-          plan_exit=$?
-          set -e
-
-          case "$plan_exit" in
-            0)
-              echo "Post-rollback Terraform plan is drift-free." >> "$GITHUB_STEP_SUMMARY"
-              ;;
-            2)
-              echo "Terraform detected drift after the protected rollback." >&2
-              terraform -chdir=infra/azure/terraform/production show -json post-rollback.tfplan | \
-                jq '[.resource_changes[]? | select((.change.actions // []) != ["no-op"]) | {address, actions: .change.actions}]' >&2
-              exit 1
-              ;;
-            *)
-              echo "Post-rollback Terraform plan failed with exit code ${plan_exit}." >&2
-              exit "$plan_exit"
-              ;;
-          esac
+          set -euo pipefail
+          python scripts/verify_terraform_drift.py \
+            --directory infra/azure/terraform/production \
+            --plan-path post-rollback.tfplan \
+            --operation rollback
 
       - name: Create rollback receipt
         shell: bash
@@ -609,7 +590,7 @@ jobs:
             --smoke-tests smoke-tests.json \
             --api-revision "$API_REVISION_NAME" \
             --frontend-revision "$FRONTEND_REVISION_NAME" \
-            --terraform-post-plan-exit-code 0 \
+            --terraform-post-plan-exit-code "${{ steps.post_rollback_drift.outputs.plan_exit_code }}" \
             --workflow-run-id "$GITHUB_RUN_ID" \
             --output rollback-receipt.json
 

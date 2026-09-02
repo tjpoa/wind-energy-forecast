@@ -266,11 +266,52 @@ def test_foundation_apply_fails_closed_on_any_post_apply_drift() -> None:
     )
 
     assert apply_plan < drift_check
-    assert "-detailed-exitcode" in apply_job[drift_check:]
-    assert 'case "$plan_exit" in' in apply_job[drift_check:]
-    assert "drift detected; the workflow failed closed" in apply_job[drift_check:]
-    assert "{address, actions: .change.actions}" in apply_job[drift_check:]
-    assert "exit 1" in apply_job[drift_check:]
+    drift_gate = apply_job[drift_check:]
+    assert "id: post_foundation_drift" in drift_gate
+    assert "python scripts/verify_terraform_drift.py" in drift_gate
+    assert "--directory infra/azure/terraform/foundation" in drift_gate
+    assert "--plan-path post-foundation.tfplan" in drift_gate
+    assert "--operation foundation-apply" in drift_gate
+
+
+def test_release_and_rollback_use_shared_drift_gate_and_observed_receipt_code() -> None:
+    workflows = (
+        (
+            ".github/workflows/release-production.yml",
+            "      - name: Apply the exact reviewed-run plan",
+            "      - name: Verify Terraform state is drift-free after deployment",
+            "post_deployment_drift",
+            "post-deployment.tfplan",
+        ),
+        (
+            ".github/workflows/rollback-production.yml",
+            "      - name: Apply the exact approved rollback plan",
+            "      - name: Verify Terraform state is drift-free after rollback",
+            "post_rollback_drift",
+            "post-rollback.tfplan",
+        ),
+    )
+
+    for path, apply_marker, drift_marker, step_id, plan_path in workflows:
+        workflow = _repository_text(path)
+        apply_index = workflow.index(apply_marker)
+        drift_index = workflow.index(drift_marker)
+        receipt_index = workflow.index("python scripts/create_azure_receipt.py receipt")
+        drift_gate = workflow[drift_index:receipt_index]
+
+        assert apply_index < drift_index < receipt_index
+        assert f"id: {step_id}" in drift_gate
+        assert "python scripts/verify_terraform_drift.py" in drift_gate
+        assert "--directory infra/azure/terraform/production" in drift_gate
+        assert f"--plan-path {plan_path}" in drift_gate
+        assert "--detailed-exitcode" not in drift_gate
+        expected_output = (
+            '--terraform-post-plan-exit-code "${{ steps.'
+            + step_id
+            + '.outputs.plan_exit_code }}"'
+        )
+        assert expected_output in workflow
+        assert "--terraform-post-plan-exit-code 0" not in workflow
 
 
 def test_foundation_uses_subscription_qualified_acr_role_ids() -> None:
