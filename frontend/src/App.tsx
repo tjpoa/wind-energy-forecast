@@ -5,6 +5,7 @@ import { AboutPage } from "./pages/AboutPage";
 import { HistoricalPerformancePage } from "./pages/HistoricalPerformancePage";
 import { ModelOperationsPage } from "./pages/ModelOperationsPage";
 import { OverviewPage } from "./pages/OverviewPage";
+import { CopilotPage } from "./pages/CopilotPage";
 
 function App() {
   return (
@@ -16,6 +17,7 @@ function App() {
           <Route path="forecast-replay" element={<HistoricalPerformancePage />} />
           <Route path="model-operations" element={<ModelOperationsPage />} />
           <Route path="about" element={<AboutPage />} />
+          <Route path="copilot" element={<CopilotPage />} />
           <Route path="*" element={<Navigate to="/overview" replace />} />
         </Route>
       </Routes>

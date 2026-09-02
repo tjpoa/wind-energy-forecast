@@ -99,6 +99,20 @@ p {
   opacity: 0.65;
 }
 
+.primary-button { min-height: 42px; border: 0; border-radius: 0.6rem; color: #fff; background: #176c54; padding: 0.6rem 1rem; font-weight: 750; }
+.primary-button:disabled { cursor: wait; opacity: .65; }
+.copilot-question { display: block; margin-bottom: .45rem; color: #29483f; font-weight: 750; }
+.copilot-page textarea { width: 100%; min-height: 110px; resize: vertical; border: 1px solid #a9bfb4; border-radius: .6rem; padding: .75rem; }
+.copilot-compose { display: flex; gap: 1rem; align-items: center; justify-content: flex-end; margin-top: .6rem; color: #65786f; font-size: .8rem; }
+.copilot-suggestions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1.25rem; }
+.copilot-suggestions p { flex-basis: 100%; margin-bottom: 0; color: #526a62; font-weight: 750; }
+.copilot-history { display: grid; gap: 1rem; margin-top: 1rem; }
+.copilot-card { margin-top: 0; }
+.copilot-question-label { margin-bottom: .35rem; color: #65786f; font-size: .8rem; font-weight: 750; }
+.copilot-mode { display: inline-block; border-radius: 999px; color: #126047; background: #dff3e9; padding: .25rem .55rem; font-size: .72rem; font-weight: 800; }
+.copilot-summary { margin-top: 1rem; font-size: 1.1rem; line-height: 1.55; }
+.copilot-error { color: #8d332c; }
+
 .dashboard-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);

@@ -35,6 +35,28 @@ from .operational_query_models import (
 
 DEFAULT_COPILOT_DEADLINE_SECONDS = 5.0
 DEFAULT_SELECTOR_TIMEOUT_SECONDS = 1.0
+_EXPECTED_SELECTION_REFUSALS = frozenset(
+    {
+        "ambiguous_question",
+        "forecast_replay_required",
+        "future_forecast_not_supported",
+        "training_not_supported",
+        "write_operation_not_supported",
+        "undocumented_cause_not_supported",
+        "unsupported_question",
+        "window_required",
+    }
+)
+
+
+class CopilotSelectionRefusal(ValueError):
+    """Expected deterministic refusal carrying only a bounded public code."""
+
+    def __init__(self, code: str) -> None:
+        if code not in _EXPECTED_SELECTION_REFUSALS:
+            raise ValueError("unsupported Copilot refusal code")
+        super().__init__(code)
+        self.code = code
 
 
 class OperationalSelector(Protocol):
@@ -254,6 +276,21 @@ class OperationalCopilot:
                 correlation_id=correlation_id,
                 served_at_utc=self._now(),
             )
+        except ValueError as exc:
+            code = str(exc) or "selector_failed"
+            return _refused_answer(
+                code=code,
+                message="A pergunta não está disponível no catálogo do Copilot.",
+                correlation_id=correlation_id,
+                served_at_utc=self._now(),
+            )
+        except CopilotSelectionRefusal as exc:
+            return _refused_answer(
+                code=exc.code,
+                message="A pergunta não pertence ao catálogo suportado.",
+                correlation_id=correlation_id,
+                served_at_utc=self._now(),
+            )
         except Exception:
             return _refused_answer(
                 code="selector_failed",
@@ -418,6 +455,7 @@ class OfflineOperationalCopilotRunner:
 __all__ = [
     "DEFAULT_COPILOT_DEADLINE_SECONDS",
     "DEFAULT_SELECTOR_TIMEOUT_SECONDS",
+    "CopilotSelectionRefusal",
     "OfflineOperationalCopilotRunner",
     "OperationalCopilot",
     "OperationalQueryAnswerer",
