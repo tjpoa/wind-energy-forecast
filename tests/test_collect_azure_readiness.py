@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -313,3 +314,17 @@ def test_policy_classifies_invalid_rbac_condition_as_too_broad() -> None:
     )
     assert component["decision"] == "NO_GO"
     assert "AZURE_PERMISSION_TOO_BROAD" in component["reason_codes"]
+
+
+def test_azure_cli_uses_resolved_executable(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(collector.shutil, "which", lambda _name: "C:/Azure/az.CMD")
+
+    def fake_run(command: list[str], **_kwargs: Any) -> SimpleNamespace:
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(collector.subprocess, "run", fake_run)
+
+    assert collector._az_json(["account", "show"]) == {}
+    assert calls[0][0] == "C:/Azure/az.CMD"
