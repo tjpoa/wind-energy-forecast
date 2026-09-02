@@ -28,9 +28,15 @@ from .operational_query_models import (
     QueryKind,
 )
 from .operational_copilot_models import (
+    CopilotHttpRequest,
+    CopilotOperationalResponse,
+    CopilotRefusedResponse,
+    CopilotResponse,
     LOCAL_OPERATOR_PRINCIPAL,
     OperationalHttpRequest,
 )
+from .copilot_selector import DeterministicPortugueseSelector
+from .operational_copilot import OperationalCopilot
 from .operational_observability import (
     ObservabilityContext,
     OperationalObservability,
@@ -315,6 +321,71 @@ def _current_operational_observability() -> OperationalObservability:
 
 
 operational_router = APIRouter()
+
+
+def _copilot_response(answer: OperationalAnswer) -> Any:
+    """Adapt the existing answer to the public Copilot union."""
+    refusal_codes = {
+        "copilot_observability_degraded",
+        "invalid_copilot_question",
+        "copilot_deadline_exceeded",
+        "selector_timeout",
+        "selector_failed",
+        "invalid_tool_selection",
+        "unsupported_tool",
+        "invalid_operational_request",
+    }
+    if answer.status == AnswerStatus.REFUSED or (
+        answer.failure is not None and answer.failure.code in refusal_codes
+    ):
+        return CopilotRefusedResponse(
+            route="refused",
+            mode="guided_local",
+            limitations=("O Copilot só responde ao catálogo operacional documentado.",),
+            failure=answer.failure,
+        )
+    return CopilotOperationalResponse(
+        route="operational",
+        mode="guided_local",
+        answer=answer,
+        limitations=answer.limitations,
+    )
+
+
+@operational_router.post(
+    "/api/v1/copilot",
+    response_model=CopilotResponse,
+    responses={422: {"description": "Pedido inválido."}},
+)
+async def copilot(
+    request: Request,
+    payload: CopilotHttpRequest,
+    service_factory: Callable[[], OperationalQueryService] = Depends(
+        get_operational_query_service_factory
+    ),
+) -> JSONResponse:
+    """Answer one bounded Portuguese Copilot question."""
+    requested_at_utc = datetime.now(timezone.utc)
+    correlation_id = uuid4().hex
+    context = AuthorizationContext(
+        principal=LOCAL_OPERATOR_PRINCIPAL,
+        trusted_local=_trusted_loopback(request),
+    )
+    try:
+        copilot_runner = OperationalCopilot(
+            selector=DeterministicPortugueseSelector(),
+            query_service=service_factory(),
+        )
+    except Exception:
+        answer = _service_unavailable(
+            correlation_id=correlation_id,
+            served_at_utc=requested_at_utc,
+            query_kind=QueryKind.OPERATIONAL_SUMMARY,
+        )
+    else:
+        answer = copilot_runner.answer(payload.question, context)
+    wrapped = _copilot_response(answer)
+    return JSONResponse(status_code=200, content=jsonable_encoder(wrapped))
 
 
 @operational_router.post(

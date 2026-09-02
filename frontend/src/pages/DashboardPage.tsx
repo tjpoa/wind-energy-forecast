@@ -9,6 +9,7 @@ export function DashboardPage() {
           <NavLink to="/forecast-replay">Forecast Replay</NavLink>
           <NavLink to="/model-operations">Model Operations</NavLink>
           <NavLink to="/about">About</NavLink>
+          <NavLink to="/copilot">Copilot</NavLink>
         </div>
       </nav>
       <Outlet />

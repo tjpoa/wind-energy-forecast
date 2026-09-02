@@ -16,6 +16,8 @@ from pydantic import (
 
 from .operational_query_models import (
     CONTRACT_VERSION,
+    OperationalAnswer,
+    OperationalFailure,
     Pagination,
     QueryKind,
     Selector,
@@ -24,7 +26,7 @@ from .operational_query_models import (
 
 TOOL_NAME = "operational_query"
 LOCAL_OPERATOR_PRINCIPAL = "local-api-operator"
-MAX_COPILOT_QUESTION_LENGTH = 16_384
+MAX_COPILOT_QUESTION_LENGTH = 1_000
 
 
 class StrictModel(BaseModel):
@@ -80,6 +82,57 @@ class CopilotRequest(StrictModel):
         return self
 
 
+class CopilotHttpRequest(StrictModel):
+    """Small browser-facing request for the local Copilot."""
+
+    question: StrictStr = Field(min_length=1, max_length=MAX_COPILOT_QUESTION_LENGTH)
+
+    @field_validator("question")
+    @classmethod
+    def require_non_blank_question(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("question must not be blank")
+        return value
+
+
+class DocumentaryAnswer(StrictModel):
+    """Reserved documentary answer shape for the next Copilot increment."""
+
+    summary: StrictStr
+    evidence: tuple[dict[str, Any], ...] = ()
+
+
+class CopilotOperationalResponse(StrictModel):
+    route: Literal["operational"]
+    mode: Literal["guided_local"]
+    answer: OperationalAnswer
+    limitations: tuple[StrictStr, ...] = ()
+    failure: None = None
+
+
+class CopilotDocumentaryResponse(StrictModel):
+    route: Literal["documentary"]
+    mode: Literal["rag_local", "rag_openai"]
+    answer: DocumentaryAnswer
+    limitations: tuple[StrictStr, ...] = ()
+    failure: None = None
+
+
+class CopilotRefusedResponse(StrictModel):
+    route: Literal["refused"]
+    mode: Literal["guided_local"]
+    answer: None = None
+    limitations: tuple[StrictStr, ...] = ()
+    failure: OperationalFailure
+
+
+CopilotResponse = (
+    CopilotOperationalResponse
+    | CopilotDocumentaryResponse
+    | CopilotRefusedResponse
+)
+
+
 class OperationalToolDefinition(StrictModel):
     """The only tool contract exposed to an injected selector."""
 
@@ -113,6 +166,12 @@ def allowed_operational_tools() -> tuple[OperationalToolDefinition, ...]:
 
 __all__ = [
     "CopilotRequest",
+    "CopilotHttpRequest",
+    "CopilotOperationalResponse",
+    "CopilotDocumentaryResponse",
+    "CopilotRefusedResponse",
+    "CopilotResponse",
+    "DocumentaryAnswer",
     "LOCAL_OPERATOR_PRINCIPAL",
     "MAX_COPILOT_QUESTION_LENGTH",
     "OperationalToolDefinition",

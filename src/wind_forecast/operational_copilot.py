@@ -254,6 +254,14 @@ class OperationalCopilot:
                 correlation_id=correlation_id,
                 served_at_utc=self._now(),
             )
+        except ValueError as exc:
+            code = str(exc) or "selector_failed"
+            return _refused_answer(
+                code=code,
+                message="A pergunta não está disponível no catálogo do Copilot.",
+                correlation_id=correlation_id,
+                served_at_utc=self._now(),
+            )
         except Exception:
             return _refused_answer(
                 code="selector_failed",
