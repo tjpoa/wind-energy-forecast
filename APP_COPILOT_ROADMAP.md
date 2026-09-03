@@ -97,6 +97,10 @@ use at most three retrieved chunks in one bounded call, validate the returned
 chunk IDs, use no retries, and retain no conversation by default. Provider
 failure must be visible and must fall back to the local extractive response.
 
+The versioned corpus manifest is `config/document_corpus_v1.json`. Every
+document change requires updating its version and UTF-8 SHA-256 in the same
+commit; undeclared documents and unsafe paths fail closed.
+
 Gate: retrieval is deterministic and hash-verified; no physical paths or
 secrets reach the browser; provider tests use a fake transport; the app still
 works with the provider disabled.

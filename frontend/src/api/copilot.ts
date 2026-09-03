@@ -21,7 +21,7 @@ export interface CopilotAnswer {
 
 export type CopilotResponse =
   | { readonly route: "operational"; readonly mode: "guided_local"; readonly answer: CopilotAnswer; readonly limitations: readonly string[]; readonly failure: null }
-  | { readonly route: "documentary"; readonly mode: "rag_local" | "rag_openai"; readonly answer: { readonly summary: string; readonly evidence: readonly Record<string, unknown>[] }; readonly limitations: readonly string[]; readonly failure: null }
+  | { readonly route: "documentary"; readonly mode: "rag_local" | "rag_openai"; readonly answer: { readonly summary: string; readonly evidence: readonly DocumentaryEvidence[] }; readonly limitations: readonly string[]; readonly failure: null; readonly provider_failure: { readonly code: string; readonly message: string } | null }
   | { readonly route: "refused"; readonly mode: "guided_local"; readonly answer: null; readonly limitations: readonly string[]; readonly failure: CopilotFailure };
 
 export class CopilotApiError extends Error {}
@@ -46,4 +46,13 @@ export async function askCopilot(question: string, signal?: AbortSignal): Promis
     throw new CopilotApiError("The API returned an invalid Copilot response.");
   }
   return payload as CopilotResponse;
+}
+
+export interface DocumentaryEvidence {
+  readonly chunk_id: string;
+  readonly document_id: string;
+  readonly title: string;
+  readonly heading: string;
+  readonly uri: string;
+  readonly sha256: string;
 }

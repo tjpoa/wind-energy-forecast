@@ -44,3 +44,11 @@ test("keyless local Copilot answers a guided operational question", async ({ pag
   await expect(page.getByText("Modo: guided_local")).toBeVisible();
   await expect(page.locator(".copilot-card")).toContainText("Evidência:");
 });
+
+test("keyless local Copilot answers a documentary question with provenance", async ({ page }) => {
+  await page.goto("/copilot");
+  await page.getByRole("button", { name: "Qual é o estado do roadmap do Copilot?" }).click();
+  await expect(page.getByText("Modo: rag_local")).toBeVisible();
+  await expect(page.getByText(/docs:\/\/wind-forecast\/copilot-roadmap/).first()).toBeVisible();
+  await expect(page.getByText(/SHA-256:/).first()).toBeVisible();
+});

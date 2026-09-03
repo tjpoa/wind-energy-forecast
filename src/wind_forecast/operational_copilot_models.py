@@ -96,10 +96,24 @@ class CopilotHttpRequest(StrictModel):
 
 
 class DocumentaryAnswer(StrictModel):
-    """Reserved documentary answer shape for the next Copilot increment."""
+    """Documentary answer grounded in the closed, versioned corpus."""
 
     summary: StrictStr
-    evidence: tuple[dict[str, Any], ...] = ()
+    evidence: tuple["DocumentaryEvidence", ...]
+
+
+class DocumentaryEvidence(StrictModel):
+    chunk_id: StrictStr
+    document_id: StrictStr
+    title: StrictStr
+    heading: StrictStr
+    uri: StrictStr
+    sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ProviderFailure(StrictModel):
+    code: StrictStr
+    message: StrictStr
 
 
 class CopilotOperationalResponse(StrictModel):
@@ -116,6 +130,7 @@ class CopilotDocumentaryResponse(StrictModel):
     answer: DocumentaryAnswer
     limitations: tuple[StrictStr, ...] = ()
     failure: None = None
+    provider_failure: ProviderFailure | None = None
 
 
 class CopilotRefusedResponse(StrictModel):
@@ -127,9 +142,7 @@ class CopilotRefusedResponse(StrictModel):
 
 
 CopilotResponse = (
-    CopilotOperationalResponse
-    | CopilotDocumentaryResponse
-    | CopilotRefusedResponse
+    CopilotOperationalResponse | CopilotDocumentaryResponse | CopilotRefusedResponse
 )
 
 
@@ -152,8 +165,7 @@ def operational_query_tool() -> OperationalToolDefinition:
     """Return the immutable-shaped description of the sole allowed tool."""
     return OperationalToolDefinition(
         description=(
-            "Answer one bounded operational question from verified local "
-            "evidence."
+            "Answer one bounded operational question from verified local evidence."
         ),
         input_schema=OperationalHttpRequest.model_json_schema(),
     )
@@ -172,6 +184,8 @@ __all__ = [
     "CopilotRefusedResponse",
     "CopilotResponse",
     "DocumentaryAnswer",
+    "DocumentaryEvidence",
+    "ProviderFailure",
     "LOCAL_OPERATOR_PRINCIPAL",
     "MAX_COPILOT_QUESTION_LENGTH",
     "OperationalToolDefinition",

@@ -17,7 +17,13 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from .config import load_operational_query_config
+from .config import load_document_synthesis_config, load_operational_query_config
+from .documentary_copilot import (
+    answer_documentary,
+    is_documentary_question,
+    load_corpus,
+)
+from .documentary_openai import OpenAIDocumentarySynthesizer
 from .operational_query import OperationalQueryService
 from .operational_query_models import (
     AnswerStatus,
@@ -109,12 +115,8 @@ class _LocalOnlyMlflowRegistryClient:
             raise RetrainingDeploymentUnavailableError(
                 "The Registry backend does not support bounded REST reads."
             )
-        request_body = message_to_json(
-            GetModelVersionByAlias(name=name, alias=alias)
-        )
-        endpoint, method = store._get_endpoint_from_method(
-            GetModelVersionByAlias
-        )
+        request_body = message_to_json(GetModelVersionByAlias(name=name, alias=alias))
+        endpoint, method = store._get_endpoint_from_method(GetModelVersionByAlias)
         if method != "GET":
             from .retraining_deployment import (
                 RetrainingDeploymentUnavailableError,
@@ -192,9 +194,7 @@ def get_operational_query_service() -> OperationalQueryService:
     )
 
 
-def get_operational_query_service_factory() -> Callable[
-    [], OperationalQueryService
-]:
+def get_operational_query_service_factory() -> Callable[[], OperationalQueryService]:
     """Return the lazy service factory without loading runtime configuration."""
     return get_operational_query_service
 
@@ -323,6 +323,21 @@ def _current_operational_observability() -> OperationalObservability:
 operational_router = APIRouter()
 
 
+@lru_cache(maxsize=1)
+def get_document_corpus() -> tuple[Any, ...]:
+    """Load and verify the closed corpus lazily."""
+    return load_corpus()[1]
+
+
+def get_document_synthesizer() -> Any | None:
+    config = load_document_synthesis_config()
+    if config.backend == "disabled":
+        return None
+    return OpenAIDocumentarySynthesizer(
+        model=config.model or "", api_key=config.api_key or ""
+    )
+
+
 def _copilot_response(answer: OperationalAnswer) -> Any:
     """Adapt the existing answer to the public Copilot union."""
     refusal_codes = {
@@ -371,6 +386,21 @@ async def copilot(
         principal=LOCAL_OPERATOR_PRINCIPAL,
         trusted_local=_trusted_loopback(request),
     )
+    dangerous_or_operational = any(
+        term in payload.question.casefold()
+        for term in ("treina", "treinar", "promove", "deploy", "escreve", "apaga")
+    )
+    if is_documentary_question(payload.question) and not dangerous_or_operational:
+        try:
+            documentary = answer_documentary(
+                payload.question,
+                get_document_corpus(),
+                get_document_synthesizer(),
+            )
+        except Exception:
+            documentary = None
+        if documentary is not None:
+            return JSONResponse(status_code=200, content=jsonable_encoder(documentary))
     try:
         copilot_runner = OperationalCopilot(
             selector=DeterministicPortugueseSelector(),
@@ -414,9 +444,9 @@ async def copilot(
 )
 async def operational_query(
     request: Request,
-    service_factory: Callable[
-        [], OperationalQueryService
-    ] = Depends(get_operational_query_service_factory),
+    service_factory: Callable[[], OperationalQueryService] = Depends(
+        get_operational_query_service_factory
+    ),
 ) -> JSONResponse:
     """Serve one bounded, local-only operational query."""
     requested_at_utc = datetime.now(timezone.utc)
@@ -442,9 +472,7 @@ async def operational_query(
             answer_status=answer.status,
             http_status=STATUS_CODE_BY_ANSWER_STATUS[answer.status],
             duration_ms=(perf_counter() - request_started_at) * 1000.0,
-            failure_code=(
-                None if answer.failure is None else answer.failure.code
-            ),
+            failure_code=(None if answer.failure is None else answer.failure.code),
         )
         return _json_response(answer)
 
@@ -492,8 +520,7 @@ async def operational_query(
     query.update(
         requested_at_utc=requested_at_utc,
         correlation_id=correlation_id,
-        deadline=requested_at_utc
-        + timedelta(seconds=service.max_deadline_seconds),
+        deadline=requested_at_utc + timedelta(seconds=service.max_deadline_seconds),
     )
     authorization = AuthorizationContext(
         principal=LOCAL_OPERATOR_PRINCIPAL,
