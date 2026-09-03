@@ -94,11 +94,16 @@ Only after the user explicitly authorizes phase 2:
 2. Confirm that the PR is mergeable, has no conflicts, and contains no
    unreviewed changes.
 3. Prefer squash merge into `master`.
-4. Delete the merged remote branch.
+4. Delete the merged remote task branch after confirming it is no longer
+   needed.
 5. Fetch and fast-forward local `master` from `origin/master`.
 6. Delete the merged local task branch.
-7. Prune stale remote-tracking references.
-8. Confirm that `master` is current and the working tree is clean.
+7. Review remaining local and remote branches. Delete only branches confirmed
+   to be unused: merged into `master`, without an open PR, not protected, not
+   current, and not associated with another active task. Leave unmerged,
+   active, protected, current, or open-PR branches untouched.
+8. Prune stale remote-tracking references.
+9. Confirm that `master` is current and the working tree is clean.
 
 Never merge while checks are pending or failing, conflicts exist, or changes
 remain unreviewed. Do not rewrite history or use destructive reset/checkout
