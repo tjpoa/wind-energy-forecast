@@ -11,6 +11,9 @@ const suggestions = [
   "Há drift nos últimos 30 dias?",
   "Há alertas ativos?",
   "Que modelo está ativo e que metadados o identificam?",
+  "Qual é a metodologia e quais são as limitações?",
+  "Qual é o estado do roadmap do Copilot?",
+  "Como executar o projeto localmente?",
 ];
 
 export function CopilotPage() {
@@ -43,10 +46,14 @@ export function CopilotPage() {
 
 function ResponseCard({ response }: { response: CopilotResponse }) {
   if (response.route === "operational") return <><div className="copilot-mode">Modo: {response.mode}</div><p className="copilot-summary">{response.answer.summary ?? "Não existe um resumo disponível."}</p><Evidence answer={response.answer} limitations={response.limitations} /></>;
-  if (response.route === "documentary") return <><div className="copilot-mode">Modo: {response.mode}</div><p className="copilot-summary">{response.answer.summary}</p><Evidence answer={response.answer} limitations={response.limitations} /></>;
+  if (response.route === "documentary") return <><div className="copilot-mode">Modo: {response.mode}</div>{response.provider_failure && <p className="copilot-warning">{response.provider_failure.message}</p>}<p className="copilot-summary">{response.answer.summary}</p><DocumentaryEvidenceList evidence={response.answer.evidence} /><Evidence answer={response.answer} limitations={response.limitations} /></>;
   return <><div className="copilot-mode">Modo: {response.mode}</div><p className="copilot-error">{response.failure.message}</p><ul>{response.limitations.map((limitation) => <li key={limitation}>{limitation}</li>)}</ul>{response.failure.code === "forecast_replay_required" && <Link to="/forecast-replay">Abrir Forecast Replay</Link>}</>;
 }
 
-function Evidence({ answer, limitations }: { answer: { readonly evidence: readonly Record<string, unknown>[] }; limitations: readonly string[] }) {
+function DocumentaryEvidenceList({ evidence }: { evidence: readonly import("../api/copilot").DocumentaryEvidence[] }) {
+  return <ul className="copilot-document-evidence">{evidence.map((item) => <li key={item.chunk_id}><strong>{item.title}</strong> — {item.heading}<br /><code>{item.uri}</code><br /><small>SHA-256: {item.sha256}</small></li>)}</ul>;
+}
+
+function Evidence({ answer, limitations }: { answer: { readonly evidence: readonly unknown[] }; limitations: readonly string[] }) {
   return <><p><strong>Evidência:</strong> {answer.evidence.length ? `${answer.evidence.length} registo(s) verificado(s).` : "Não disponível."}</p>{limitations.length > 0 && <><strong>Limitações</strong><ul>{limitations.map((limitation) => <li key={limitation}>{limitation}</li>)}</ul></>}</>;
 }

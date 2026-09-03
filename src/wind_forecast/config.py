@@ -17,22 +17,14 @@ PERFORMANCE_ARTIFACT_DIR_ENV = "WIND_FORECAST_PERFORMANCE_ARTIFACT_DIR"
 MONITORING_STORE_ROOT_ENV = "WIND_FORECAST_MONITORING_STORE_ROOT"
 DEPLOYMENT_ROOT_ENV = "WIND_FORECAST_DEPLOYMENT_ROOT"
 OPERATIONAL_MODEL_BUNDLE_ENV = "WIND_FORECAST_OPERATIONAL_MODEL_BUNDLE"
-OPERATIONAL_CALIBRATION_DIR_ENV = (
-    "WIND_FORECAST_OPERATIONAL_CALIBRATION_DIR"
-)
-OPERATIONAL_QUERY_TIMEOUT_ENV = (
-    "WIND_FORECAST_OPERATIONAL_QUERY_TIMEOUT_SECONDS"
-)
-OPERATIONAL_OBSERVABILITY_ROOT_ENV = (
-    "WIND_FORECAST_OPERATIONAL_OBSERVABILITY_ROOT"
-)
+OPERATIONAL_CALIBRATION_DIR_ENV = "WIND_FORECAST_OPERATIONAL_CALIBRATION_DIR"
+OPERATIONAL_QUERY_TIMEOUT_ENV = "WIND_FORECAST_OPERATIONAL_QUERY_TIMEOUT_SECONDS"
+OPERATIONAL_OBSERVABILITY_ROOT_ENV = "WIND_FORECAST_OPERATIONAL_OBSERVABILITY_ROOT"
 MLFLOW_TRACKING_URI_ENV = "MLFLOW_TRACKING_URI"
 CORS_ALLOWED_ORIGINS_ENV = "WIND_FORECAST_CORS_ALLOW_ORIGINS"
 DEFAULT_CORS_ALLOWED_ORIGINS = ("http://localhost:5173",)
 DEFAULT_OPERATIONAL_QUERY_TIMEOUT_SECONDS = 5.0
-DEFAULT_OPERATIONAL_OBSERVABILITY_ROOT = (
-    "var/local_services/operational_observability"
-)
+DEFAULT_OPERATIONAL_OBSERVABILITY_ROOT = "var/local_services/operational_observability"
 OPERATIONAL_ENVIRONMENT_ID_ENV = "WIND_FORECAST_OPERATIONAL_ENVIRONMENT_ID"
 OPERATIONAL_PROJECTION_MIGRATOR_DSN_ENV = (
     "WIND_FORECAST_OPERATIONAL_PROJECTION_MIGRATOR_DSN"
@@ -45,6 +37,8 @@ OPERATIONAL_PROJECTION_READER_DSN_ENV = (
 )
 OPERATIONAL_PROJECTION_MODE_ENV = "WIND_FORECAST_OPERATIONAL_PROJECTION_MODE"
 SUPPORTED_OPERATIONAL_ENVIRONMENT_ID = "local"
+DOCUMENT_SYNTHESIS_BACKEND_ENV = "WIND_FORECAST_DOCUMENT_SYNTHESIS_BACKEND"
+DOCUMENT_SYNTHESIS_MODEL_ENV = "WIND_FORECAST_DOCUMENT_SYNTHESIS_MODEL"
 
 
 @dataclass(frozen=True)
@@ -109,6 +103,33 @@ class CORSConfig:
     allowed_origins: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class DocumentSynthesisConfig:
+    backend: str
+    model: str | None
+    api_key: str | None
+
+
+def load_document_synthesis_config() -> DocumentSynthesisConfig:
+    """Load optional backend-only synthesis settings without network I/O."""
+    backend = os.getenv(DOCUMENT_SYNTHESIS_BACKEND_ENV, "disabled").strip()
+    if backend not in {"disabled", "openai"}:
+        raise ValueError(
+            f"{DOCUMENT_SYNTHESIS_BACKEND_ENV} must be 'disabled' or 'openai'."
+        )
+    if backend == "disabled":
+        return DocumentSynthesisConfig(backend=backend, model=None, api_key=None)
+    model = os.getenv(DOCUMENT_SYNTHESIS_MODEL_ENV, "").strip()
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not model:
+        raise ValueError(
+            f"{DOCUMENT_SYNTHESIS_MODEL_ENV} must be configured for OpenAI."
+        )
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY must be configured for OpenAI synthesis.")
+    return DocumentSynthesisConfig(backend=backend, model=model, api_key=api_key)
+
+
 def load_weather_api_config(
     *,
     load_dotenv_file: bool = False,
@@ -127,7 +148,9 @@ def load_weather_api_config(
 
     api_key = os.getenv("WEATHER_API_KEY") or None
     if require_api_key and not api_key:
-        raise RuntimeError("Set WEATHER_API_KEY in a local .env file before calling the API.")
+        raise RuntimeError(
+            "Set WEATHER_API_KEY in a local .env file before calling the API."
+        )
 
     days_raw = os.getenv("WEATHER_API_DAYS", "44")
     try:
@@ -374,7 +397,8 @@ def _is_numeric_loopback_http_uri(value: str) -> bool:
         return False
     return (
         parsed.scheme in {"http", "https"}
-        and address in {
+        and address
+        in {
             ipaddress.ip_address("127.0.0.1"),
             ipaddress.ip_address("::1"),
         }

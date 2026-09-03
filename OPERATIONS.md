@@ -111,6 +111,15 @@ disabled.
 
 ## Provider and artifact safety
 
+The documentary Copilot is keyless by default with
+`WIND_FORECAST_DOCUMENT_SYNTHESIS_BACKEND=disabled`. To opt into OpenAI
+synthesis, set the backend to `openai`, configure
+`WIND_FORECAST_DOCUMENT_SYNTHESIS_MODEL`, and provide `OPENAI_API_KEY` only to
+the backend. The request is a single five-second Responses API call with
+`store: false`, no retries, redirects, tools, streaming, or conversation state.
+Implementation and CI use simulated transport; a live demonstration requires
+separate authorization.
+
 - Do not overwrite v1 raw data, models, scalers, manifests, or reports.
 - The v1 CSVs are internal material. Keep authorized local copies only at the
   paths in `data/manifests/v1_source_contract.json`; they are intentionally not

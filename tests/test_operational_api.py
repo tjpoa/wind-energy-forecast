@@ -140,8 +140,7 @@ def _answer(
             else OperationalFailure(
                 code=f"{status.value}_test",
                 message="Sanitized operational response.",
-                retryable=status
-                in {AnswerStatus.UNAVAILABLE, AnswerStatus.TIMEOUT},
+                retryable=status in {AnswerStatus.UNAVAILABLE, AnswerStatus.TIMEOUT},
                 evidence_state=failure_state,
             )
         ),
@@ -181,8 +180,8 @@ class RecordingService:
 
 def _client(service, *, host: str = "127.0.0.1") -> TestClient:
     app = create_app()
-    app.dependency_overrides[get_operational_query_service_factory] = (
-        lambda: lambda: service
+    app.dependency_overrides[get_operational_query_service_factory] = lambda: (
+        lambda: service
     )
     return TestClient(app, client=(host, 50000))
 
@@ -201,6 +200,21 @@ def test_copilot_executes_one_canonical_operational_query() -> None:
     assert response.json()["answer"]["status"] == "answered"
     assert len(service.calls) == 1
     assert service.calls[0][0].query_kind == QueryKind.DATA_QUALITY
+
+
+def test_copilot_documentary_route_never_executes_operational_service() -> None:
+    service = RecordingService()
+    response = _client(service).post(
+        "/api/v1/copilot",
+        json={"question": "Qual é a metodologia e quais são as limitações?"},
+    )
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["route"] == "documentary"
+    assert payload["mode"] == "rag_local"
+    assert payload["failure"] is None
+    assert payload["answer"]["evidence"][0]["uri"].startswith("docs://")
+    assert service.calls == []
 
 
 def test_copilot_refuses_unsupported_question_without_operational_query() -> None:
@@ -318,9 +332,9 @@ def test_endpoint_records_correlated_request_and_tool_spans(tmp_path: Path):
 
     events = [
         json.loads(line)
-        for line in (
-            tmp_path / OBSERVABILITY_EVENTS_FILENAME
-        ).read_text(encoding="utf-8").splitlines()
+        for line in (tmp_path / OBSERVABILITY_EVENTS_FILENAME)
+        .read_text(encoding="utf-8")
+        .splitlines()
     ]
     assert response.status_code == 200
     assert [event["event_type"] for event in events] == [
@@ -373,14 +387,12 @@ def test_all_eight_query_kinds_are_observed(tmp_path: Path):
 
     events = [
         json.loads(line)
-        for line in (
-            tmp_path / OBSERVABILITY_EVENTS_FILENAME
-        ).read_text(encoding="utf-8").splitlines()
+        for line in (tmp_path / OBSERVABILITY_EVENTS_FILENAME)
+        .read_text(encoding="utf-8")
+        .splitlines()
     ]
     assert len(events) == 32
-    assert {
-        event["query_kind"] for event in events
-    } == {
+    assert {event["query_kind"] for event in events} == {
         "operational_summary",
         "active_deployment",
         "data_quality",
@@ -410,12 +422,8 @@ def test_writer_failure_does_not_change_operational_query_response(
         assert response.status_code == 200
         assert response.json()["status"] == "empty"
 
-        health = _client(service).get(
-            "/api/v1/operational-observability/health"
-        )
-        metrics = _client(service).get(
-            "/api/v1/operational-observability/metrics"
-        )
+        health = _client(service).get("/api/v1/operational-observability/health")
+        metrics = _client(service).get("/api/v1/operational-observability/metrics")
         assert health.status_code == 503
         assert health.json()["status"] == "degraded"
         assert metrics.json()["dropped_events"] == 4
@@ -525,10 +533,7 @@ def test_body_larger_than_64_kib_is_refused_before_json_parsing():
     )
 
     assert response.status_code == 400
-    assert (
-        response.json()["failure"]["code"]
-        == "operational_query_body_too_large"
-    )
+    assert response.json()["failure"]["code"] == "operational_query_body_too_large"
     assert service.calls == []
 
 
@@ -692,9 +697,7 @@ def test_unexpected_service_error_is_sanitized():
         max_deadline_seconds = 5.0
 
         def answer(self, _query, _authorization):
-            raise RuntimeError(
-                r"C:\private\secret.json token=do-not-return connection"
-            )
+            raise RuntimeError(r"C:\private\secret.json token=do-not-return connection")
 
     response = _client(BrokenService()).post(
         "/api/v1/operational-query",
@@ -710,13 +713,11 @@ def test_unexpected_service_error_is_sanitized():
 
 def test_service_factory_failure_is_sanitized():
     def broken_factory():
-        raise ValueError(
-            r"C:\private\config.json token=do-not-return connection"
-        )
+        raise ValueError(r"C:\private\config.json token=do-not-return connection")
 
     app = create_app()
-    app.dependency_overrides[get_operational_query_service_factory] = (
-        lambda: broken_factory
+    app.dependency_overrides[get_operational_query_service_factory] = lambda: (
+        broken_factory
     )
 
     response = TestClient(app, client=("127.0.0.1", 50000)).post(
@@ -732,15 +733,13 @@ def test_service_factory_failure_is_sanitized():
 
 
 def test_openapi_documents_request_answer_and_all_response_codes():
-    operation = create_app().openapi()["paths"][
-        "/api/v1/operational-query"
-    ]["post"]
+    operation = create_app().openapi()["paths"]["/api/v1/operational-query"]["post"]
 
     assert operation["requestBody"]["required"] is True
     assert (
-        operation["requestBody"]["content"]["application/json"]["schema"][
-            "properties"
-        ]["contract_version"]["const"]
+        operation["requestBody"]["content"]["application/json"]["schema"]["properties"][
+            "contract_version"
+        ]["const"]
         == "operational_read_only_copilot_v1"
     )
     assert set(operation["responses"]) == {
@@ -766,9 +765,7 @@ def test_operational_config_uses_local_defaults(monkeypatch):
 
     config = load_operational_query_config()
 
-    assert config.deployment_root.as_posix().endswith(
-        "data/processed/v2/deployment"
-    )
+    assert config.deployment_root.as_posix().endswith("data/processed/v2/deployment")
     assert config.monitoring_store_root.as_posix().endswith(
         "data/processed/v2/monitoring"
     )

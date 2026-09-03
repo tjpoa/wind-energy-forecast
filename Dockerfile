@@ -26,6 +26,9 @@ RUN python -m pip install --upgrade pip \
     && mkdir -p data/processed models \
     && chown -R app:app /app
 
+COPY --chown=app:app OPERATIONS.md APP_COPILOT_ROADMAP.md ./
+COPY --chown=app:app config/document_corpus_v1.json ./config/document_corpus_v1.json
+
 EXPOSE 8000
 
 USER app

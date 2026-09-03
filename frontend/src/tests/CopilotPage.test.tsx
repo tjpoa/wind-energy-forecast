@@ -18,6 +18,27 @@ function jsonResponse(value: unknown, status = 200): Response {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("CopilotPage", () => {
+  it("renders documentary provenance and a visible provider fallback", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(jsonResponse({
+      route: "documentary",
+      mode: "rag_local",
+      answer: { summary: "Resumo local.", evidence: [{
+        chunk_id: "readme:1", document_id: "readme", title: "README",
+        heading: "Local Copilot", uri: "docs://wind-forecast/readme#1",
+        sha256: "a".repeat(64),
+      }] },
+      limitations: ["Corpus fechado."],
+      failure: null,
+      provider_failure: { code: "document_synthesis_failed", message: "Fallback local ativo." },
+    }))));
+    render(<MemoryRouter><CopilotPage /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Qual é a metodologia e quais são as limitações?" }));
+    expect(await screen.findByText("Resumo local.")).toBeInTheDocument();
+    expect(screen.getByText("Fallback local ativo.")).toBeInTheDocument();
+    expect(screen.getByText("docs://wind-forecast/readme#1")).toBeInTheDocument();
+    expect(screen.getByText(`SHA-256: ${"a".repeat(64)}`)).toBeInTheDocument();
+  });
+
   it("submits a suggestion and renders evidence and limitations", async () => {
     const fetchMock = vi.fn(() =>
       Promise.resolve(

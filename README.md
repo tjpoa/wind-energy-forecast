@@ -127,8 +127,11 @@ service, with short answers, evidence, freshness, limitations, and explicit
 refusals. The existing Forecast Replay page remains responsible for historical
 prediction/observation inspection.
 
-The first app increment requires no external key. A later, optional increment
-may add a tiny versioned document retriever and provider-backed synthesis;
+The app requires no external key. Its documentary route searches only the
+hash-pinned `README.md`, `OPERATIONS.md`, and `APP_COPILOT_ROADMAP.md` corpus,
+using deterministic Markdown sections and lexical retrieval. Optional OpenAI
+synthesis is enabled only when the backend, model, and backend-only key are
+configured; any provider failure falls back visibly to local extraction.
 MCP, agents, vector stores, embeddings, and persistent conversations are not
 part of this portfolio MVP. New ANN v2 experimentation and promotion, MLflow
 changes, Azure work, and remote exposure are paused. See
