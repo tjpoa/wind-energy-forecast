@@ -9,6 +9,10 @@ services:
       WIND_FORECAST_CORS_ALLOW_ORIGINS: "${WIND_FORECAST_CORS_ALLOW_ORIGINS:-http://localhost:5173}"
       WIND_FORECAST_PERFORMANCE_ARTIFACT_DIR: /app/performance
       WIND_FORECAST_MONITORING_STORE_ROOT: /app/monitoring
+      WIND_FORECAST_TRUSTED_LOCAL_CLIENTS: 172.30.254.1
+      WIND_FORECAST_DEPLOYMENT_ROOT: /app/demo/v1/deployment
+      WIND_FORECAST_OPERATIONAL_MODEL_BUNDLE: /app/demo/v1
+      WIND_FORECAST_OPERATIONAL_CALIBRATION_DIR: /app/demo/v1/monitoring/reporting/calibrations/c4496a6b6bbad3e2b9feffc5772f455d330bee0a0a87ea8ed5519b00eea95cf6
       WIND_FORECAST_DOCUMENT_SYNTHESIS_BACKEND: "${WIND_FORECAST_DOCUMENT_SYNTHESIS_BACKEND:-disabled}"
       WIND_FORECAST_DOCUMENT_SYNTHESIS_MODEL: "${WIND_FORECAST_DOCUMENT_SYNTHESIS_MODEL:-}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
@@ -47,3 +51,10 @@ services:
         condition: service_healthy
     ports:
       - "5173:80"
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.254.0/24
+          gateway: 172.30.254.1

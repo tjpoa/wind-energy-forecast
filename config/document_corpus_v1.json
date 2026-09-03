@@ -3,12 +3,13 @@
   "documents": [
     {
       "id": "readme",
-      "version": 1,
+      "version": 2,
       "path": "README.md",
       "uri": "docs://wind-forecast/readme",
       "title": "README",
       "sensitivity": "public",
-      "sha256": "fbebfaba1859af0bb54bff74ddd3315307a84f80ee99d3e49f758ef69b1880cf"
+      "sha256": "f3ba3d90b03eb1f9ce1b2bda5a52755be42926be01dfab649b6e80211290d4e4",
+      "updated_at": "2026-09-03"
     },
     {
       "id": "operations",
@@ -17,7 +18,8 @@
       "uri": "docs://wind-forecast/operations",
       "title": "Operations",
       "sensitivity": "public",
-      "sha256": "cc2d0d81e1d07cae6fef0f10f31d93871759c0a4efa49770babfbbf04a482eb5"
+      "sha256": "cc2d0d81e1d07cae6fef0f10f31d93871759c0a4efa49770babfbbf04a482eb5",
+      "updated_at": "2026-09-03"
     },
     {
       "id": "roadmap",
@@ -26,7 +28,8 @@
       "uri": "docs://wind-forecast/copilot-roadmap",
       "title": "Local Copilot roadmap",
       "sensitivity": "public",
-      "sha256": "31c91dccc70b6fc8a8adb78af62365b99448bc8e5e8f7a66bd5645e7a66d4c25"
+      "sha256": "31c91dccc70b6fc8a8adb78af62365b99448bc8e5e8f7a66bd5645e7a66d4c25",
+      "updated_at": "2026-09-03"
     }
   ]
 }

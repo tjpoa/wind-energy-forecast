@@ -83,6 +83,7 @@ new version or an explicit immutable evidence record.
 | `POST /predict` | Saved-model inference | Legacy v1 artifacts |
 | `wind-forecast-build-v1` | Rebuild the accepted v1 raw-to-features table | Authorized raw snapshot and immutable contracts |
 | `POST /api/v1/operational-query` | Typed operational questions | Numeric loopback only |
+| `POST /api/v1/copilot` | Read-only Portuguese Copilot | Local loopback, verified evidence |
 | `scripts/run_batch_pipeline.py` | Plan/run historical batch | Explicit artifacts and leases |
 | `wind-forecast-validate-manifest` | Validate manifest paths, hashes, or release provenance | Metadata, local integrity, or release provenance |
 
@@ -121,7 +122,7 @@ cloud-deployment claim.
 ## Local Copilot (portfolio priority)
 
 The current product priority is a small, local, single-user, read-only
-Copilot over verified `demo/v1` evidence. It will expose a deterministic
+Copilot over verified `demo/v1` evidence. It exposes a deterministic
 Portuguese `/copilot` experience over the existing typed operational query
 service, with short answers, evidence, freshness, limitations, and explicit
 refusals. The existing Forecast Replay page remains responsible for historical
@@ -137,6 +138,14 @@ part of this portfolio MVP. New ANN v2 experimentation and promotion, MLflow
 changes, Azure work, and remote exposure are paused. See
 [APP_COPILOT_ROADMAP.md](APP_COPILOT_ROADMAP.md) for the closed question
 catalogue, delivery gates, and deliberate limits.
+
+### Copilot demonstration (60–90 seconds)
+
+1. Open `/copilot`.
+2. Ask which deployment is active and show the evidence and freshness details.
+3. Ask for the methodology and show the `rag_local` mode and documentary source.
+4. Ask a historical question and open Forecast Replay from the response.
+5. Ask for a prohibited operation and show the explicit refusal.
 
 ## Local operations
 

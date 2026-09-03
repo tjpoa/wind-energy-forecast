@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { askCopilot, CopilotApiError, type CopilotResponse } from "../api/copilot";
+import { askCopilot, CopilotApiError, type CopilotAnswer, type CopilotResponse, type DocumentaryEvidence } from "../api/copilot";
 
 const suggestions = [
   "Qual é o estado operacional verificado?",
@@ -45,15 +45,23 @@ export function CopilotPage() {
 }
 
 function ResponseCard({ response }: { response: CopilotResponse }) {
-  if (response.route === "operational") return <><div className="copilot-mode">Modo: {response.mode}</div><p className="copilot-summary">{response.answer.summary ?? "Não existe um resumo disponível."}</p><Evidence answer={response.answer} limitations={response.limitations} /></>;
-  if (response.route === "documentary") return <><div className="copilot-mode">Modo: {response.mode}</div>{response.provider_failure && <p className="copilot-warning">{response.provider_failure.message}</p>}<p className="copilot-summary">{response.answer.summary}</p><DocumentaryEvidenceList evidence={response.answer.evidence} /><Evidence answer={response.answer} limitations={response.limitations} /></>;
+  if (response.route === "operational") return <><div className="copilot-mode">Modo: {response.mode}</div><p className="copilot-summary">{response.answer.summary ?? "Não existe um resumo disponível."}</p><OperationalEvidenceList answer={response.answer} limitations={response.limitations} /></>;
+  if (response.route === "documentary") return <><div className="copilot-mode">Modo: {response.mode}</div>{response.provider_failure && <p className="copilot-warning">{response.provider_failure.message}</p>}<p className="copilot-summary">{response.answer.summary}</p><DocumentaryEvidenceList evidence={response.answer.evidence} /><Limitations limitations={response.limitations} /></>;
   return <><div className="copilot-mode">Modo: {response.mode}</div><p className="copilot-error">{response.failure.message}</p><ul>{response.limitations.map((limitation) => <li key={limitation}>{limitation}</li>)}</ul>{response.failure.code === "forecast_replay_required" && <Link to="/forecast-replay">Abrir Forecast Replay</Link>}</>;
 }
 
-function DocumentaryEvidenceList({ evidence }: { evidence: readonly import("../api/copilot").DocumentaryEvidence[] }) {
-  return <ul className="copilot-document-evidence">{evidence.map((item) => <li key={item.chunk_id}><strong>{item.title}</strong> — {item.heading}<br /><code>{item.uri}</code><br /><small>SHA-256: {item.sha256}</small></li>)}</ul>;
+function DocumentaryEvidenceList({ evidence }: { evidence: readonly DocumentaryEvidence[] }) {
+  return <ul className="copilot-document-evidence">{evidence.map((item) => <li key={item.chunk_id}><strong>{item.title}</strong> — {item.heading}<br /><code>{item.uri}</code><br /><small>Atualizado: {item.updated_at || "Data de atualização indisponível"}</small><br /><details><summary>Ver SHA-256</summary><code>SHA-256: {item.sha256}</code></details></li>)}</ul>;
 }
 
-function Evidence({ answer, limitations }: { answer: { readonly evidence: readonly unknown[] }; limitations: readonly string[] }) {
-  return <><p><strong>Evidência:</strong> {answer.evidence.length ? `${answer.evidence.length} registo(s) verificado(s).` : "Não disponível."}</p>{limitations.length > 0 && <><strong>Limitações</strong><ul>{limitations.map((limitation) => <li key={limitation}>{limitation}</li>)}</ul></>}</>;
+function OperationalEvidenceList({ answer, limitations }: { answer: CopilotAnswer; limitations: readonly string[] }) {
+  const freshness = (answer.facts ?? []).find((fact) => fact.name.includes("freshness"));
+  const freshnessValue = typeof freshness?.value === "object" && freshness.value !== null && !Array.isArray(freshness.value) && "status" in freshness.value
+    ? freshness.value.status
+    : undefined;
+  return <><p><strong>Evidência:</strong> {answer.evidence.length ? `${answer.evidence.length} registo(s) verificado(s).` : "Não disponível."}</p>{answer.evidence.length > 0 && <ul className="copilot-operational-evidence">{answer.evidence.map((item) => <li key={item.evidence_id}><strong>Fonte:</strong> {item.source_kind}<br /><strong>Registo:</strong> <code>{item.record_id}</code><br /><strong>Data efetiva:</strong> {item.effective_at || "Data de atualização indisponível"}<br /><strong>Observação/atualização:</strong> {item.observed_at_utc || "Data de atualização indisponível"}<br /><strong>Freshness:</strong> {item.freshness_status || (typeof freshnessValue === "string" ? freshnessValue : "Estado de freshness indisponível")}<details><summary>Ver SHA-256</summary><code>{item.sha256}</code></details></li>)}</ul>}<Limitations limitations={limitations} /></>;
+}
+
+function Limitations({ limitations }: { limitations: readonly string[] }) {
+  return limitations.length > 0 && <><strong>Limitações</strong><ul>{limitations.map((limitation) => <li key={limitation}>{limitation}</li>)}</ul></>;
 }

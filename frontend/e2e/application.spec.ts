@@ -40,9 +40,12 @@ test("keyless local Copilot answers a guided operational question", async ({ pag
   await page.goto("/copilot");
 
   await expect(page.getByRole("heading", { name: "Copilot operacional" })).toBeVisible();
-  await page.getByRole("button", { name: "Que deployment está ativo?" }).click();
+  await page.getByRole("button", { name: "Como estão a qualidade e a freshness dos dados?" }).click();
   await expect(page.getByText("Modo: guided_local")).toBeVisible();
   await expect(page.locator(".copilot-card")).toContainText("Evidência:");
+  await expect(page.locator(".copilot-card")).toContainText("Fonte:");
+  await expect(page.locator(".copilot-card")).toContainText("Data efetiva:");
+  await expect(page.locator(".copilot-card")).toContainText("Freshness:");
 });
 
 test("keyless local Copilot answers a documentary question with provenance", async ({ page }) => {
@@ -50,5 +53,6 @@ test("keyless local Copilot answers a documentary question with provenance", asy
   await page.getByRole("button", { name: "Qual é o estado do roadmap do Copilot?" }).click();
   await expect(page.getByText("Modo: rag_local")).toBeVisible();
   await expect(page.getByText(/docs:\/\/wind-forecast\/copilot-roadmap/).first()).toBeVisible();
-  await expect(page.getByText(/SHA-256:/).first()).toBeVisible();
+  await expect(page.locator("details").filter({ hasText: "Ver SHA-256" }).first()).toBeVisible();
+  await expect(page.getByText(/Atualizado:/).first()).toBeVisible();
 });

@@ -11,12 +11,35 @@ export interface CopilotAnswer {
   readonly query_kind: string | null;
   readonly status: string;
   readonly summary: string | null;
-  readonly facts: readonly Record<string, unknown>[];
-  readonly evidence: readonly Record<string, unknown>[];
+  readonly facts: readonly CopilotFact[];
+  readonly evidence: readonly OperationalEvidence[];
   readonly limitations: readonly string[];
   readonly served_at_utc: string;
   readonly correlation_id: string;
   readonly failure: CopilotFailure | null;
+}
+
+export type CopilotJsonValue = string | number | boolean | null | { readonly [key: string]: CopilotJsonValue } | readonly CopilotJsonValue[];
+
+export interface CopilotFact {
+  readonly fact_id: string;
+  readonly name: string;
+  readonly value: CopilotJsonValue;
+  readonly unit_or_scale: string;
+  readonly as_of: string;
+  readonly evidence_ids: readonly string[];
+}
+
+export interface OperationalEvidence {
+  readonly evidence_id: string;
+  readonly domain: string;
+  readonly source_kind: string;
+  readonly schema_version: string;
+  readonly record_id: string;
+  readonly sha256: string;
+  readonly effective_at: string;
+  readonly observed_at_utc: string | null;
+  readonly freshness_status?: string | null;
 }
 
 export type CopilotResponse =
@@ -55,4 +78,5 @@ export interface DocumentaryEvidence {
   readonly heading: string;
   readonly uri: string;
   readonly sha256: string;
+  readonly updated_at: string;
 }

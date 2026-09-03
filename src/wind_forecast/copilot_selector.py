@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Any
+from typing import Any, Literal
 
 from .operational_copilot_models import (
     CopilotRequest,
@@ -17,8 +17,6 @@ from .operational_copilot import CopilotSelectionRefusal
 _SPACE = re.compile(r"\s+")
 _WINDOW = re.compile(r"\b(30|90)\s*(?:dias|d)\b")
 _REFUSALS = {
-    "previsao": "future_forecast_not_supported",
-    "previsoes": "future_forecast_not_supported",
     "treino": "training_not_supported",
     "treinar": "training_not_supported",
     "treina": "training_not_supported",
@@ -31,6 +29,39 @@ _REFUSALS = {
     "causa": "undocumented_cause_not_supported",
     "porque": "undocumented_cause_not_supported",
 }
+_FUTURE_FORECAST_PHRASES = (
+    "qual sera a previsao",
+    "previsao amanha",
+    "previsoes amanha",
+    "previsao futura",
+    "previsoes futuras",
+    "faz uma previsao",
+    "fazer uma previsao",
+    "preve a proxima semana",
+    "preve para a proxima semana",
+    "preve o que vai acontecer",
+)
+_HISTORICAL_FORECAST_PHRASES = (
+    "previsoes historicas",
+    "previsao historica",
+    "observacoes historicas",
+    "historico de previs",
+    "previsoes e valores observados",
+    "previsao e o valor real",
+    "qual foi a previsao",
+    "consultar previsoes",
+    "erro nesse periodo",
+)
+_DOCUMENTARY_TERMS = (
+    "metodologia",
+    "limitacoes",
+    "decisoes",
+    "execucao",
+    "executar o projeto",
+    "roadmap",
+    "documentacao",
+    "arquitetura",
+)
 _SYNONYMS = {
     "estado": ("operacional", "saude", "situacao"),
     "deployment": ("deploy", "implantacao", "versao ativa"),
@@ -53,6 +84,83 @@ def _has_any(text: str, terms: tuple[str, ...]) -> bool:
     return any(term in text for term in terms)
 
 
+QuestionRoute = Literal[
+    "forbidden",
+    "forecast_replay",
+    "operational",
+    "documentary",
+    "ambiguous",
+    "unsupported",
+]
+
+
+def classify_question(question: str) -> QuestionRoute:
+    """Apply the Copilot route precedence without parsing dates or data."""
+    text = _normalize(question)
+    tokens = set(re.findall(r"[a-z0-9]+", text))
+    for term, _code in _REFUSALS.items():
+        if term in tokens or term in text:
+            return "forbidden"
+    if _has_any(text, _FUTURE_FORECAST_PHRASES):
+        return "forbidden"
+    if _has_any(text, _HISTORICAL_FORECAST_PHRASES):
+        return "forecast_replay"
+
+    operational = _has_any(
+        text,
+        (
+            "estado operacional",
+            "saude operacional",
+            "situacao operacional",
+            "deployment",
+            "deploy",
+            "implantacao",
+            "versao ativa",
+            "qualidade",
+            "freshness",
+            "atualidade",
+            "frescura",
+            "recencia",
+            "performance",
+            "desempenho",
+            "mae",
+            "erro medio",
+            "drift",
+            "desvio",
+            "deriva",
+            "alertas",
+            "avisos",
+            "modelo",
+            "model",
+            "metadados",
+        ),
+    )
+    documentary = _has_any(text, _DOCUMENTARY_TERMS)
+    if operational and documentary:
+        return "ambiguous"
+    if operational:
+        return "operational"
+    if documentary:
+        return "documentary"
+    return "unsupported"
+
+
+def refusal_code(question: str) -> str:
+    """Return the stable refusal code for a non-routable question."""
+    text = _normalize(question)
+    tokens = set(re.findall(r"[a-z0-9]+", text))
+    for term, code in _REFUSALS.items():
+        if term in tokens or term in text:
+            return code
+    if _has_any(text, _FUTURE_FORECAST_PHRASES):
+        return "future_forecast_not_supported"
+    if _has_any(text, _HISTORICAL_FORECAST_PHRASES):
+        return "forecast_replay_required"
+    if classify_question(question) == "ambiguous":
+        return "ambiguous_question"
+    return "unsupported_question"
+
+
 class DeterministicPortugueseSelector:
     """Select exactly one latest operational query from bounded text."""
 
@@ -66,8 +174,15 @@ class DeterministicPortugueseSelector:
         del tools, timeout_seconds
         text = _normalize(request.question)
         tokens = set(re.findall(r"[a-z0-9]+", text))
-        if _has_any(text, ("previsoes historicas", "observacoes historicas", "historico de previs")):
+        route = classify_question(request.question)
+        if route == "forecast_replay":
             raise CopilotSelectionRefusal("forecast_replay_required")
+        if route == "forbidden":
+            raise CopilotSelectionRefusal(refusal_code(request.question))
+        if route == "ambiguous":
+            raise CopilotSelectionRefusal("ambiguous_question")
+        if route != "operational":
+            raise CopilotSelectionRefusal("unsupported_question")
         for term, code in _REFUSALS.items():
             if term in tokens or term in text:
                 raise CopilotSelectionRefusal(code)
@@ -106,4 +221,9 @@ class DeterministicPortugueseSelector:
         return OperationalToolSelection(tool_name="operational_query", arguments=arguments)
 
 
-__all__ = ["DeterministicPortugueseSelector"]
+__all__ = [
+    "DeterministicPortugueseSelector",
+    "QuestionRoute",
+    "classify_question",
+    "refusal_code",
+]
