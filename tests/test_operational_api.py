@@ -217,6 +217,29 @@ def test_copilot_documentary_route_never_executes_operational_service() -> None:
     assert service.calls == []
 
 
+def test_copilot_documentary_no_match_is_refused_without_operational_query(
+    monkeypatch,
+) -> None:
+    from wind_forecast import operational_api
+
+    service = RecordingService()
+    monkeypatch.setattr(
+        operational_api,
+        "get_document_corpus",
+        lambda: (),
+    )
+
+    response = _client(service).post(
+        "/api/v1/copilot",
+        json={"question": "Qual é a metodologia?"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["route"] == "refused"
+    assert response.json()["failure"]["code"] == "documentary_no_match"
+    assert service.calls == []
+
+
 def test_copilot_refuses_unsupported_question_without_operational_query() -> None:
     service = RecordingService()
 

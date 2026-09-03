@@ -338,6 +338,23 @@ def get_document_synthesizer() -> Any | None:
     )
 
 
+def _documentary_refusal() -> CopilotRefusedResponse:
+    """Refuse documentary questions that are outside the verified corpus."""
+    from .operational_query_models import EvidenceState
+
+    return CopilotRefusedResponse(
+        route="refused",
+        mode="guided_local",
+        limitations=("O Copilot só responde ao corpus documental versionado.",),
+        failure=OperationalFailure(
+            code="documentary_no_match",
+            message="Não encontrei evidência suficiente no corpus documental aprovado.",
+            retryable=False,
+            evidence_state=EvidenceState.UNSUPPORTED,
+        ),
+    )
+
+
 def _copilot_response(answer: OperationalAnswer) -> Any:
     """Adapt the existing answer to the public Copilot union."""
     refusal_codes = {
@@ -398,9 +415,15 @@ async def copilot(
                 get_document_synthesizer(),
             )
         except Exception:
+            # A broken manifest is a closed-corpus failure. It must not turn a
+            # documentary request into an operational read.
             documentary = None
         if documentary is not None:
             return JSONResponse(status_code=200, content=jsonable_encoder(documentary))
+        return JSONResponse(
+            status_code=200,
+            content=jsonable_encoder(_documentary_refusal()),
+        )
     try:
         copilot_runner = OperationalCopilot(
             selector=DeterministicPortugueseSelector(),
