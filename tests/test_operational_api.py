@@ -254,6 +254,41 @@ def test_copilot_refuses_unsupported_question_without_operational_query() -> Non
     assert service.calls == []
 
 
+@pytest.mark.parametrize(
+    "question",
+    (
+        "Que modelo está ativo segundo a documentação?",
+        "Qual é o estado operacional e a metodologia?",
+    ),
+)
+def test_copilot_refuses_mixed_questions_without_rag_or_operational_query(question):
+    service = RecordingService()
+
+    response = _client(service).post("/api/v1/copilot", json={"question": question})
+
+    assert response.status_code == 200
+    assert response.json()["failure"]["code"] == "ambiguous_question"
+    assert service.calls == []
+
+
+@pytest.mark.parametrize(
+    "question",
+    (
+        "Qual foi a previsão em 10 de maio e qual foi o valor real?",
+        "Mostra previsões e valores observados.",
+        "Quero consultar previsões históricas.",
+        "Qual foi o erro nesse período?",
+    ),
+)
+def test_copilot_historical_questions_require_forecast_replay(question):
+    service = RecordingService()
+
+    response = _client(service).post("/api/v1/copilot", json={"question": question})
+
+    assert response.json()["failure"]["code"] == "forecast_replay_required"
+    assert service.calls == []
+
+
 def test_copilot_forecast_replay_refusal_is_visible_and_does_not_query() -> None:
     service = RecordingService()
 
@@ -713,6 +748,23 @@ def test_absent_request_client_is_not_trusted():
     )
 
     assert _trusted_loopback(request) is False
+
+
+def test_explicitly_configured_local_container_gateway_is_trusted(monkeypatch):
+    from wind_forecast.operational_api import _trusted_loopback
+
+    monkeypatch.setenv("WIND_FORECAST_TRUSTED_LOCAL_CLIENTS", "172.30.254.1")
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "headers": [],
+            "client": ("172.30.254.1", 12345),
+        }
+    )
+
+    assert _trusted_loopback(request) is True
 
 
 def test_unexpected_service_error_is_sanitized():

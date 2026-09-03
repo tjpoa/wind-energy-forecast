@@ -37,6 +37,7 @@ def _chunks():
         title="README",
         sensitivity="public",
         sha256="0" * 64,
+        updated_at="2026-09-03",
     )
     return chunk_markdown(doc, "# Método\nTexto verificável.")
 

@@ -38,6 +38,7 @@ class ManifestDocument(_StrictModel):
     title: str = Field(min_length=1)
     sensitivity: str = Field(pattern=r"^public$")
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    updated_at: str = Field(min_length=1)
 
 
 class CorpusManifest(_StrictModel):
@@ -53,6 +54,7 @@ class DocumentChunk(_StrictModel):
     ordinal: int
     uri: str
     document_sha256: str
+    document_updated_at: str
     body: str
 
 
@@ -143,6 +145,7 @@ def chunk_markdown(
                 ordinal=ordinal,
                 uri=f"{document.uri}#{ordinal}",
                 document_sha256=document.sha256,
+                document_updated_at=document.updated_at,
                 body=body,
             )
         )
@@ -209,6 +212,7 @@ def answer_documentary(
             heading=" > ".join(chunk.heading_path) or "Raiz",
             uri=chunk.uri,
             sha256=chunk.document_sha256,
+            updated_at=chunk.document_updated_at,
         )
         for chunk in selected
     )

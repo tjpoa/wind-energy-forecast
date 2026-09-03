@@ -109,6 +109,7 @@ class DocumentaryEvidence(StrictModel):
     heading: StrictStr
     uri: StrictStr
     sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
+    updated_at: StrictStr
 
 
 class ProviderFailure(StrictModel):

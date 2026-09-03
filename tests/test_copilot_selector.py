@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from wind_forecast.copilot_selector import DeterministicPortugueseSelector
+from wind_forecast.copilot_selector import classify_question
 from wind_forecast.operational_copilot import CopilotSelectionRefusal
 from wind_forecast.operational_copilot_models import (
     CopilotRequest,
@@ -68,3 +69,23 @@ def test_expected_refusals_have_stable_codes(question: str, code: str) -> None:
 def test_refusal_exception_rejects_unbounded_or_unknown_codes() -> None:
     with pytest.raises(ValueError, match="unsupported Copilot refusal code"):
         CopilotSelectionRefusal("private provider error C:\\secret")
+
+
+@pytest.mark.parametrize(
+    ("question", "route"),
+    (
+        ("Qual foi a previsão em 10 de maio e qual foi o valor real?", "forecast_replay"),
+        ("Mostra previsões e valores observados.", "forecast_replay"),
+        ("Quero consultar previsões históricas.", "forecast_replay"),
+        ("Qual foi o erro nesse período?", "forecast_replay"),
+        ("Qual será a previsão amanhã?", "forbidden"),
+        ("Faz uma previsão futura.", "forbidden"),
+        ("Prevê a próxima semana.", "forbidden"),
+        ("Que modelo está ativo segundo a documentação?", "ambiguous"),
+        ("Qual é o estado operacional e a metodologia?", "ambiguous"),
+        ("Qual é a metodologia?", "documentary"),
+        ("Que modelo está ativo?", "operational"),
+    ),
+)
+def test_route_precedence_and_historical_formulations(question: str, route: str) -> None:
+    assert classify_question(question) == route

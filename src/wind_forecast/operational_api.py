@@ -8,6 +8,7 @@ from functools import lru_cache
 import ipaddress
 import json
 import math
+import os
 from time import perf_counter
 from typing import Any, Callable
 from uuid import uuid4
@@ -17,10 +18,13 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from .config import load_document_synthesis_config, load_operational_query_config
+from .config import (
+    TRUSTED_LOCAL_CLIENTS_ENV,
+    load_document_synthesis_config,
+    load_operational_query_config,
+)
 from .documentary_copilot import (
     answer_documentary,
-    is_documentary_question,
     load_corpus,
 )
 from .documentary_openai import OpenAIDocumentarySynthesizer
@@ -41,7 +45,11 @@ from .operational_copilot_models import (
     LOCAL_OPERATOR_PRINCIPAL,
     OperationalHttpRequest,
 )
-from .copilot_selector import DeterministicPortugueseSelector
+from .copilot_selector import (
+    DeterministicPortugueseSelector,
+    classify_question,
+    refusal_code,
+)
 from .operational_copilot import OperationalCopilot
 from .operational_observability import (
     ObservabilityContext,
@@ -200,17 +208,26 @@ def get_operational_query_service_factory() -> Callable[[], OperationalQueryServ
 
 
 def _trusted_loopback(request: Request) -> bool:
-    """Trust only an exact numeric loopback address from the ASGI socket."""
+    """Trust loopback plus explicitly configured local container gateways."""
     if request.client is None:
         return False
     try:
         address = ipaddress.ip_address(request.client.host)
     except ValueError:
         return False
-    return address in {
+    trusted_addresses = {
         ipaddress.ip_address("127.0.0.1"),
         ipaddress.ip_address("::1"),
     }
+    for raw_address in os.getenv(TRUSTED_LOCAL_CLIENTS_ENV, "").split(","):
+        raw_address = raw_address.strip()
+        if not raw_address:
+            continue
+        try:
+            trusted_addresses.add(ipaddress.ip_address(raw_address))
+        except ValueError:
+            continue
+    return address in trusted_addresses
 
 
 def _query_kind(value: Any) -> QueryKind | None:
@@ -338,7 +355,33 @@ def get_document_synthesizer() -> Any | None:
     )
 
 
-def _documentary_refusal() -> CopilotRefusedResponse:
+def _copilot_refusal(code: str) -> CopilotRefusedResponse:
+    """Refuse documentary questions that are outside the verified corpus."""
+    from .operational_query_models import EvidenceState
+
+    messages = {
+        "ambiguous_question": "A pergunta mistura intenção operacional e documental.",
+        "forecast_replay_required": "Abra o Forecast Replay para consultar previsões históricas.",
+        "future_forecast_not_supported": "O Copilot não executa previsões futuras.",
+        "training_not_supported": "O Copilot não executa treino ou re-treino.",
+        "write_operation_not_supported": "O Copilot não executa operações de escrita.",
+        "undocumented_cause_not_supported": "O Copilot não infere causas não documentadas.",
+        "unsupported_question": "A pergunta não pertence ao catálogo suportado.",
+    }
+    return CopilotRefusedResponse(
+        route="refused",
+        mode="guided_local",
+        limitations=("O Copilot é read-only e responde apenas ao catálogo aprovado.",),
+        failure=OperationalFailure(
+            code=code,
+            message=messages.get(code, "A pergunta não está disponível no catálogo do Copilot."),
+            retryable=False,
+            evidence_state=EvidenceState.UNSUPPORTED,
+        ),
+    )
+
+
+def _documentary_no_match() -> CopilotRefusedResponse:
     """Refuse documentary questions that are outside the verified corpus."""
     from .operational_query_models import EvidenceState
 
@@ -403,11 +446,8 @@ async def copilot(
         principal=LOCAL_OPERATOR_PRINCIPAL,
         trusted_local=_trusted_loopback(request),
     )
-    dangerous_or_operational = any(
-        term in payload.question.casefold()
-        for term in ("treina", "treinar", "promove", "deploy", "escreve", "apaga")
-    )
-    if is_documentary_question(payload.question) and not dangerous_or_operational:
+    route = classify_question(payload.question)
+    if route == "documentary":
         try:
             documentary = answer_documentary(
                 payload.question,
@@ -422,7 +462,13 @@ async def copilot(
             return JSONResponse(status_code=200, content=jsonable_encoder(documentary))
         return JSONResponse(
             status_code=200,
-            content=jsonable_encoder(_documentary_refusal()),
+            content=jsonable_encoder(_documentary_no_match()),
+        )
+    if route != "operational":
+        code = "forecast_replay_required" if route == "forecast_replay" else refusal_code(payload.question)
+        return JSONResponse(
+            status_code=200,
+            content=jsonable_encoder(_copilot_refusal(code)),
         )
     try:
         copilot_runner = OperationalCopilot(

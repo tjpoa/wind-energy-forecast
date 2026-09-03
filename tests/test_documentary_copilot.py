@@ -25,6 +25,7 @@ def _document(content: str = "texto") -> ManifestDocument:
         title="README",
         sensitivity="public",
         sha256=sha256(content.encode()).hexdigest(),
+        updated_at="2026-09-03",
     )
 
 
@@ -65,6 +66,7 @@ def test_local_answer_has_typed_public_evidence_and_no_physical_path() -> None:
     assert response.mode == "rag_local"
     assert response.failure is None
     assert response.answer.evidence[0].uri.startswith("docs://")
+    assert response.answer.evidence[0].updated_at == "2026-09-03"
     assert "README.md" not in response.model_dump_json()
 
 
@@ -102,9 +104,10 @@ def test_manifest_is_closed_and_hash_verified(tmp_path) -> None:
                 "version": 1,
                 "path": name,
                 "uri": f"docs://test/{index}",
-                "title": name,
-                "sensitivity": "public",
-                "sha256": sha256(content.encode()).hexdigest(),
+                    "title": name,
+                    "sensitivity": "public",
+                    "sha256": sha256(content.encode()).hexdigest(),
+                    "updated_at": "2026-09-03",
             }
         )
     manifest = tmp_path / "manifest.json"
@@ -143,6 +146,7 @@ def test_manifest_rejects_paths_outside_allowlist(tmp_path, path) -> None:
                         "title": "x",
                         "sensitivity": "public",
                         "sha256": "0" * 64,
+                        "updated_at": "2026-09-03",
                     }
                 ],
             }
